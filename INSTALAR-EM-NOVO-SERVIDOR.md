@@ -21,7 +21,14 @@ de referência: o app rodando em `http://<IP-DO-SERVIDOR>/gestao-de-projetos/`.
 
 - `python3`, `python3-venv`, `python3-pip`, `python3-dev`, `build-essential`, `libffi-dev`
 - `python3-numpy`, `python3-pandas`, `python3-pil`, `python3-reportlab` (versões do apt, compiladas com baseline conservador)
-- `apache2`, `sqlite3`
+- `apache2`, `sqlite3` (sqlite3 fica só pra ler os `.db` legados durante a migração)
+- **`postgresql`, `postgresql-client`** — banco principal a partir desta versão
+- Via pip dentro do venv: `streamlit`, `plotly`, `fpdf2`, `xlsxwriter`, `openpyxl`, **`psycopg[binary]>=3.1`**
+
+> **Mudança importante a partir de maio/2026**: o sistema migrou de SQLite
+> para PostgreSQL. O instalador cuida de tudo (cria DB, role, senha, migra
+> dados legados). Veja a seção 4.1 e o arquivo `docs/ROLLBACK-PARA-SQLITE.md`
+> se quiser desfazer.
 
 ---
 
@@ -85,24 +92,32 @@ sudo SERVER_IP="152.92.238.40" bash setup-novo-servidor/install.sh
 ```
 
 O `install.sh` é **idempotente** — pode rodar várias vezes sem problema.
-Em ~3-5 minutos ele faz tudo:
+Em ~5-8 minutos ele faz tudo:
 
-1. Backup dos `.db` em `backups/<timestamp>.pre-install.bak`
-2. `apt install` dos pacotes (Python, numpy/pandas via apt, Apache, etc.)
-3. Cria `venv` Linux com `--system-site-packages`
-4. `pip install streamlit plotly fpdf2 xlsxwriter openpyxl`
-5. **Remove** `numpy*`, `pandas*`, `pyarrow*` e outros wheels do venv que
+1. Backup dos `.db` SQLite legados em `backups/<timestamp>.pre-install.bak`
+2. `apt install` dos pacotes (Python, numpy/pandas via apt, Apache,
+   **PostgreSQL**, etc.)
+3. **Cria/garante o banco PostgreSQL**: role `gestao_servpen`, database
+   `gestao_servpen`, senha aleatória gerada (ou reutiliza a existente).
+   Persiste credenciais em `/etc/gestao-de-projetos/db.env` (`0640
+   root:www-data`).
+4. Cria `venv` Linux com `--system-site-packages`
+5. `pip install streamlit plotly fpdf2 xlsxwriter openpyxl psycopg[binary]`
+6. **Remove** `numpy*`, `pandas*`, `pyarrow*` e outros wheels do venv que
    podem ter sido puxados como deps — força o Python a usar as versões do
    apt (compiladas com baseline conservador, funcionam em qualquer CPU)
-6. Ajusta `chown www-data:www-data` + `chmod g+s` (assim você pode editar
+7. Ajusta `chown www-data:www-data` + `chmod g+s` (assim você pode editar
    pelos grupos depois)
-7. Escreve `.streamlit/config.toml` com o IP do servidor
-8. Liga **WAL** no SQLite (concorrência sem lock — importante com vários usuários)
-9. Substitui `__APP_DIR__` no systemd e `__SERVER_IP__` no vhost Apache,
-   instala em `/etc/systemd/system/` e `/etc/apache2/conf-available/`
-10. Habilita os módulos do Apache (`proxy`, `proxy_http`, `rewrite`, `headers`),
+8. Escreve `.streamlit/config.toml` com o IP do servidor
+9. **Cria o schema no Postgres** chamando `database.criar_banco()`. Se
+   houver `gestao_equipe.db` ou `servpen.db` legados na pasta, **roda
+   `migrar-sqlite-para-postgres.py`** — preserva IDs, hashes de senha e
+   é idempotente (rodar de novo não duplica).
+10. Substitui `__APP_DIR__` no systemd e `__SERVER_IP__` no vhost Apache,
+    instala em `/etc/systemd/system/` e `/etc/apache2/conf-available/`
+11. Habilita os módulos do Apache (`proxy`, `proxy_http`, `rewrite`, `headers`),
     valida a config e dá reload
-11. Testa o endpoint `/_stcore/health` interno e via Apache
+12. Testa o endpoint `/_stcore/health` interno e via Apache
 
 No final imprime:
 ```
@@ -122,6 +137,31 @@ Passe como env var antes do `bash setup-novo-servidor/install.sh`:
 | `APP_DIR` | `/var/www/html/gestao_de_projetos` | Se quiser instalar em outro caminho |
 | `STREAMLIT_PORT` | `8501` | Se a 8501 já estiver em uso |
 | `URL_PATH` | `gestao-de-projetos` | Se quiser outro caminho na URL (ex.: `app`) |
+| `DB_NAME` | `gestao_servpen` | Renomear o database no Postgres |
+| `DB_USER` | `gestao_servpen` | Renomear o role/usuário do Postgres |
+| `DB_PASSWORD` | gerada automaticamente | Fornecer senha pré-definida (ex.: ambiente com cofre de segredos) |
+| `SKIP_MIGRATION` | `0` | Setar `1` se você **não quer** migrar dados dos `.db` legados |
+
+### 4.1. Onde fica a senha do Postgres
+
+O `install.sh` cria `/etc/gestao-de-projetos/db.env` com modo `0640`
+(`root:www-data`). O `systemd` lê esse arquivo via `EnvironmentFile=`. Pra
+inspecionar ou trocar:
+
+```bash
+sudo cat /etc/gestao-de-projetos/db.env
+sudo nano /etc/gestao-de-projetos/db.env   # editar senha
+sudo systemctl restart gestao-de-projetos  # aplicar
+```
+
+Pra conectar manualmente no banco com `psql`:
+
+```bash
+# Pega a senha
+sudo grep DB_PASSWORD /etc/gestao-de-projetos/db.env
+# Conecta
+psql -h localhost -U gestao_servpen -d gestao_servpen
+```
 
 Exemplo customizado:
 ```bash
@@ -193,11 +233,14 @@ de 2013+), tecnicamente daria pra instalar pyarrow normal e usar
 |---|---|
 | Mexeu em `app.py` | Nada — só `Ctrl+Shift+R` no navegador. O `fileWatcherType=poll` pega em ~1s. |
 | Mexeu em `auth.py`, `database.py`, `relatorios.py` ou `.streamlit/config.toml` | `sudo systemctl restart gestao-de-projetos` |
+| Trocou senha em `/etc/gestao-de-projetos/db.env` | `sudo systemctl restart gestao-de-projetos` |
 | Ver logs ao vivo | `sudo tail -f /var/log/gestao-de-projetos.log` |
 | Status do serviço | `sudo systemctl status gestao-de-projetos --no-pager -l` |
 | Reiniciar | `sudo systemctl restart gestao-de-projetos` |
 | Parar | `sudo systemctl stop gestao-de-projetos` |
-| Backup manual dos `.db` | `cp /var/www/html/gestao_de_projetos/gestao_equipe.db ~/bkp-$(date +%F).db` |
+| Backup manual do Postgres | `sudo -u postgres pg_dump gestao_servpen \| gzip > ~/bkp-$(date +%F).sql.gz` |
+| Restaurar backup do Postgres | `gunzip -c ~/bkp-YYYY-MM-DD.sql.gz \| sudo -u postgres psql gestao_servpen` |
+| Status do Postgres | `sudo systemctl status postgresql --no-pager -l` |
 
 ---
 
@@ -240,7 +283,11 @@ e `create mask = 0775`. Veja o `smb.conf` do servidor antigo como referência.
 | `Port 8501 is already in use` | systemd já tá rodando | É normal — não rode manual; use `sudo systemctl restart gestao-de-projetos` |
 | Browser fica em "CONNECTING..." | WebSocket bloqueado | Confirma `a2enmod proxy proxy_http` e que o vhost tem `upgrade=websocket` no `ProxyPass` |
 | HTTP 502 / 503 do Apache | Streamlit caiu | `sudo journalctl -u gestao-de-projetos -n 50 --no-pager` mostra o motivo |
-| `database is locked` com vários usuários | SQLite sem WAL | `sqlite3 /var/www/html/gestao_de_projetos/gestao_equipe.db "PRAGMA journal_mode=WAL;"` |
+| `database is locked` com vários usuários | (não acontece mais — agora é Postgres) | Se aparecer em log antigo, ignorar |
+| `psycopg.OperationalError: connection refused` | Postgres parado | `sudo systemctl start postgresql` |
+| `psycopg.OperationalError: FATAL: password authentication failed` | Senha em `/etc/gestao-de-projetos/db.env` divergiu do role | Rodar `install.sh` de novo (regrava a senha no role) ou usar `ALTER ROLE gestao_servpen PASSWORD '...'` no psql |
+| `psycopg.OperationalError: FATAL: database "gestao_servpen" does not exist` | DB foi dropado | `sudo -u postgres createdb -O gestao_servpen gestao_servpen` + `sudo systemctl restart gestao-de-projetos` |
+| Migração SQLite→Postgres parou no meio | Erro em alguma linha (raro) | Ler o output, corrigir a linha problemática, **rodar de novo** (é idempotente — só insere o que falta) |
 | Sara não consegue logar | Senha do banco diferente | A senha `Senbt0408` é regravada a CADA boot pelo `database.py` — basta restartar |
 | Não vejo as mudanças no `app.py` | Cache do browser OU módulo cacheado | `Ctrl+Shift+R` no navegador; se for `auth.py`/`database.py`, restart do serviço |
 | Apache `configtest` falha | Sintaxe do vhost | `apache2ctl configtest` mostra a linha; verifica `/etc/apache2/conf-available/gestao-de-projetos.conf` |
@@ -267,15 +314,20 @@ sudo systemctl reload apache2
 sudo SERVER_IP="152.92.238.40" bash /var/www/html/gestao_de_projetos/setup-novo-servidor/install.sh
 ```
 
-Os `.db` em `gestao_equipe.db`/`servpen.db` **não são tocados** nesse
-processo (estão preservados). Se quiser começar com banco vazio também,
-mova esses arquivos antes:
+O **banco PostgreSQL** e o **db.env** **não são tocados** nesse processo
+(estão preservados). Se quiser começar com banco vazio também:
 
 ```bash
-sudo mv /var/www/html/gestao_de_projetos/gestao_equipe.db /tmp/old-db.bak
+# Apaga o banco Postgres (NÃO DÁ PRA DESFAZER — faça backup antes!)
+sudo -u postgres dropdb gestao_servpen
+sudo rm -f /etc/gestao-de-projetos/db.env
+
+# Move os .db legados pra fora (se ainda houver)
+sudo mv /var/www/html/gestao_de_projetos/gestao_equipe.db /tmp/old-db.bak 2>/dev/null || true
+sudo mv /var/www/html/gestao_de_projetos/servpen.db       /tmp/old-db.bak 2>/dev/null || true
 ```
 
-E rode o install. O `database.py` cria todas as tabelas e o usuário
+E rode o `install.sh`. O `database.py` cria todas as tabelas e o usuário
 `Sara Borges` automaticamente no primeiro boot.
 
 ---

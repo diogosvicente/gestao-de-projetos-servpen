@@ -1,37 +1,43 @@
+"""database.py — camada de acesso ao PostgreSQL.
 
-import sqlite3
+Migrado do SQLite. Conexão via env vars:
+  - DATABASE_URL=postgresql://user:pass@host:port/dbname   (preferida)
+ou individualmente:
+  - DB_HOST=localhost
+  - DB_PORT=5432
+  - DB_NAME=gestao_servpen
+  - DB_USER=gestao_servpen
+  - DB_PASSWORD=...
+
+O caller é responsável por commit() e close() (ou usar `with conn:`).
+"""
+
+import psycopg
 import hashlib
 import secrets
 import time
 import os
- 
-# ─────────────────────────────────────────────
-#  CONEXÃO ÚNICA  →  tudo em gestao_equipe.db
-# ─────────────────────────────────────────────
-def conectar():
-    """Conecta ao banco principal. Toda a app usa ESTE arquivo.
 
-    PRAGMAs de concorrência (importantes com muitos usuários simultâneos):
-      - journal_mode=WAL: leitura não bloqueia escrita e vice-versa (persiste no arquivo)
-      - synchronous=NORMAL: bom equilíbrio durabilidade x velocidade sob WAL
-      - busy_timeout=30000: em vez de estourar 'database is locked' na hora, espera
-        até 30s pela liberação do lock de escrita
-    """
-    conn = sqlite3.connect('gestao_equipe.db', check_same_thread=False, timeout=30)
-    try:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA busy_timeout=30000")
-        conn.execute("PRAGMA foreign_keys=ON")
-    except Exception:
-        pass
-    return conn
- 
+
+# ─── CONEXÃO ──────────────────────────────────────────────
+def conectar():
+    """Abre uma nova conexão Postgres."""
+    url = os.environ.get('DATABASE_URL')
+    if url:
+        return psycopg.connect(url)
+    return psycopg.connect(
+        host=os.environ.get('DB_HOST', 'localhost'),
+        port=int(os.environ.get('DB_PORT', '5432')),
+        dbname=os.environ.get('DB_NAME', 'gestao_servpen'),
+        user=os.environ.get('DB_USER', 'gestao_servpen'),
+        password=os.environ.get('DB_PASSWORD', ''),
+    )
+
 def gerar_hash(senha):
     return hashlib.sha256(str.encode(senha)).hexdigest()
 
 
-# ── RECUPERAÇÃO DE SENHA (pergunta secreta) ───────────────────────
+# ─── RECUPERAÇÃO DE SENHA (pergunta secreta) ──────────────
 def definir_pergunta_secreta(usuario, pergunta, resposta):
     """Salva a pergunta secreta e o HASH da resposta para um usuário.
     A resposta é normalizada (strip + lower) antes do hash pra ser tolerante a
@@ -40,7 +46,7 @@ def definir_pergunta_secreta(usuario, pergunta, resposta):
     try:
         resp_hash = gerar_hash(str(resposta).strip().lower()) if resposta else None
         c.execute(
-            "UPDATE usuarios SET pergunta_secreta = ?, resposta_secreta = ? WHERE nome = ?",
+            "UPDATE usuarios SET pergunta_secreta = %s, resposta_secreta = %s WHERE nome = %s",
             (pergunta or None, resp_hash, usuario),
         )
         conn.commit()
@@ -51,7 +57,7 @@ def obter_pergunta_secreta(usuario):
     """Retorna a pergunta secreta do usuário (ou None se não cadastrou)."""
     conn = conectar(); c = conn.cursor()
     try:
-        c.execute("SELECT pergunta_secreta FROM usuarios WHERE nome = ?", (usuario,))
+        c.execute("SELECT pergunta_secreta FROM usuarios WHERE nome = %s", (usuario,))
         row = c.fetchone()
         return row[0] if row and row[0] else None
     finally:
@@ -61,7 +67,7 @@ def validar_resposta_secreta(usuario, resposta):
     """True se a resposta (normalizada) bate com o hash guardado."""
     conn = conectar(); c = conn.cursor()
     try:
-        c.execute("SELECT resposta_secreta FROM usuarios WHERE nome = ?", (usuario,))
+        c.execute("SELECT resposta_secreta FROM usuarios WHERE nome = %s", (usuario,))
         row = c.fetchone()
         if not row or not row[0]:
             return False
@@ -74,7 +80,7 @@ def redefinir_senha(usuario, nova_senha):
     conn = conectar(); c = conn.cursor()
     try:
         c.execute(
-            "UPDATE usuarios SET senha = ? WHERE nome = ?",
+            "UPDATE usuarios SET senha = %s WHERE nome = %s",
             (gerar_hash(nova_senha), usuario),
         )
         conn.commit()
@@ -82,15 +88,14 @@ def redefinir_senha(usuario, nova_senha):
         conn.close()
 
 
-# ── PERFIL DO USUÁRIO (edição própria) ────────────────────────────
+# ─── PERFIL DO USUÁRIO (edição própria) ───────────────────
 def obter_usuario(nome):
-    """Retorna dict com os dados do usuário (ou None). Não retorna a senha/resposta
-    (só se tem pergunta secreta cadastrada, via flag)."""
+    """Retorna dict com os dados do usuário (ou None)."""
     conn = conectar(); c = conn.cursor()
     try:
         c.execute(
             "SELECT id, nome, perfil, cargo, email, pergunta_secreta, avatar_path "
-            "FROM usuarios WHERE nome = ?",
+            "FROM usuarios WHERE nome = %s",
             (nome,),
         )
         row = c.fetchone()
@@ -108,17 +113,17 @@ def atualizar_perfil(nome, cargo=None, email=None, avatar_path=None):
     Só altera os campos passados (None = não mexe naquele campo)."""
     sets, params = [], []
     if cargo is not None:
-        sets.append("cargo = ?"); params.append(cargo)
+        sets.append("cargo = %s"); params.append(cargo)
     if email is not None:
-        sets.append("email = ?"); params.append(email)
+        sets.append("email = %s"); params.append(email)
     if avatar_path is not None:
-        sets.append("avatar_path = ?"); params.append(avatar_path)
+        sets.append("avatar_path = %s"); params.append(avatar_path)
     if not sets:
         return
     params.append(nome)
     conn = conectar(); c = conn.cursor()
     try:
-        c.execute(f"UPDATE usuarios SET {', '.join(sets)} WHERE nome = ?", params)
+        c.execute(f"UPDATE usuarios SET {', '.join(sets)} WHERE nome = %s", params)
         conn.commit()
     finally:
         conn.close()
@@ -128,31 +133,32 @@ def verificar_senha(usuario, senha):
     a senha atual antes de trocar."""
     conn = conectar(); c = conn.cursor()
     try:
-        c.execute("SELECT senha FROM usuarios WHERE nome = ?", (usuario,))
+        c.execute("SELECT senha FROM usuarios WHERE nome = %s", (usuario,))
         row = c.fetchone()
         return bool(row and row[0] == gerar_hash(senha))
     finally:
         conn.close()
 
-# ── SESSÕES ───────────────────────────────────
+
+# ─── SESSÕES ──────────────────────────────────────────────
 def criar_tabela_sessoes():
     conn = conectar(); c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS sessoes (
         token TEXT PRIMARY KEY,
         usuario TEXT NOT NULL,
-        expires_at INTEGER NOT NULL
+        expires_at BIGINT NOT NULL
     )''')
     conn.commit(); conn.close()
- 
+
 def criar_sessao(usuario, dias=7):
     token = secrets.token_urlsafe(18)
     expires = int(time.time()) + dias * 86400
     conn = conectar(); c = conn.cursor()
-    c.execute("INSERT INTO sessoes (token, usuario, expires_at) VALUES (?,?,?)",
+    c.execute("INSERT INTO sessoes (token, usuario, expires_at) VALUES (%s,%s,%s)",
               (token, usuario, expires))
     conn.commit(); conn.close()
     return token
- 
+
 def validar_sessao(token):
     if not token:
         return None
@@ -161,220 +167,247 @@ def validar_sessao(token):
         SELECT s.usuario, u.perfil
         FROM sessoes s
         JOIN usuarios u ON s.usuario = u.nome
-        WHERE s.token = ? AND s.expires_at > ?
+        WHERE s.token = %s AND s.expires_at > %s
     """, (token, int(time.time())))
     row = c.fetchone()
     conn.close()
     return row
- 
+
 def deletar_sessao(token):
     if not token:
         return
     conn = conectar(); c = conn.cursor()
-    c.execute("DELETE FROM sessoes WHERE token = ?", (token,))
+    c.execute("DELETE FROM sessoes WHERE token = %s", (token,))
     conn.commit(); conn.close()
- 
+
 def limpar_sessoes_expiradas():
     conn = conectar(); c = conn.cursor()
-    c.execute("DELETE FROM sessoes WHERE expires_at < ?", (int(time.time()),))
+    c.execute("DELETE FROM sessoes WHERE expires_at < %s", (int(time.time()),))
     conn.commit(); conn.close()
- 
-# ── TABELAS PRINCIPAIS ────────────────────────
+
+
+# ─── CRIAÇÃO DE TABELAS / MIGRAÇÕES ───────────────────────
 def criar_tabelas():
+    """Cria todas as tabelas (CREATE IF NOT EXISTS) e adiciona colunas faltantes
+    em bancos pré-existentes via ALTER TABLE ADD COLUMN IF NOT EXISTS (PG 9.6+)."""
     conn = conectar()
     c = conn.cursor()
     try:
-        # Projetos — inclui campos novos: numero_sei, data_recebimento, data_inicio, data_termino
-        c.execute('''CREATE TABLE IF NOT EXISTS projetos
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      projetista TEXT,
-                      projeto TEXT,
-                      endereco TEXT,
-                      solicitante TEXT,
-                      contato TEXT,
-                      numero_sei TEXT,
-                      data_recebimento DATE,
-                      previsao_execucao DATE,
-                      data_inicio DATE,
-                      data_termino DATE,
-                      data_fim DATE,
-                      status TEXT DEFAULT 'Ativo',
-                      link_projeto TEXT,
-                      demandas TEXT,
-                      solicitacao TEXT,
-                      prioridade TEXT,
-                      criado_em DATETIME DEFAULT CURRENT_TIMESTAMP)''')
- 
-        c.execute('''CREATE TABLE IF NOT EXISTS usuarios
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      nome TEXT UNIQUE,
-                      senha TEXT,
-                      perfil TEXT,
-                      cargo TEXT)''')
- 
-        c.execute('''CREATE TABLE IF NOT EXISTS diario
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      projeto_id INTEGER,
-                      data TEXT,
-                      executado TEXT,
-                      autor TEXT,
-                      disciplina TEXT,
-                      horas REAL,
-                      anexo TEXT,
-                      resposta_gestor TEXT,
-                      resolvido INTEGER DEFAULT 0)''')
- 
-        c.execute('''CREATE TABLE IF NOT EXISTS chat
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      remetente TEXT,
-                      destinatario TEXT,
-                      mensagem TEXT,
-                      data TEXT,
-                      lido_em DATETIME)''')
- 
-        # ── AGENDA (migrada para o banco único) ──
-        c.execute('''CREATE TABLE IF NOT EXISTS agenda
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      titulo TEXT,
-                      tipo TEXT,
-                      data_inicio DATE,
-                      data_fim DATE,
-                      responsaveis TEXT,
-                      descricao TEXT,
-                      local TEXT,
-                      criado_em DATETIME DEFAULT CURRENT_TIMESTAMP)''')
- 
+        # ── PROJETOS ──
+        c.execute('''CREATE TABLE IF NOT EXISTS projetos (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            projetista TEXT,
+            projeto TEXT,
+            endereco TEXT,
+            solicitante TEXT,
+            contato TEXT,
+            numero_sei TEXT,
+            data_recebimento DATE,
+            previsao_execucao DATE,
+            data_inicio DATE,
+            data_termino DATE,
+            data_fim DATE,
+            status TEXT DEFAULT 'Ativo',
+            link_projeto TEXT,
+            demandas TEXT,
+            solicitacao TEXT,
+            prioridade TEXT,
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
+
+        # ── USUÁRIOS ──
+        c.execute('''CREATE TABLE IF NOT EXISTS usuarios (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            nome TEXT UNIQUE,
+            senha TEXT,
+            perfil TEXT,
+            cargo TEXT
+        )''')
+
+        # ── DIÁRIO ──
+        c.execute('''CREATE TABLE IF NOT EXISTS diario (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            projeto_id BIGINT,
+            data TEXT,
+            executado TEXT,
+            autor TEXT,
+            disciplina TEXT,
+            horas REAL,
+            anexo TEXT,
+            resposta_gestor TEXT,
+            resolvido INTEGER DEFAULT 0
+        )''')
+
+        # ── CHAT ──
+        c.execute('''CREATE TABLE IF NOT EXISTS chat (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            remetente TEXT,
+            destinatario TEXT,
+            mensagem TEXT,
+            data TEXT,
+            lido_em TIMESTAMP
+        )''')
+
+        # ── AGENDA ──
+        c.execute('''CREATE TABLE IF NOT EXISTS agenda (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            titulo TEXT,
+            tipo TEXT,
+            data_inicio DATE,
+            data_fim DATE,
+            responsaveis TEXT,
+            descricao TEXT,
+            local TEXT,
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
+
         # ── PROGRESSO DE DISCIPLINAS ──
-        c.execute('''CREATE TABLE IF NOT EXISTS progresso_disciplinas
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      projeto_id INTEGER,
-                      disciplina TEXT,
-                      concluido INTEGER DEFAULT 0,
-                      percentual INTEGER DEFAULT 0)''')
- 
-        # ── ETAPAS DO PROJETO (NOVO) ──
-        # dias_offset  = quantos dias após data_inicio do projeto esta etapa começa
-        # duracao_dias = duração em dias corridos
-        c.execute('''CREATE TABLE IF NOT EXISTS etapas_projeto
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      projeto_id INTEGER NOT NULL,
-                      nome TEXT NOT NULL,
-                      dias_offset INTEGER DEFAULT 0,
-                      duracao_dias INTEGER DEFAULT 1,
-                      ordem INTEGER DEFAULT 0,
-                      criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
-                      FOREIGN KEY (projeto_id) REFERENCES projetos(id) ON DELETE CASCADE)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS progresso_disciplinas (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            projeto_id BIGINT,
+            disciplina TEXT,
+            concluido INTEGER DEFAULT 0,
+            percentual INTEGER DEFAULT 0
+        )''')
+
+        # ── ETAPAS DO PROJETO ──
+        c.execute('''CREATE TABLE IF NOT EXISTS etapas_projeto (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            projeto_id BIGINT NOT NULL,
+            nome TEXT NOT NULL,
+            dias_offset INTEGER DEFAULT 0,
+            duracao_dias INTEGER DEFAULT 1,
+            ordem INTEGER DEFAULT 0,
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (projeto_id) REFERENCES projetos(id) ON DELETE CASCADE
+        )''')
         c.execute("CREATE INDEX IF NOT EXISTS idx_etapas_projeto ON etapas_projeto(projeto_id, ordem)")
- 
+
         # ── AUDITORIA ──
-        c.execute('''CREATE TABLE IF NOT EXISTS auditoria
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      data DATETIME DEFAULT CURRENT_TIMESTAMP,
-                      usuario TEXT,
-                      acao TEXT NOT NULL,
-                      entidade TEXT,
-                      entidade_id INTEGER,
-                      detalhes TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS auditoria (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            data TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            usuario TEXT,
+            acao TEXT NOT NULL,
+            entidade TEXT,
+            entidade_id BIGINT,
+            detalhes TEXT
+        )''')
         c.execute("CREATE INDEX IF NOT EXISTS idx_auditoria_data ON auditoria(data DESC)")
- 
+
         # ── ARQUIVOS ──
-        c.execute('''CREATE TABLE IF NOT EXISTS arquivos
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      projeto_id INTEGER NOT NULL,
-                      nome_original TEXT NOT NULL,
-                      path_arquivo TEXT NOT NULL,
-                      descricao TEXT,
-                      autor TEXT,
-                      data_upload DATETIME DEFAULT CURRENT_TIMESTAMP,
-                      tamanho_bytes INTEGER,
-                      mime_type TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS arquivos (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            projeto_id BIGINT NOT NULL,
+            nome_original TEXT NOT NULL,
+            path_arquivo TEXT NOT NULL,
+            descricao TEXT,
+            autor TEXT,
+            data_upload TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            tamanho_bytes BIGINT,
+            mime_type TEXT
+        )''')
 
         # ── MENÇÕES NO DIÁRIO ──
         # ACESSO: 1 linha por (usuario, projeto). Idempotente via UNIQUE.
         c.execute('''CREATE TABLE IF NOT EXISTS mencoes_acesso (
-                       id INTEGER PRIMARY KEY AUTOINCREMENT,
-                       usuario_mencionado TEXT NOT NULL,
-                       projeto_id INTEGER NOT NULL,
-                       concedido_por TEXT NOT NULL,
-                       concedido_em DATETIME DEFAULT CURRENT_TIMESTAMP,
-                       relato_id INTEGER,
-                       UNIQUE(usuario_mencionado, projeto_id))''')
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            usuario_mencionado TEXT NOT NULL,
+            projeto_id BIGINT NOT NULL,
+            concedido_por TEXT NOT NULL,
+            concedido_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            relato_id BIGINT,
+            UNIQUE(usuario_mencionado, projeto_id)
+        )''')
         # NOTIFICAÇÕES: 1 linha por evento (mesmo se o usuário já tinha acesso).
         # Dois carimbos de tempo separados:
-        #   visto_em      = quando o user ABRIU o Diário pela primeira vez depois
-        #                   da menção (usado pra evitar duplicar o toast no fragmento)
-        #   dispensado_em = quando o user clicou em "✕ Fechar" no painel persistente.
-        #                   Esse é o critério para a notificação SAIR da lista visivel.
+        #   visto_em      = quando abriu o Diário (evita duplicar toast)
+        #   dispensado_em = quando clicou em "✕ Fechar" (some do painel)
         c.execute('''CREATE TABLE IF NOT EXISTS mencoes_notificacoes (
-                       id INTEGER PRIMARY KEY AUTOINCREMENT,
-                       usuario_mencionado TEXT NOT NULL,
-                       projeto_id INTEGER NOT NULL,
-                       relato_id INTEGER,
-                       mencionado_por TEXT NOT NULL,
-                       contexto TEXT,            -- 'relato' ou 'resposta_gestor'
-                       data DATETIME DEFAULT CURRENT_TIMESTAMP,
-                       visto_em DATETIME,
-                       dispensado_em DATETIME)''')
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            usuario_mencionado TEXT NOT NULL,
+            projeto_id BIGINT NOT NULL,
+            relato_id BIGINT,
+            mencionado_por TEXT NOT NULL,
+            contexto TEXT,
+            data TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            visto_em TIMESTAMP,
+            dispensado_em TIMESTAMP
+        )''')
         c.execute('''CREATE INDEX IF NOT EXISTS idx_mencoes_notif_usuario_visto
                      ON mencoes_notificacoes(usuario_mencionado, visto_em)''')
         c.execute('''CREATE INDEX IF NOT EXISTS idx_mencoes_notif_usuario_disp
                      ON mencoes_notificacoes(usuario_mencionado, dispensado_em)''')
- 
-        # ── MIGRAÇÕES INCREMENTAIS (bancos já existentes) ──
+
+        # ── DIÁRIO LEITURAS ──
+        c.execute('''CREATE TABLE IF NOT EXISTS diario_leituras (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            diario_id BIGINT NOT NULL,
+            usuario TEXT NOT NULL,
+            lido_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(diario_id, usuario)
+        )''')
+        c.execute("CREATE INDEX IF NOT EXISTS idx_dl_usuario ON diario_leituras(usuario)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_dl_diario  ON diario_leituras(diario_id)")
+
+        # ── MIGRAÇÕES INCREMENTAIS (PG 9.6+: ADD COLUMN IF NOT EXISTS) ──
+        # Pra bancos pré-existentes onde a tabela já existe sem essas colunas.
         migracoes = [
-            ("data_pedido",       "DATE",                    "projetos"),
-            ("previsao_execucao", "DATE",                    "projetos"),
-            ("numero_sei",        "TEXT",                    "projetos"),
-            ("data_recebimento",  "DATE",                    "projetos"),
-            ("data_inicio",       "DATE",                    "projetos"),
-            ("data_termino",      "DATE",                    "projetos"),
-            ("cargo",             "TEXT DEFAULT 'Colaborador'", "usuarios"),
-            ("pergunta_secreta",  "TEXT",                    "usuarios"),
-            ("resposta_secreta",  "TEXT",                    "usuarios"),  # guardada como hash
-            ("email",             "TEXT",                    "usuarios"),  # opcional, p/ uso futuro
-            ("avatar_path",       "TEXT",                    "usuarios"),  # caminho da imagem de avatar
-            ("prioridade",        "TEXT",                    "projetos"),
-            ("resposta_gestor",   "TEXT",                    "diario"),
-            ("anexo",             "TEXT",                    "diario"),
-            ("resolvido",         "INTEGER DEFAULT 0",       "diario"),
-            ("lido_em",           "DATETIME",                "chat"),
-            ("local",             "TEXT",                    "agenda"),
-            ("dispensado_em",     "DATETIME",                "mencoes_notificacoes"),
+            ("projetos",              "data_pedido",        "DATE"),
+            ("projetos",              "previsao_execucao",  "DATE"),
+            ("projetos",              "numero_sei",         "TEXT"),
+            ("projetos",              "data_recebimento",   "DATE"),
+            ("projetos",              "data_inicio",        "DATE"),
+            ("projetos",              "data_termino",       "DATE"),
+            ("usuarios",              "cargo",              "TEXT DEFAULT 'Colaborador'"),
+            ("usuarios",              "pergunta_secreta",   "TEXT"),
+            ("usuarios",              "resposta_secreta",   "TEXT"),
+            ("usuarios",              "email",              "TEXT"),
+            ("usuarios",              "avatar_path",        "TEXT"),
+            ("projetos",              "prioridade",         "TEXT"),
+            ("diario",                "resposta_gestor",    "TEXT"),
+            ("diario",                "anexo",              "TEXT"),
+            ("diario",                "resolvido",          "INTEGER DEFAULT 0"),
+            ("chat",                  "lido_em",            "TIMESTAMP"),
+            ("agenda",                "local",              "TEXT"),
+            ("mencoes_notificacoes",  "dispensado_em",      "TIMESTAMP"),
         ]
-        for col, tipo, tab in migracoes:
+        for tab, col, tipo in migracoes:
             try:
-                c.execute(f"ALTER TABLE {tab} ADD COLUMN {col} {tipo}")
+                c.execute(f"ALTER TABLE {tab} ADD COLUMN IF NOT EXISTS {col} {tipo}")
             except Exception:
-                pass
- 
+                # PG < 9.6 não suporta IF NOT EXISTS no ALTER TABLE — fallback:
+                try:
+                    c.execute(f"ALTER TABLE {tab} ADD COLUMN {col} {tipo}")
+                except Exception:
+                    pass
+
+        # Índice para ordenar por prioridade no kanban
+        c.execute("""CREATE INDEX IF NOT EXISTS idx_projetos_status_prior
+                     ON projetos(status, prioridade)""")
+
         conn.commit()
     except Exception as e:
         print(f"Erro ao inicializar banco: {e}")
+        conn.rollback()
     finally:
         conn.close()
- 
+
 # Stubs de compatibilidade — agora tudo está em criar_tabelas()
-def criar_tabela_agenda():      criar_tabelas()
-def criar_tabela_progresso():   criar_tabelas()
-def criar_tabela_arquivos():    criar_tabelas()
-def criar_tabela_auditoria():   criar_tabelas()
-def criar_tabela_mencoes():     criar_tabelas()
- 
-# ── PROJETOS ──────────────────────────────────
+def criar_tabela_agenda():            criar_tabelas()
+def criar_tabela_progresso():         criar_tabelas()
+def criar_tabela_arquivos():          criar_tabelas()
+def criar_tabela_auditoria():         criar_tabelas()
+def criar_tabela_mencoes():           criar_tabelas()
+def criar_tabela_diario_leituras():   criar_tabelas()
+
+
+# ─── PROJETOS ─────────────────────────────────────────────
 def salvar_projeto(dados):
-    """
-    Insere um novo projeto.
-    Ordem esperada da tupla 'dados' (16 valores):
-        projetista, projeto, endereco, solicitante, contato,
-        numero_sei, data_recebimento, previsao_execucao,
-        data_inicio, data_termino, data_fim,
-        status, link_projeto, demandas, solicitacao, prioridade
- 
-    ATENÇÃO: o campo 'status' (índice 11) deve ser passado como
-    "Em Espera" pela aba Novo Projeto para que o projeto entre
-    na fila de triagem.  Esta função NÃO sobrescreve o que vier
-    na tupla — a responsabilidade é de quem chama.
-    """
+    """Insere um novo projeto e retorna o id (via RETURNING).
+    `dados` é tupla com 16 valores: projetista, projeto, endereco, solicitante,
+    contato, numero_sei, data_recebimento, previsao_execucao, data_inicio,
+    data_termino, data_fim, status, link_projeto, demandas, solicitacao, prioridade."""
     conn = conectar(); c = conn.cursor()
     try:
         c.execute('''INSERT INTO projetos
@@ -382,65 +415,65 @@ def salvar_projeto(dados):
                       numero_sei, data_recebimento, previsao_execucao,
                       data_inicio, data_termino, data_fim,
                       status, link_projeto, demandas, solicitacao, prioridade)
-                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', dados)
+                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                     RETURNING id''', dados)
+        novo_id = c.fetchone()[0]
         conn.commit()
-        return c.lastrowid          # retorna o id do novo projeto
+        return novo_id
     except Exception as e:
         print(f"Erro ao salvar projeto: {e}")
+        conn.rollback()
         return None
     finally:
         conn.close()
- 
+
 def atualizar_projeto_completo(id_p, dados):
-    """
-    dados = (projetista, projeto, endereco, solicitante, contato,
-             numero_sei, data_recebimento, data_inicio, data_termino, data_fim,
-             link_projeto, demandas, solicitacao, prioridade)
-    """
+    """dados = (projetista, projeto, endereco, solicitante, contato,
+                numero_sei, data_recebimento, data_inicio, data_termino, data_fim,
+                link_projeto, demandas, solicitacao, prioridade)"""
     conn = conectar(); c = conn.cursor()
     try:
         c.execute('''UPDATE projetos SET
-                     projetista=?, projeto=?, endereco=?, solicitante=?, contato=?,
-                     numero_sei=?, data_recebimento=?, data_inicio=?, data_termino=?,
-                     data_fim=?, link_projeto=?, demandas=?, solicitacao=?, prioridade=?
-                     WHERE id=?''', (*dados, id_p))
+                     projetista=%s, projeto=%s, endereco=%s, solicitante=%s, contato=%s,
+                     numero_sei=%s, data_recebimento=%s, data_inicio=%s, data_termino=%s,
+                     data_fim=%s, link_projeto=%s, demandas=%s, solicitacao=%s, prioridade=%s
+                     WHERE id=%s''', (*dados, id_p))
         conn.commit()
     finally:
         conn.close()
- 
+
 def atualizar_campo_projeto(id_p, coluna, valor):
     conn = conectar(); c = conn.cursor()
     try:
-        c.execute(f"UPDATE projetos SET {coluna} = ? WHERE id = ?", (valor, int(id_p)))
+        c.execute(f"UPDATE projetos SET {coluna} = %s WHERE id = %s", (valor, int(id_p)))
         conn.commit()
     finally:
         conn.close()
- 
+
 def excluir_projeto(id_p):
     conn = conectar(); c = conn.cursor()
     try:
-        c.execute("DELETE FROM etapas_projeto WHERE projeto_id = ?", (int(id_p),))
+        c.execute("DELETE FROM etapas_projeto WHERE projeto_id = %s", (int(id_p),))
         # CASCADE manual das menções (acesso + notificações) para não deixar órfãos
-        c.execute("DELETE FROM mencoes_acesso WHERE projeto_id = ?", (int(id_p),))
-        c.execute("DELETE FROM mencoes_notificacoes WHERE projeto_id = ?", (int(id_p),))
-        c.execute("DELETE FROM projetos WHERE id = ?", (int(id_p),))
+        c.execute("DELETE FROM mencoes_acesso WHERE projeto_id = %s", (int(id_p),))
+        c.execute("DELETE FROM mencoes_notificacoes WHERE projeto_id = %s", (int(id_p),))
+        c.execute("DELETE FROM projetos WHERE id = %s", (int(id_p),))
         conn.commit()
     finally:
         conn.close()
- 
-# ── ETAPAS ────────────────────────────────────
+
+
+# ─── ETAPAS ───────────────────────────────────────────────
 def salvar_etapas(projeto_id, etapas):
-    """
-    etapas = lista de dicts: {nome, dias_offset, duracao_dias, ordem}
-    Substitui todas as etapas do projeto.
-    """
+    """etapas = lista de dicts: {nome, dias_offset, duracao_dias, ordem}.
+    Substitui todas as etapas do projeto."""
     conn = conectar(); c = conn.cursor()
     try:
-        c.execute("DELETE FROM etapas_projeto WHERE projeto_id = ?", (int(projeto_id),))
+        c.execute("DELETE FROM etapas_projeto WHERE projeto_id = %s", (int(projeto_id),))
         for et in etapas:
             c.execute('''INSERT INTO etapas_projeto
                          (projeto_id, nome, dias_offset, duracao_dias, ordem)
-                         VALUES (?,?,?,?,?)''',
+                         VALUES (%s,%s,%s,%s,%s)''',
                       (int(projeto_id),
                        et['nome'],
                        int(et.get('dias_offset', 0)),
@@ -449,18 +482,18 @@ def salvar_etapas(projeto_id, etapas):
         conn.commit()
     finally:
         conn.close()
- 
+
 def listar_etapas(projeto_id):
     """Retorna lista de dicts ordenada por 'ordem'."""
     conn = conectar(); c = conn.cursor()
     c.execute('''SELECT id, nome, dias_offset, duracao_dias, ordem
-                 FROM etapas_projeto WHERE projeto_id = ?
+                 FROM etapas_projeto WHERE projeto_id = %s
                  ORDER BY ordem ASC''', (int(projeto_id),))
     cols = ['id', 'nome', 'dias_offset', 'duracao_dias', 'ordem']
     rows = [dict(zip(cols, r)) for r in c.fetchall()]
     conn.close()
     return rows
- 
+
 def listar_etapas_todos_projetos():
     """Retorna todas as etapas com nome do projeto — usado no Gantt."""
     conn = conectar(); c = conn.cursor()
@@ -473,155 +506,160 @@ def listar_etapas_todos_projetos():
     rows = [dict(zip(cols, r)) for r in c.fetchall()]
     conn.close()
     return rows
- 
-# ── AGENDA ────────────────────────────────────
+
+
+# ─── AGENDA ───────────────────────────────────────────────
 def salvar_evento(titulo, tipo, d_ini, d_fim, resp, desc, local=''):
     conn = conectar(); c = conn.cursor()
     resp_str = ", ".join(resp) if isinstance(resp, list) else resp
     c.execute('''INSERT INTO agenda
                  (titulo, tipo, data_inicio, data_fim, responsaveis, descricao, local)
-                 VALUES (?,?,?,?,?,?,?)''',
+                 VALUES (%s,%s,%s,%s,%s,%s,%s)
+                 RETURNING id''',
               (titulo, tipo, str(d_ini), str(d_fim), resp_str, desc, local))
+    novo_id = c.fetchone()[0]
     conn.commit()
-    novo_id = c.lastrowid
     conn.close()
     return novo_id
- 
+
 def atualizar_evento(id_ev, titulo, tipo, d_ini, d_fim, resp, desc, local=''):
     conn = conectar(); c = conn.cursor()
     resp_str = ", ".join(resp) if isinstance(resp, list) else resp
     c.execute('''UPDATE agenda SET
-                 titulo=?, tipo=?, data_inicio=?, data_fim=?,
-                 responsaveis=?, descricao=?, local=?
-                 WHERE id=?''',
+                 titulo=%s, tipo=%s, data_inicio=%s, data_fim=%s,
+                 responsaveis=%s, descricao=%s, local=%s
+                 WHERE id=%s''',
               (titulo, tipo, str(d_ini), str(d_fim), resp_str, desc, local, int(id_ev)))
     conn.commit()
     conn.close()
- 
+
 def excluir_evento(id_ev):
     conn = conectar(); c = conn.cursor()
-    c.execute("DELETE FROM agenda WHERE id = ?", (int(id_ev),))
+    c.execute("DELETE FROM agenda WHERE id = %s", (int(id_ev),))
     conn.commit()
     conn.close()
- 
-# ── DIÁRIO ────────────────────────────────────
+
+
+# ─── DIÁRIO ───────────────────────────────────────────────
 def excluir_registro_diario(id_relato):
     conn = conectar(); c = conn.cursor()
     try:
-        c.execute("DELETE FROM diario WHERE id = ?", (id_relato,))
+        c.execute("DELETE FROM diario WHERE id = %s", (id_relato,))
         conn.commit()
     finally:
         conn.close()
- 
-# ── CHAT ──────────────────────────────────────
+
+
+# ─── CHAT ─────────────────────────────────────────────────
 def excluir_mensagem_chat(id_msg):
     conn = conectar(); c = conn.cursor()
     try:
-        c.execute("DELETE FROM chat WHERE id = ?", (id_msg,))
+        c.execute("DELETE FROM chat WHERE id = %s", (id_msg,))
         conn.commit()
     finally:
         conn.close()
- 
+
 def editar_mensagem_chat(id_msg, nova_mensagem):
     conn = conectar(); c = conn.cursor()
     try:
-        c.execute("UPDATE chat SET mensagem = ? WHERE id = ?", (nova_mensagem, id_msg))
+        c.execute("UPDATE chat SET mensagem = %s WHERE id = %s", (nova_mensagem, id_msg))
         conn.commit()
     finally:
         conn.close()
- 
+
 def contar_nao_lidas(usuario, remetente=None):
     conn = conectar(); c = conn.cursor()
     if remetente:
-        c.execute("SELECT COUNT(*) FROM chat WHERE destinatario=? AND remetente=? AND lido_em IS NULL",
+        c.execute("SELECT COUNT(*) FROM chat WHERE destinatario=%s AND remetente=%s AND lido_em IS NULL",
                   (usuario, remetente))
     else:
-        c.execute("SELECT COUNT(*) FROM chat WHERE destinatario=? AND lido_em IS NULL", (usuario,))
+        c.execute("SELECT COUNT(*) FROM chat WHERE destinatario=%s AND lido_em IS NULL", (usuario,))
     n = c.fetchone()[0]
     conn.close()
     return int(n or 0)
- 
+
 def listar_remetentes_com_nao_lidas(usuario):
     conn = conectar(); c = conn.cursor()
     c.execute("""SELECT remetente, COUNT(*) FROM chat
-                 WHERE destinatario=? AND lido_em IS NULL
+                 WHERE destinatario=%s AND lido_em IS NULL
                  GROUP BY remetente""", (usuario,))
     rows = c.fetchall()
     conn.close()
     return [(r[0], int(r[1])) for r in rows]
- 
+
 def marcar_lidas(usuario, remetente):
     conn = conectar(); c = conn.cursor()
     c.execute("""UPDATE chat SET lido_em=CURRENT_TIMESTAMP
-                 WHERE destinatario=? AND remetente=? AND lido_em IS NULL""",
+                 WHERE destinatario=%s AND remetente=%s AND lido_em IS NULL""",
               (usuario, remetente))
     conn.commit()
     conn.close()
- 
-# ── USUÁRIOS ──────────────────────────────────
+
+
+# ─── USUÁRIOS ─────────────────────────────────────────────
 def salvar_usuario(nome, senha, perfil, cargo="Colaborador"):
     conn = conectar(); c = conn.cursor()
     try:
-        c.execute("INSERT INTO usuarios (nome, senha, perfil, cargo) VALUES (?,?,?,?)",
+        c.execute("INSERT INTO usuarios (nome, senha, perfil, cargo) VALUES (%s,%s,%s,%s)",
                   (nome, gerar_hash(senha), perfil, cargo))
         conn.commit()
         return True
     except Exception:
+        conn.rollback()
         return False
     finally:
         conn.close()
- 
-# ── PROGRESSO ─────────────────────────────────
-# (mantido para compatibilidade — tabela já criada em criar_tabelas)
- 
-# ── AUDITORIA ─────────────────────────────────
+
+
+# ─── AUDITORIA ────────────────────────────────────────────
 def log_aud(usuario, acao, entidade='', entidade_id=None, detalhes=''):
     try:
         conn = conectar(); c = conn.cursor()
         c.execute("""INSERT INTO auditoria (usuario, acao, entidade, entidade_id, detalhes)
-                     VALUES (?,?,?,?,?)""",
+                     VALUES (%s,%s,%s,%s,%s)""",
                   (usuario or '', acao, entidade or '',
                    int(entidade_id) if entidade_id is not None else None,
                    str(detalhes)[:500]))
         conn.commit(); conn.close()
     except Exception:
         pass
- 
+
 def listar_auditoria(limit=200, filtro_usuario=None, filtro_acao=None):
     conn = conectar(); c = conn.cursor()
     where, params = [], []
     if filtro_usuario:
-        where.append("usuario = ?"); params.append(filtro_usuario)
+        where.append("usuario = %s"); params.append(filtro_usuario)
     if filtro_acao:
-        where.append("acao LIKE ?"); params.append(f"%{filtro_acao}%")
+        where.append("acao ILIKE %s"); params.append(f"%{filtro_acao}%")
     sql = "SELECT id, data, usuario, acao, entidade, entidade_id, detalhes FROM auditoria"
     if where:
         sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY data DESC LIMIT ?"; params.append(int(limit))
+    sql += " ORDER BY data DESC LIMIT %s"; params.append(int(limit))
     c.execute(sql, params)
     rows = c.fetchall()
     conn.close()
     return rows
- 
-# ── ARQUIVOS ──────────────────────────────────
+
+
+# ─── ARQUIVOS ─────────────────────────────────────────────
 PASTA_ANEXOS = 'anexos'
- 
+
 def salvar_arquivo(projeto_id, nome_original, path_arquivo, descricao, autor,
                    tamanho_bytes, mime_type=''):
     conn = conectar(); c = conn.cursor()
     c.execute('''INSERT INTO arquivos
                  (projeto_id, nome_original, path_arquivo, descricao, autor, tamanho_bytes, mime_type)
-                 VALUES (?,?,?,?,?,?,?)''',
+                 VALUES (%s,%s,%s,%s,%s,%s,%s)''',
               (int(projeto_id), nome_original, path_arquivo, descricao or '',
                autor or '', int(tamanho_bytes or 0), mime_type or ''))
     conn.commit(); conn.close()
- 
+
 def listar_arquivos(projeto_id=None):
     conn = conectar(); c = conn.cursor()
     if projeto_id is not None:
         c.execute('''SELECT id, projeto_id, nome_original, path_arquivo,
                             descricao, autor, data_upload, tamanho_bytes
-                     FROM arquivos WHERE projeto_id=? ORDER BY data_upload DESC''',
+                     FROM arquivos WHERE projeto_id=%s ORDER BY data_upload DESC''',
                   (int(projeto_id),))
     else:
         c.execute('''SELECT id, projeto_id, nome_original, path_arquivo,
@@ -630,19 +668,19 @@ def listar_arquivos(projeto_id=None):
     rows = c.fetchall()
     conn.close()
     return rows
- 
+
 def excluir_arquivo(id_arq):
     conn = conectar(); c = conn.cursor()
-    c.execute("SELECT path_arquivo FROM arquivos WHERE id=?", (int(id_arq),))
+    c.execute("SELECT path_arquivo FROM arquivos WHERE id=%s", (int(id_arq),))
     row = c.fetchone()
     if row and row[0] and os.path.exists(row[0]):
         try:
             os.remove(row[0])
         except Exception:
             pass
-    c.execute("DELETE FROM arquivos WHERE id=?", (int(id_arq),))
+    c.execute("DELETE FROM arquivos WHERE id=%s", (int(id_arq),))
     conn.commit(); conn.close()
- 
+
 def caminho_seguro_para_anexo(projeto_id, nome_original):
     import re
     nome_seguro = re.sub(r'[^A-Za-z0-9._\-]', '_', nome_original)[:120]
@@ -650,59 +688,44 @@ def caminho_seguro_para_anexo(projeto_id, nome_original):
     pasta = os.path.join(PASTA_ANEXOS, str(int(projeto_id)))
     return pasta, os.path.join(pasta, f"{ts}_{nome_seguro}")
 
-def criar_tabela_diario_leituras():
-    """Tabela que rastreia quais registros do diário cada usuário já leu."""
-    conn = conectar(); c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS diario_leituras (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        diario_id INTEGER NOT NULL,
-        usuario TEXT NOT NULL,
-        lido_em DATETIME DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(diario_id, usuario)
-    )''')
-    c.execute("CREATE INDEX IF NOT EXISTS idx_dl_usuario ON diario_leituras(usuario)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_dl_diario  ON diario_leituras(diario_id)")
-    conn.commit(); conn.close()
 
+# ─── DIÁRIO LEITURAS ──────────────────────────────────────
 def marcar_diario_lido(diario_id, usuario):
-    """Marca um registro do diário como lido por um usuário."""
+    """Marca um registro do diário como lido por um usuário (idempotente)."""
     try:
         conn = conectar(); c = conn.cursor()
-        c.execute("""INSERT OR IGNORE INTO diario_leituras (diario_id, usuario)
-                     VALUES (?,?)""", (int(diario_id), usuario))
+        c.execute("""INSERT INTO diario_leituras (diario_id, usuario)
+                     VALUES (%s,%s)
+                     ON CONFLICT (diario_id, usuario) DO NOTHING""",
+                  (int(diario_id), usuario))
         conn.commit(); conn.close()
     except Exception:
         pass
 
 def marcar_projeto_diario_lido(projeto_id, usuario):
-    """Marca todos os registros de um projeto como lidos pelo usuário."""
+    """Marca todos os registros de um projeto como lidos pelo usuário (idempotente)."""
     try:
         conn = conectar(); c = conn.cursor()
-        # Busca todos os ids do diário desse projeto
-        c.execute("SELECT id FROM diario WHERE projeto_id = ?", (int(projeto_id),))
-        ids = [r[0] for r in c.fetchall()]
-        for did in ids:
-            c.execute("""INSERT OR IGNORE INTO diario_leituras (diario_id, usuario)
-                         VALUES (?,?)""", (did, usuario))
+        # Uma única query (mais eficiente que loop)
+        c.execute("""INSERT INTO diario_leituras (diario_id, usuario)
+                     SELECT id, %s FROM diario WHERE projeto_id = %s
+                     ON CONFLICT (diario_id, usuario) DO NOTHING""",
+                  (usuario, int(projeto_id)))
         conn.commit(); conn.close()
     except Exception:
         pass
 
 def contar_nao_lidos_diario(usuario):
-    """
-    Retorna dict {projeto_id: qtd_nao_lidos} para o usuário.
-    Não lido = registro do diário que não tem entrada na tabela diario_leituras
-    para esse usuário, E que não foi criado pelo próprio usuário.
-    """
+    """Retorna dict {projeto_id: qtd_nao_lidos} para o usuário."""
     try:
         conn = conectar(); c = conn.cursor()
         c.execute("""
             SELECT d.projeto_id, COUNT(*) as nao_lidos
             FROM diario d
-            WHERE d.autor != ?
+            WHERE d.autor != %s
               AND NOT EXISTS (
                   SELECT 1 FROM diario_leituras dl
-                  WHERE dl.diario_id = d.id AND dl.usuario = ?
+                  WHERE dl.diario_id = d.id AND dl.usuario = %s
               )
             GROUP BY d.projeto_id
         """, (usuario, usuario))
@@ -713,9 +736,7 @@ def contar_nao_lidos_diario(usuario):
         return {}
 
 def total_nao_lidos_diario(usuario):
-    """Total geral de registros não lidos no diário para o usuário.
-    NÃO respeita visibilidade — use total_nao_lidos_diario_visivel quando souber
-    a lista de projetos que o usuário pode ver."""
+    """Total geral de registros não lidos no diário para o usuário."""
     try:
         mapa = contar_nao_lidos_diario(usuario)
         return sum(mapa.values())
@@ -737,19 +758,12 @@ def total_nao_lidos_diario_visivel(usuario, projeto_ids_visiveis):
     except Exception:
         return 0
 
-# ── STATUS "Em Espera" ────────────────────────────────────────
-# Não precisa de tabela nova — apenas um novo valor no campo 'status'.
-# A migração abaixo garante que projetos antigos sem status fiquem como 'Em Espera'
-# se não tiverem data_inicio preenchida, mas isso é opcional — o app controla isso.
 
+# ─── STATUS Em Espera ─────────────────────────────────────
 def migrar_status_em_espera():
-    """
-    Projetos novos devem ter status='Em Espera' por padrão.
-    Atualiza o DEFAULT da coluna e cria índice de prioridade para ordenação.
-    """
+    """Garante índice de prioridade para ordenação no kanban Em Espera."""
     conn = conectar(); c = conn.cursor()
     try:
-        # Índice para ordenar por prioridade no kanban Em Espera
         c.execute("""CREATE INDEX IF NOT EXISTS idx_projetos_status_prior
                      ON projetos(status, prioridade)""")
         conn.commit()
@@ -759,7 +773,7 @@ def migrar_status_em_espera():
         conn.close()
 
 
-# ── MENÇÕES NO DIÁRIO ─────────────────────────
+# ─── MENÇÕES NO DIÁRIO ────────────────────────────────────
 # Modelo: duas tabelas (mencoes_acesso + mencoes_notificacoes).
 #   - mencoes_acesso: 1 linha por (usuário, projeto). UNIQUE garante idempotência.
 #     Representa o "direito permanente" de ver o projeto via menção.
@@ -772,9 +786,10 @@ def conceder_acesso_por_mencao(usuario, projeto_id, concedido_por, relato_id=Non
     conn = conectar(); c = conn.cursor()
     try:
         c.execute(
-            """INSERT OR IGNORE INTO mencoes_acesso
+            """INSERT INTO mencoes_acesso
                (usuario_mencionado, projeto_id, concedido_por, relato_id)
-               VALUES (?,?,?,?)""",
+               VALUES (%s,%s,%s,%s)
+               ON CONFLICT (usuario_mencionado, projeto_id) DO NOTHING""",
             (usuario, int(projeto_id), concedido_por, relato_id),
         )
         criou = c.rowcount > 0
@@ -790,7 +805,7 @@ def registrar_notificacao_mencao(usuario, projeto_id, relato_id, mencionado_por,
         c.execute(
             """INSERT INTO mencoes_notificacoes
                (usuario_mencionado, projeto_id, relato_id, mencionado_por, contexto)
-               VALUES (?,?,?,?,?)""",
+               VALUES (%s,%s,%s,%s,%s)""",
             (usuario, int(projeto_id), relato_id, mencionado_por, contexto),
         )
         conn.commit()
@@ -804,7 +819,7 @@ def listar_projetos_por_mencao(usuario):
     conn = conectar(); c = conn.cursor()
     try:
         c.execute(
-            "SELECT projeto_id FROM mencoes_acesso WHERE usuario_mencionado = ?",
+            "SELECT projeto_id FROM mencoes_acesso WHERE usuario_mencionado = %s",
             (usuario,),
         )
         return [int(r[0]) for r in c.fetchall()]
@@ -819,7 +834,7 @@ def contar_mencoes_nao_vistas(usuario):
     try:
         c.execute(
             "SELECT COUNT(*) FROM mencoes_notificacoes "
-            "WHERE usuario_mencionado = ? AND visto_em IS NULL",
+            "WHERE usuario_mencionado = %s AND visto_em IS NULL",
             (usuario,),
         )
         return int(c.fetchone()[0] or 0)
@@ -835,7 +850,7 @@ def listar_mencoes_nao_vistas(usuario):
         c.execute(
             "SELECT mencionado_por, projeto_id, contexto "
             "FROM mencoes_notificacoes "
-            "WHERE usuario_mencionado = ? AND visto_em IS NULL "
+            "WHERE usuario_mencionado = %s AND visto_em IS NULL "
             "ORDER BY id ASC",
             (usuario,),
         )
@@ -851,7 +866,7 @@ def marcar_mencoes_vistas(usuario):
     try:
         c.execute(
             "UPDATE mencoes_notificacoes SET visto_em = CURRENT_TIMESTAMP "
-            "WHERE usuario_mencionado = ? AND visto_em IS NULL",
+            "WHERE usuario_mencionado = %s AND visto_em IS NULL",
             (usuario,),
         )
         conn.commit()
@@ -860,10 +875,6 @@ def marcar_mencoes_vistas(usuario):
 
 
 # === MENÇÕES — PAINEL PERSISTENTE (dispensar manualmente) ============================
-# Separação semântica:
-#   visto_em      = abriu o Diario  -> usado pelo fragmento de toast (não duplica)
-#   dispensado_em = clicou em fechar -> usado pelo painel persistente E pelo badge
-
 def contar_mencoes_pendentes(usuario):
     """Quantas menções AINDA aparecem no painel (não dispensadas)."""
     if not usuario:
@@ -872,7 +883,7 @@ def contar_mencoes_pendentes(usuario):
     try:
         c.execute(
             "SELECT COUNT(*) FROM mencoes_notificacoes "
-            "WHERE usuario_mencionado = ? AND dispensado_em IS NULL",
+            "WHERE usuario_mencionado = %s AND dispensado_em IS NULL",
             (usuario,),
         )
         return int(c.fetchone()[0] or 0)
@@ -895,7 +906,7 @@ def listar_mencoes_pendentes(usuario):
                FROM mencoes_notificacoes n
                LEFT JOIN projetos p   ON p.id = n.projeto_id
                LEFT JOIN diario   d   ON d.id = n.relato_id
-               WHERE n.usuario_mencionado = ? AND n.dispensado_em IS NULL
+               WHERE n.usuario_mencionado = %s AND n.dispensado_em IS NULL
                ORDER BY n.id DESC""",
             (usuario,),
         )
@@ -909,7 +920,7 @@ def dispensar_mencao(id_notif):
     try:
         c.execute(
             "UPDATE mencoes_notificacoes SET dispensado_em = CURRENT_TIMESTAMP "
-            "WHERE id = ?",
+            "WHERE id = %s",
             (int(id_notif),),
         )
         conn.commit()
@@ -924,7 +935,7 @@ def dispensar_todas_mencoes(usuario):
     try:
         c.execute(
             "UPDATE mencoes_notificacoes SET dispensado_em = CURRENT_TIMESTAMP "
-            "WHERE usuario_mencionado = ? AND dispensado_em IS NULL",
+            "WHERE usuario_mencionado = %s AND dispensado_em IS NULL",
             (usuario,),
         )
         conn.commit()
@@ -950,8 +961,7 @@ def revogar_mencao(id_mencao):
     """Apaga uma concessão (chamado pelo Gestor na aba Acessos)."""
     conn = conectar(); c = conn.cursor()
     try:
-        c.execute("DELETE FROM mencoes_acesso WHERE id = ?", (int(id_mencao),))
+        c.execute("DELETE FROM mencoes_acesso WHERE id = %s", (int(id_mencao),))
         conn.commit()
     finally:
         conn.close()
-

@@ -243,7 +243,7 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
     conn = db.conectar()
     try:
         df_proj_d = pd.read_sql_query(
-            "SELECT * FROM diario WHERE projeto_id = ? ORDER BY id DESC",
+            "SELECT * FROM diario WHERE projeto_id = %s ORDER BY id DESC",
             conn, params=(int(proj_id),),
         )
     finally:
@@ -345,14 +345,14 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
                 if bc4.button("✅ Resolver", key=f"btn_res_{d['id']}", use_container_width=True):
                     with db.conectar() as conn:
                         _c = conn.cursor()
-                        _c.execute("UPDATE diario SET resolvido=1 WHERE id=?", (d['id'],))
+                        _c.execute("UPDATE diario SET resolvido=1 WHERE id=%s", (d['id'],))
                         conn.commit()
                     st.rerun(scope="fragment")
             else:
                 if bc4.button("🔓 Reabrir", key=f"btn_reap_{d['id']}", use_container_width=True):
                     with db.conectar() as conn:
                         _c = conn.cursor()
-                        _c.execute("UPDATE diario SET resolvido=0 WHERE id=?", (d['id'],))
+                        _c.execute("UPDATE diario SET resolvido=0 WHERE id=%s", (d['id'],))
                         conn.commit()
                     st.rerun(scope="fragment")
 
@@ -388,7 +388,7 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
 
                     with db.conectar() as conn:
                         _c = conn.cursor()
-                        _c.execute("UPDATE diario SET resposta_gestor=? WHERE id=?", (texto_final, d['id']))
+                        _c.execute("UPDATE diario SET resposta_gestor=%s WHERE id=%s", (texto_final, d['id']))
                         conn.commit()
 
                     _processar_mencoes_diario(
@@ -529,9 +529,9 @@ def _load_df_p(usuario, perfil):
         if perfil in ("Projetista", "Visualizador"):
             projs = db.listar_projetos_por_mencao(usuario)
             params = [f"%{usuario}%"]
-            sql = "SELECT * FROM projetos WHERE projetista LIKE ?"
+            sql = "SELECT * FROM projetos WHERE projetista LIKE %s"
             if projs:
-                sql += " OR id IN (" + ",".join("?" * len(projs)) + ")"
+                sql += " OR id IN (" + ",".join(["%s"] * len(projs)) + ")"
                 params.extend(int(x) for x in projs)
             return pd.read_sql_query(sql, conn, params=tuple(params))
         return pd.read_sql_query("SELECT * FROM projetos", conn)
@@ -2126,7 +2126,7 @@ else:
             # Recarrega sempre do banco para ter dados frescos
             conn = db.conectar()
             _df_ed = pd.read_sql_query(
-                "SELECT * FROM projetos WHERE id = ?", conn, params=(int(id_ed),)
+                "SELECT * FROM projetos WHERE id = %s", conn, params=(int(id_ed),)
             )
             conn.close()
  
@@ -2389,7 +2389,7 @@ else:
             else:
                 conn = db.conectar()
                 df_prog = pd.read_sql(
-                    "SELECT * FROM progresso_disciplinas WHERE projeto_id = ?",
+                    "SELECT * FROM progresso_disciplinas WHERE projeto_id = %s",
                     conn, params=(int(id_ed),),
                 )
                 conn.close()
@@ -2403,7 +2403,7 @@ else:
                         _c = db.conectar(); _cu = _c.cursor()
                         _cu.execute(
                             "INSERT INTO progresso_disciplinas "
-                            "(projeto_id, disciplina, concluido, percentual) VALUES (?,?,?,?)",
+                            "(projeto_id, disciplina, concluido, percentual) VALUES (%s,%s,%s,%s)",
                             (int(id_ed), _d, 0, 0),
                         )
                         _c.commit(); _c.close()
@@ -2414,7 +2414,7 @@ else:
                         _c = db.conectar(); _cu = _c.cursor()
                         _cu.execute(
                             "DELETE FROM progresso_disciplinas "
-                            "WHERE projeto_id=? AND disciplina=?",
+                            "WHERE projeto_id=%s AND disciplina=%s",
                             (int(id_ed), _d),
                         )
                         _c.commit(); _c.close()
@@ -2501,7 +2501,7 @@ else:
                         for _s, _p, _i in novos_vals:
                             _cu.execute(
                                 "UPDATE progresso_disciplinas "
-                                "SET concluido=?, percentual=? WHERE id=?",
+                                "SET concluido=%s, percentual=%s WHERE id=%s",
                                 (_s, _p, _i),
                             )
                         _c.commit(); _c.close()
@@ -2818,14 +2818,15 @@ else:
                         c.execute(
                             """INSERT INTO diario
                             (projeto_id, data, executado, autor, disciplina, anexo, resolvido)
-                            VALUES (?,?,?,?,?,?,?)""",
+                            VALUES (%s,%s,%s,%s,%s,%s,%s)
+                            RETURNING id""",
                             (int(pid),
                             datetime.now().strftime("%d/%m/%Y %H:%M"),
                             texto_final_banco,
                             st.session_state.usuario,
                             r_disc, path, 0),
                         )
-                        _novo_relato_id = c.lastrowid
+                        _novo_relato_id = c.fetchone()[0]
                         conn.commit()
 
                     # Processa mencoes @"Nome" do texto: concede acesso + notifica + audita
@@ -2989,8 +2990,8 @@ else:
         try:
             conn = db.conectar()
             df_m = pd.read_sql_query(
-                "SELECT * FROM chat WHERE (remetente = ? AND destinatario = ?) "
-                "OR (remetente = ? AND destinatario = ?) ORDER BY id ASC",
+                "SELECT * FROM chat WHERE (remetente = %s AND destinatario = %s) "
+                "OR (remetente = %s AND destinatario = %s) ORDER BY id ASC",
                 conn, params=(usuario, contato_nome, contato_nome, usuario),
             )
             conn.close()
@@ -3106,7 +3107,7 @@ else:
                     if msg_input:
                         conn = db.conectar(); c = conn.cursor()
                         agora = datetime.now().strftime("%H:%M")
-                        c.execute("INSERT INTO chat (remetente, destinatario, mensagem, data) VALUES (?,?,?,?)",
+                        c.execute("INSERT INTO chat (remetente, destinatario, mensagem, data) VALUES (%s,%s,%s,%s)",
                                  (st.session_state.usuario, contato, msg_input, agora))
                         conn.commit(); conn.close()
                         st.rerun()  # pagina inteira -> remetente ve a mensagem imediato
@@ -3153,14 +3154,14 @@ else:
                     if st.form_submit_button("Finalizar Cadastro", use_container_width=True):
                         if n_nome and n_senha:
                             conn = db.conectar(); c = conn.cursor()
-                            c.execute("SELECT * FROM usuarios WHERE nome = ?", (n_nome,))
+                            c.execute("SELECT * FROM usuarios WHERE nome = %s", (n_nome,))
                             if c.fetchone():
                                 st.error("Este nome já está cadastrado.")
                             else:
                                 _resp_hash = db.gerar_hash(n_resp.strip().lower()) if n_resp.strip() else None
                                 c.execute(
                                     "INSERT INTO usuarios (nome, senha, perfil, cargo, email, pergunta_secreta, resposta_secreta) "
-                                    "VALUES (?,?,?,?,?,?,?)",
+                                    "VALUES (%s,%s,%s,%s,%s,%s,%s)",
                                     (n_nome, db.gerar_hash(n_senha), n_perf, n_cargo,
                                      n_email.strip() or None,
                                      n_perg.strip() or None, _resp_hash),
@@ -3252,7 +3253,7 @@ else:
                             st.caption("Esta ação não pode ser desfeita. O usuário perderá acesso imediatamente.")
                             if st.button("✅ Sim, remover", key=f"yes_del_u_{u['id']}", type="primary", use_container_width=True):
                                 conn = db.conectar(); c = conn.cursor()
-                                c.execute("DELETE FROM usuarios WHERE id = ?", (u['id'],))
+                                c.execute("DELETE FROM usuarios WHERE id = %s", (u['id'],))
                                 conn.commit(); conn.close()
                                 db.log_aud(st.session_state.usuario, 'excluir', 'usuario', u['id'], f"nome='{u['nome']}'")
                                 st.toast(f"Membro '{u['nome']}' removido.")
@@ -3319,8 +3320,8 @@ else:
                                 _resp_para_salvar = u.get('resposta_secreta')
                             conn = db.conectar(); c = conn.cursor()
                             c.execute(
-                                "UPDATE usuarios SET nome=?, cargo=?, senha=?, perfil=?, "
-                                "pergunta_secreta=?, resposta_secreta=? WHERE id=?",
+                                "UPDATE usuarios SET nome=%s, cargo=%s, senha=%s, perfil=%s, "
+                                "pergunta_secreta=%s, resposta_secreta=%s WHERE id=%s",
                                 (up_nome, up_cargo, _senha_para_salvar, up_perf,
                                  up_perg.strip() or None, _resp_para_salvar, u['id']),
                             )
