@@ -423,16 +423,23 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
             f'⏱ {_horas_num:.2f} h</span>'
             if _horas_num > 0 else ''
         )
+        # Bloco "direito" (horas + tempo relativo) inline. NÃO pode ficar em
+        # linhas indentadas dentro do f-string — a renderização markdown do
+        # Streamlit interpreta 4+ espaços de indentação como bloco de código
+        # `<pre>`, e o HTML aparece literal com o text-transform:uppercase do
+        # pai virando "<SPAN TITLE=...>". Aprendido na carne em maio/2026.
+        _right_chip = (
+            f'<span style="display:flex;gap:8px;align-items:center;">'
+            f'{_horas_chip}'
+            f'<span title="{d["data"]}">{_tempo_relativo(d["data"])}</span>'
+            f'</span>'
+        )
 
         st.markdown(f"""
             {_wrap_pre}
             <div style="background-color:{cor_topo};color:white; padding:12px 15px;border-radius:10px 10px 0 0;margin-top:10px;">
             <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:10px;text-transform:uppercase;letter-spacing:1px;">
-                <span style="background:rgba(0,0,0,0.3);padding:2px 8px;border-radius:4px;">{tag}</span>
-                <span style="display:flex;gap:8px;align-items:center;">
-                    {_horas_chip}
-                    <span title="{d['data']}">{_tempo_relativo(d['data'])}</span>
-                </span>
+                <span style="background:rgba(0,0,0,0.3);padding:2px 8px;border-radius:4px;">{tag}</span>{_right_chip}
             </div>
             <div style="font-size:16px;font-weight:700;margin-top:6px;">
                 {d['disciplina'] if d['disciplina'] else 'Geral'}
