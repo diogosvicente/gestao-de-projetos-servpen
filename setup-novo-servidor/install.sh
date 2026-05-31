@@ -184,7 +184,8 @@ address = "127.0.0.1"
 port = ${STREAMLIT_PORT}
 baseUrlPath = "${URL_PATH}"
 enableCORS = false
-enableXsrfProtection = false
+# XSRF Protection on — Apache preserva Host via ProxyPreserveHost.
+enableXsrfProtection = true
 enableWebsocketCompression = false
 maxUploadSize = 100
 fileWatcherType = "poll"

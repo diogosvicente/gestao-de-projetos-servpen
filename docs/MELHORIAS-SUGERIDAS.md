@@ -64,7 +64,7 @@ maduro (psycopg3), defaults sensatos.
 | 🟠 | **Token de sessão no querystring** (`?t=...`) | Aparece em logs do Apache, no histórico do browser, em headers Referer | Migrar pra cookie HttpOnly; precisa sessão server-side real | Médio |
 | 🟠 | **Upload de arquivo sem validação** | Aceita qualquer extensão até 100MB. `.html` malicioso? Sem sanitização? | Whitelist de extensões + magic-byte check (`python-magic`) + opcionalmente ClamAV | Baixo |
 | 🟠 | **Sem complexidade mínima de senha** | "123" é aceito | Mínimo 8 chars + 1 número ou classe diversa | Baixo |
-| 🟠 | **XSRF desabilitado** (`enableXsrfProtection = false`) | Foi necessário pra funcionar com o Apache, mas deixa CSRF aberto | Re-habilitar com `trusted_origins` configurado | Médio |
+| ✅ | ~~**XSRF desabilitado**~~ Re-habilitado em maio/2026 | — | `enableXsrfProtection = true` no config.toml. Funciona porque vhost Apache usa `ProxyPreserveHost On` + `X-Forwarded-Host`. | ✅ Feito |
 | 🟢 | **Auditoria sem IP** | Loga "Sara fez X" mas não de onde | Adicionar `ip` na tabela `auditoria` (vem do header `X-Forwarded-For`) | Baixo |
 | 🟢 | **Sessões de 7 dias sem rotação** | Token roubado vale uma semana inteira | Rotacionar token a cada N horas de uso | Baixo |
 | 🟢 | **Sem 2FA** | Para perfis Gestor seria desejável | TOTP (Google Authenticator) via `pyotp` | Médio |
@@ -107,11 +107,11 @@ maduro (psycopg3), defaults sensatos.
 | 🔴 | **Backup automático diário** do Postgres (timer systemd) | Hoje só backup quando `install.sh` roda. Se corromper hoje, recupera de quando? | ✅ Feito |
 | 🟠 | **Modularizar `app.py`** em `pages/` | 3.500 linhas num arquivo só. Insustentável a longo prazo | Médio |
 | 🟠 | **Testes automatizados** (pelo menos smoke tests) | Zero coverage. Quebra calado ao mexer em qualquer coisa | Médio |
-| 🟠 | **Logs estruturados** | Hoje erro do usuário não vira log. Difícil diagnosticar incidente | Baixo |
+| ✅ | ~~**Logs estruturados**~~ Implementado em maio/2026 | `logging.basicConfig` no boot do `app.py` com timestamp+nível+módulo. `LOG_LEVEL` env var controla verbosidade (default INFO; DEBUG pra investigar). | ✅ Feito |
 | 🟠 | **Monitoramento** (uptime, error rate) | Quando o serviço cai, ninguém sabe até alguém reclamar | Baixo (UptimeRobot grátis serve) |
 | 🟠 | **Config por env var**, não hardcoded | IPs no código, paths no código. Mudar de servidor exige editar código | Baixo |
 | 🟢 | **Migrations de DB em arquivos separados** (não ALTER inline em código) | Hoje migração é "tente ALTER, ignore erro". Difícil saber o estado real do schema | Médio |
-| 🟢 | **Linter + formatador** (ruff + black) | Estilo varia muito. Diff de revisão fica poluído | Baixo |
+| ✅ | ~~**Linter + formatador**~~ ruff configurado em `pyproject.toml` (maio/2026). Rodar: `ruff check .` (lint) + `ruff format .` (format). | ✅ Feito |
 | 🟢 | **Dockerizar** | Reprodutibilidade real. `docker compose up` em qualquer Linux funciona | Médio |
 
 ---

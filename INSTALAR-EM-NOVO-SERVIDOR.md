@@ -51,6 +51,17 @@ de referência: o app rodando em `http://<IP-DO-SERVIDOR>/gestao-de-projetos/`.
 >   `pd.read_sql_query`. Resolve warning do pandas ("DBAPI desconhecido") e
 >   evita abrir/fechar conexão em cada SELECT. `db.conectar()` continua
 >   existindo para cursor manual em INSERT/UPDATE/DELETE.
+> - **Logging estruturado**: `logging.basicConfig` no boot com formato
+>   `timestamp nível módulo: mensagem`. `LOG_LEVEL` env var controla
+>   (`INFO` default, `DEBUG` pra diagnosticar). Em produção via systemd o
+>   log vai pra `/var/log/gestao-de-projetos.log` (vide
+>   `gestao-de-projetos.service`).
+> - **XSRF Protection re-habilitada** (`enableXsrfProtection = true`).
+>   Funciona porque o vhost Apache usa `ProxyPreserveHost On` +
+>   `RequestHeader set X-Forwarded-Host`.
+> - **ruff** configurado em `pyproject.toml`. Rodar manualmente:
+>   `ruff check .` (lint) e `ruff format .` (format). Não é instalado pelo
+>   `install.sh` (é dev-only).
 
 ---
 

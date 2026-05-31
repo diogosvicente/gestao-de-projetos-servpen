@@ -1,12 +1,34 @@
+import logging
 import streamlit as st
-import pandas as pd                    
-import sqlite3        # <-- Verifique se esta linha existe
-import database as db  # Você definiu como 'db' aqui
+import pandas as pd
+import database as db
 import auth
 import os
 from datetime import datetime
 import plotly.express as px
 import relatorios
+
+
+# ─── LOGGING ─────────────────────────────────────────────────────
+# Configura ANTES de qualquer st.* ou import pesado pra capturar tudo.
+# Em produção (systemd com StandardOutput=append) o log vai pro arquivo;
+# em dev (streamlit run local) vai pro stdout.
+# Nível controlado por env LOG_LEVEL (default INFO; DEBUG pra investigar).
+_LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, _LOG_LEVEL, logging.INFO),
+    format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    force=True,  # sobrescreve config default do Streamlit/Tornado
+)
+# Streamlit/Tornado/Plotly são MUITO verbosos em DEBUG — silencia-os
+# a menos que o usuário explicitamente queira ver tudo.
+if _LOG_LEVEL != "DEBUG":
+    for noisy in ("tornado.access", "tornado.application", "watchdog",
+                  "matplotlib", "PIL", "fontTools", "sqlalchemy.engine"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+log = logging.getLogger(__name__)
+
 
 # 1. CONFIGURAÇÃO DA PÁGINA (Sempre o PRIMEIRO comando Streamlit)
 st.set_page_config(page_title="GESTÃO DE PROJETOS - SERVPEN", layout="wide", page_icon="🏢")

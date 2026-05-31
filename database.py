@@ -12,6 +12,7 @@ ou individualmente:
 O caller é responsável por commit() e close() (ou usar `with conn:`).
 """
 
+import logging
 import psycopg
 import hashlib
 import secrets
@@ -22,6 +23,12 @@ from urllib.parse import quote_plus
 
 from passlib.hash import bcrypt as _bcrypt
 from sqlalchemy import create_engine
+
+
+# ─── LOGGER ─────────────────────────────────────────────────
+# Logger nomeado pelo módulo. Configuração global (nível, formato, handler)
+# fica em `app.py` no boot — aqui só usamos.
+log = logging.getLogger(__name__)
 
 
 # ─── CONEXÃO ──────────────────────────────────────────────
@@ -559,7 +566,7 @@ def criar_tabelas():
 
         conn.commit()
     except Exception as e:
-        print(f"Erro ao inicializar banco: {e}")
+        log.exception("Erro ao inicializar banco: %s", e)
         conn.rollback()
     finally:
         conn.close()
@@ -592,7 +599,7 @@ def salvar_projeto(dados):
         conn.commit()
         return novo_id
     except Exception as e:
-        print(f"Erro ao salvar projeto: {e}")
+        log.exception("Erro ao salvar projeto: %s", e)
         conn.rollback()
         return None
     finally:

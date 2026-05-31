@@ -4,7 +4,11 @@ address = "127.0.0.1"
 port = 8501
 baseUrlPath = "gestao-de-projetos"
 enableCORS = false
-enableXsrfProtection = false
+# XSRF Protection re-habilitada (maio/2026). O vhost Apache já preserva Host
+# via `ProxyPreserveHost On` + `X-Forwarded-Host`, então o check do Streamlit
+# bate. Se algum POST falhar com erro de XSRF token, volte pra `false` e
+# investigue antes de re-habilitar.
+enableXsrfProtection = true
 enableWebsocketCompression = false
 maxUploadSize = 100
 fileWatcherType = "poll"

@@ -1,0 +1,56 @@
+# Configuração do projeto (ruff + ferramentas dev). Não publicamos package
+# nenhum, então não tem [project] section.
+
+[tool.ruff]
+# Stretch: mais que basics, sem virar nazi de estilo. line-length permissivo
+# pra não brigar com strings SQL embutidas + literais bonitos.
+line-length = 110
+target-version = "py312"
+
+# Ignora pastas geradas / dados / scripts legados ainda usando style antigo
+exclude = [
+    ".venv",
+    "venv",
+    ".local",
+    ".cache",
+    "backups",
+    "anexos",
+    "__pycache__",
+    "build",
+    "dist",
+    ".git",
+    ".vscode",
+    ".vscode-server",
+    ".claude",
+    "seed.py",                # marcado obsoleto, formato antigo SQLite
+]
+
+[tool.ruff.lint]
+# Conjunto enxuto: bugs reais + boas práticas, sem regras de estilo
+# subjetivas (W, COM, ANN, D, etc.).
+select = [
+    "E",    # pycodestyle errors (alguns são reais)
+    "F",    # pyflakes — imports não usados, variáveis não usadas, etc.
+    "I",    # isort — ordem de imports
+    "B",    # flake8-bugbear — armadilhas comuns
+    "UP",   # pyupgrade — usa sintaxe moderna do Python disponível
+    "SIM",  # simplify — código simplificável
+]
+# Regras específicas que doem mais que ajudam neste codebase:
+ignore = [
+    "E501",   # line too long — temos SQL inline OK
+    "E402",   # module level import not at top — Streamlit às vezes força
+    "B008",   # function call in default arg — datetime.now() em defaults é OK aqui
+    "SIM108", # ternary nem sempre é mais legível que if/else
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Migração + scripts standalone podem ter prints livres
+"migrar-sqlite-para-postgres.py" = ["T201"]
+
+[tool.ruff.format]
+# Formatador estilo black. Quotes preservadas (não força aspas duplas).
+quote-style = "preserve"
+indent-style = "space"
+line-ending = "lf"
+docstring-code-format = false
