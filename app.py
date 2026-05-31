@@ -4499,6 +4499,11 @@ else:
                         toast.className = 'wa-toast';
                         toast.setAttribute('data-rem', REM);
                     }}
+                    // "📨 Ver mensagem" é um <a target="_top"> em vez de <button>
+                    // porque o iframe do components.html é sandboxed sem
+                    // 'allow-top-navigation' — JS via window.parent.location
+                    // dispara SecurityError. Link com target=_top + click do
+                    // user passa pelo bloqueio (user-activated navigation).
                     toast.innerHTML = ''
                         + '<div class="wa-toast-head">'
                         + '<span>🔔 💬 Nova(s) de <b></b> (<span class="qtd"></span>)</span>'
@@ -4506,25 +4511,36 @@ else:
                         + '</div>'
                         + '<div class="wa-toast-actions">'
                         + '<button class="wa-btn-close">Fechar</button>'
-                        + '<button class="primary wa-btn-go">📨 Ver mensagem</button>'
+                        + '<a class="primary wa-btn-go" target="_top" '
+                        + '   style="display:flex;align-items:center;'
+                        + '          justify-content:center;text-decoration:none;">'
+                        + '📨 Ver mensagem</a>'
                         + '</div>';
                     // Preenche o nome com textContent pra evitar XSS
                     toast.querySelector('.wa-toast-head b').textContent = REM;
                     toast.querySelector('.qtd').textContent = QTD;
 
-                    // Wiring dos botões (usa addEventListener em vez de onclick inline)
+                    // Constrói a URL final pro link "Ver mensagem".
+                    // Preserva todos os query params atuais (?t=token etc.)
+                    // e adiciona _goto_chat=NOME.
+                    try {{
+                        var urlGo = new URL(window.parent.location.href);
+                        urlGo.searchParams.set('_goto_chat', REM);
+                        toast.querySelector('.wa-btn-go')
+                             .setAttribute('href', urlGo.toString());
+                    }} catch (e) {{
+                        // Se window.parent.location.href falhar, ao menos
+                        // o link tenta uma URL relativa (perde o token).
+                        toast.querySelector('.wa-btn-go')
+                             .setAttribute('href',
+                                 '?_goto_chat=' + encodeURIComponent(REM));
+                    }}
+
+                    // Wiring dos botões de fechar
                     toast.querySelector('.wa-toast-close')
                          .addEventListener('click', function () {{ closeToast(toast); }});
                     toast.querySelector('.wa-btn-close')
                          .addEventListener('click', function () {{ closeToast(toast); }});
-                    toast.querySelector('.wa-btn-go')
-                         .addEventListener('click', function () {{
-                             // Preserva token de sessão (?t=...) na URL e
-                             // adiciona _goto_chat=NOME pra Python pegar no rerun.
-                             var url = new URL(window.parent.location.href);
-                             url.searchParams.set('_goto_chat', REM);
-                             window.parent.location.href = url.toString();
-                         }});
 
                     if (!existing) {{
                         stack.appendChild(toast);
