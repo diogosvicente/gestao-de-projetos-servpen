@@ -1,0 +1,172 @@
+# Melhorias Sugeridas
+
+Lista priorizada de melhorias técnicas e de produto pro **Gestão de
+Projetos SERVPEN**, baseada no estado real do código em
+maio/2026 + observações de uso.
+
+> **Como ler este documento.** Cada categoria está ordenada por impacto.
+> A coluna "Esforço" estima quão grande é a mudança (baixo / médio / alto).
+> Itens com 🔴 são **urgentes** (segurança ou correção); 🟠 são importantes
+> a médio prazo; 🟢 são melhorias de qualidade de vida.
+
+---
+
+## 0. Sobre trocar de banco de dados — resposta honesta
+
+O sistema usa **SQLite com WAL ligado**. A pergunta recorrente é "vale a
+pena trocar pra MySQL/PostgreSQL pra ficar mais rápido?".
+
+**Resposta curta:** **não, ainda não.** Trocar agora vai piorar.
+
+**Por quê:**
+
+- O banco **não é o gargalo**. O gargalo é a **CPU do servidor** (AMD
+  Athlon II X2 250, de 2009, sem AVX/AVX2) + o **modelo do Streamlit**
+  (rerun completo a cada clique).
+- SQLite com WAL aguenta **dezenas de usuários** se as escritas forem
+  modestas (que é o caso atual: chat, marcação de leitura, notificações).
+- MySQL/Postgres adicionam **round-trip de rede** a cada query e um
+  **daemon competindo** pela mesma CPU fraca. Em uma máquina já saturada,
+  isso piora.
+- Base é **pequena** (dezenas/centenas de linhas por tabela). SQLite
+  resolve isso trivialmente.
+
+**Quando trocar fará sentido:**
+- ≥50 usuários simultâneos **escrevendo**, OU
+- Base passou de milhões de linhas, OU
+- Múltiplos servidores de app compartilhando o mesmo banco.
+
+**Se migrar um dia, a escolha técnica certa é PostgreSQL** (não MySQL):
+melhor concorrência sob contenção, JSONB se precisar, ecossistema Python
+maduro (psycopg3), defaults sensatos.
+
+---
+
+## 1. Próximos 5 passos recomendados (na ordem)
+
+| # | Passo | Por que | Status |
+|---|---|---|---|
+| 1 | **Git + GitHub privado** | Single point of failure absoluto — sumiu o `app.py` = perdeu o sistema. Já vimos isso acontecer | ✅ **Feito** (repo `diogosvicente/gestao-de-projetos-servpen`) |
+| 2 | **Backup automático diário dos `.db`** | Hoje só faz backup quando o `install.sh` roda. Se algo corromper hoje, último backup foi quando? | Pendente |
+| 3 | **HTTPS** com Let's Encrypt + certbot | Token de sessão vai em texto puro pela rede. Qualquer sniff captura e rouba sessão | Pendente |
+| 4 | **bcrypt** no lugar de SHA-256 puro | Vulnerável a rainbow tables se o `.db` vazar. Migrar hashes existentes incluído no esforço | Pendente |
+| 5 | **Trocar o servidor** (qualquer CPU dos últimos ~8 anos com AVX2) | Sozinho resolve mais que qualquer mudança de software | Pendente |
+
+---
+
+## 2. Segurança 🔴
+
+| # | Item | Risco atual | Solução | Esforço |
+|---|---|---|---|---|
+| 🔴 | **Senhas em SHA-256 sem salt** | Vulnerável a rainbow tables. SHA-256 é pra hash de conteúdo, não senha | `bcrypt` ou `argon2` (lib `passlib`); migrar hashes existentes | Médio |
+| 🔴 | **HTTP sem TLS** | Token de sessão em texto puro em URL e cookies. Sniff trivial | Let's Encrypt + certbot no Apache | Baixo |
+| 🔴 | **Sem rate limiting no login** | Brute-force livre. Bot pode fazer milhares de tentativas/s | Bloqueio temporário após N falhas (tabela `login_falhas`) | Baixo |
+| 🟠 | **Token de sessão no querystring** (`?t=...`) | Aparece em logs do Apache, no histórico do browser, em headers Referer | Migrar pra cookie HttpOnly; precisa sessão server-side real | Médio |
+| 🟠 | **Upload de arquivo sem validação** | Aceita qualquer extensão até 100MB. `.html` malicioso? Sem sanitização? | Whitelist de extensões + magic-byte check (`python-magic`) + opcionalmente ClamAV | Baixo |
+| 🟠 | **Sem complexidade mínima de senha** | "123" é aceito | Mínimo 8 chars + 1 número ou classe diversa | Baixo |
+| 🟠 | **XSRF desabilitado** (`enableXsrfProtection = false`) | Foi necessário pra funcionar com o Apache, mas deixa CSRF aberto | Re-habilitar com `trusted_origins` configurado | Médio |
+| 🟢 | **Auditoria sem IP** | Loga "Sara fez X" mas não de onde | Adicionar `ip` na tabela `auditoria` (vem do header `X-Forwarded-For`) | Baixo |
+| 🟢 | **Sessões de 7 dias sem rotação** | Token roubado vale uma semana inteira | Rotacionar token a cada N horas de uso | Baixo |
+| 🟢 | **Sem 2FA** | Para perfis Gestor seria desejável | TOTP (Google Authenticator) via `pyotp` | Médio |
+
+---
+
+## 3. Performance
+
+| # | Item | Por que | Esforço |
+|---|---|---|---|
+| 🔴 | **Trocar o servidor** | CPU de 2009 sem AVX é o ceiling de tudo. Sozinho rende mais que qualquer software-change | Baixo (custo de hardware) |
+| 🟠 | **Modularizar `app.py`** (~3.500 linhas hoje) usando `st.navigation` + `st.Page` | Hoje o arquivo inteiro re-executa a cada clique. Quebrando em `pages/dashboard.py`, `pages/diario.py`, etc., **só a aba ativa roda**. Corte de ~60% de trabalho por interação | Médio |
+| 🟠 | **`@st.cache_resource` pra conexão SQLite** | Hoje cada `db.conectar()` abre conexão nova. Uma só compartilhada cai bem com WAL | Baixo |
+| 🟢 | **Static assets via Apache** (em vez de Streamlit servir tudo) | Apache é mais rápido pra static. Streamlit fica só pro dinâmico | Baixo |
+
+---
+
+## 4. UX (experiência do usuário)
+
+| # | Item | Por que dói hoje | Esforço |
+|---|---|---|---|
+| 🟠 | **Autocomplete no `@` mention** | Hoje tem que digitar `@"Nome Completo"` exato com aspas. Esquece a aspa, não menciona | Médio (componente custom) |
+| 🟠 | **Notificação por e-mail** | Quem não tá logado perde menções/respostas. Painel persistente ajuda, mas e-mail é o canal definitivo | Médio (SMTP + template) |
+| 🟠 | **Loading states / spinners** em operações lentas (PDF, upload, geração de relatório) | Sem feedback, usuário clica de novo achando que travou | Baixo |
+| 🟠 | **Mensagens de erro humanas** | Hoje vaza stack trace pro usuário em vários pontos | Baixo |
+| 🟢 | **Calendário visual da Agenda** | Hoje é só lista com expanders. Visualização mensal seria muito mais útil | Médio |
+| 🟢 | **Inline edit em campos do projeto** | Hoje precisa abrir form gigante pra mudar 1 prioridade | Médio |
+| 🟢 | **Bulk actions** | Selecionar 5 projetos e mudar status de todos. Hoje 1 a 1 | Médio |
+| 🟢 | **Tags/labels nos projetos** | Status é binário. Tags livres ("Crítico", "Aguardando Cliente", "Aprovado") agrupam melhor | Médio |
+| 🟢 | **Empty states com CTA** | Aba vazia hoje mostra "Nenhum dado". Devia mostrar "Cadastre seu primeiro projeto" com botão | Baixo |
+| 🟢 | **Atalhos de teclado** | Esc fecha modal, Ctrl+S salva form, etc. | Baixo |
+
+---
+
+## 5. Código / DevOps
+
+| # | Item | Por que urgente | Esforço |
+|---|---|---|---|
+| 🔴 | **Git versionando o código** | Single point of failure absoluto. Já visto na conversa real | ✅ Feito |
+| 🔴 | **Backup automático diário** dos `.db` (cron) | Hoje só backup quando `install.sh` roda. Se corromper hoje, recupera de quando? | Baixo |
+| 🟠 | **Modularizar `app.py`** em `pages/` | 3.500 linhas num arquivo só. Insustentável a longo prazo | Médio |
+| 🟠 | **Testes automatizados** (pelo menos smoke tests) | Zero coverage. Quebra calado ao mexer em qualquer coisa | Médio |
+| 🟠 | **Logs estruturados** | Hoje erro do usuário não vira log. Difícil diagnosticar incidente | Baixo |
+| 🟠 | **Monitoramento** (uptime, error rate) | Quando o serviço cai, ninguém sabe até alguém reclamar | Baixo (UptimeRobot grátis serve) |
+| 🟠 | **Config por env var**, não hardcoded | IPs no código, paths no código. Mudar de servidor exige editar código | Baixo |
+| 🟢 | **Migrations de DB em arquivos separados** (não ALTER inline em código) | Hoje migração é "tente ALTER, ignore erro". Difícil saber o estado real do schema | Médio |
+| 🟢 | **Linter + formatador** (ruff + black) | Estilo varia muito. Diff de revisão fica poluído | Baixo |
+| 🟢 | **Dockerizar** | Reprodutibilidade real. `docker compose up` em qualquer Linux funciona | Médio |
+
+---
+
+## 6. Produto / Features
+
+| # | Item | Por que | Esforço |
+|---|---|---|---|
+| 🟢 | **Comentários encadeados no diário** | Hoje é tudo concatenado num `resposta_gestor` separado por `\n` — feio e sem edição/exclusão individual | Médio (nova tabela `comentarios_diario`) |
+| 🟢 | **Time tracking** | Campo `horas` existe na tabela `diario` mas não tem UI pra preencher ou relatórios em cima | Baixo |
+| 🟢 | **Templates de projeto** | Clonar projeto existente como ponto de partida | Baixo |
+| 🟢 | **Histórico de versões** dos relatos | Hoje editar relato sobrescreve sem rastro. Útil pra auditoria | Médio (nova tabela ou versionar via JSON) |
+| 🟢 | **PWA / mobile-first** | Streamlit não é ideal pra isso. Vale considerar app web nativo se mobile virar prioridade | Alto (reescreve frontend) |
+
+---
+
+## 7. Como decidir o que fazer próximo
+
+Pergunte primeiro:
+
+1. **O sistema vai pra produção pública/aberta?**
+   → Faça TUDO da seção **Segurança** antes (HTTPS + bcrypt + rate limit).
+
+2. **A equipe vai dobrar (10 → 20+ usuários)?**
+   → **Trocar o servidor** antes de qualquer outra coisa. Software não
+   conserta CPU de 2009.
+
+3. **Sara/equipe quer iterar rápido no produto?**
+   → Modularizar `app.py` + testes + linter. Sem isso cada mudança vira
+   risco de quebrar algo que funciona.
+
+4. **Usuários se queixam de algo específico?**
+   → Atacar o item correspondente em UX direto, sem se perder em
+   prioridades teóricas.
+
+5. **Vai parar de mexer por um tempo?**
+   → Garanta o **backup diário** e **HTTPS**, pelo menos. São os dois
+   que protegem o sistema "sozinho" enquanto ninguém olha.
+
+---
+
+## Apêndice: pequenas dívidas técnicas conhecidas
+
+- `app.py` tem **imports duplicados** no topo (`import streamlit as st`
+  aparece 2x). Inofensivo, mas feio.
+- `seed.py` ainda referencia `servpen.db` (split-brain antigo já corrigido
+  em outros lugares). Se rodar de novo, melhor revisar.
+- A coluna `email` em `usuarios` foi adicionada mas só usada hoje pelo
+  campo do `Meu Perfil`. Sem validação de formato.
+- `pyarrow` está **intencionalmente ausente** (CPU sem AVX2). Consequência:
+  `st.dataframe`, `st.table` e Parquet não funcionam. Por isso a aba
+  Auditoria usa tabela HTML manual.
+- O `database.py` tem nome de tabela `mencoes_notificacoes` + `mencoes_acesso`
+  duplicando responsabilidade (acesso permanente vs evento). Funciona, mas
+  poderia ser 1 tabela com `dispensado_em IS NULL`.
+- Várias chamadas `c.execute("...?...", (val,))` deixam connection aberta
+  em alguns paths de erro. Considerar `with conn:` em vez de `try/finally`
+  manual.
