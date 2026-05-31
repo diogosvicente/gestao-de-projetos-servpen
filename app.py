@@ -4349,15 +4349,25 @@ else:
         # 1) Chat
         ultimas_chat = st.session_state.get('_chat_ultimas_contagens', {})
         atuais_chat = dict(db.listar_remetentes_com_nao_lidas(usuario))
+        _ultimo_remetente_novo = None  # quem foi o autor da última msg nova
         for rem, qtd in atuais_chat.items():
             anterior = ultimas_chat.get(rem, 0)
             if qtd > anterior:
                 novas = qtd - anterior
+                # Toast com instrução pra ir à aba Chat (st.toast não é
+                # clicável nativamente — quando o usuário FINALMENTE entrar
+                # na aba Chat, o selectbox abre direto no `rem` graças ao
+                # `_chat_proximo_contato` setado abaixo).
                 st.toast(
-                    f"💬 **{novas} nova(s) mensagem(ns) de {rem}**",
+                    f"💬 **{novas} nova(s) de {rem}** — abra a aba 💬 Chat",
                     icon="🔔",
                 )
+                _ultimo_remetente_novo = rem
         st.session_state['_chat_ultimas_contagens'] = atuais_chat
+        # Memoriza o último remetente com msg nova → o selectbox da aba Chat
+        # vai abrir nele automaticamente, sem o usuário precisar caçar.
+        if _ultimo_remetente_novo:
+            st.session_state['_chat_proximo_contato'] = _ultimo_remetente_novo
 
         # 2) Menções no Diário (decisão 5: toast mesmo se ja tinha acesso)
         # Agrupa as pendentes por (remetente, projeto_id) p/ nao spammar 1 toast por relato
@@ -4399,6 +4409,14 @@ else:
             _q = int(_nao_lidas_por_user.get(nome, 0))
             return f"🔴 {nome} ({_q})" if _q > 0 else nome
 
+        # Pré-seleção: se o toast global setou alguém com msg nova, sobrescreve
+        # a key do widget ANTES dele renderizar (Streamlit usa o session_state
+        # como valor inicial). Equivale a "clicar no toast" → entrar direto na
+        # conversa certa, sem o usuário ter que caçar na lista.
+        _prox = st.session_state.pop('_chat_proximo_contato', None)
+        if _prox and _prox in lista_usuarios:
+            st.session_state["sel_contato_final_v2"] = _prox
+
         contato = st.selectbox(
             "Conversar com:",
             lista_usuarios,
@@ -4413,18 +4431,37 @@ else:
             _render_chat_messages(st.session_state.usuario, contato)
 
             # 3. Campo de Envio compacto (fora do fragmento; submete a pagina)
-            # Layout WhatsApp: text_area largo + botão Enviar à direita.
+            # Layout: text_area largo + botão "➤" único caractere na lateral.
+            # Em tela estreita (~280px de coluna), botão com label longo virava
+            # "▶ E n v i a r" empilhado vertical letra-a-letra. Solução: usar
+            # 1 char (➤) com tooltip + CSS pra esticar verticalmente.
+            st.markdown(
+                """
+                <style>
+                /* Botão envia: 1 char grande e centralizado em qualquer tela */
+                div[data-testid="stFormSubmitButton"] button {
+                    font-size: 1.6rem !important;
+                    font-weight: 600 !important;
+                    min-height: 86px;
+                    line-height: 1 !important;
+                    padding: 4px !important;
+                }
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
             with st.form("f_chat_v3_final", clear_on_submit=True):
-                in_c1, in_c2 = st.columns([5, 1])
+                in_c1, in_c2 = st.columns([6, 1], gap="small")
                 msg_input = in_c1.text_area(
                     "Digite uma mensagem...",
-                    height=68,
+                    height=86,
                     label_visibility="collapsed",
                     placeholder="Digite uma mensagem...",
                 )
-                in_c2.write("")  # espaçador vertical
                 _enviar = in_c2.form_submit_button(
-                    "▶ Enviar", use_container_width=True,
+                    "➤",
+                    use_container_width=True,
+                    help="Enviar mensagem",
                 )
                 if _enviar and msg_input.strip():
                     # Grava timestamp completo "DD/MM/YYYY HH:MM" pra suporte
