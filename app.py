@@ -4291,11 +4291,60 @@ else:
                             st.session_state[f"edit_mode_{_msg_id}"] = False
                             st.rerun(scope="fragment")
 
+            # ── ÂNCORA + AUTO-SCROLL INTELIGENTE ─────────────────
+            # Só rola pra baixo se o usuário JÁ está perto do fim (≤ 200px).
+            # Se estiver lendo histórico no meio, não bagunça a leitura.
+            st.markdown(
+                "<div id='wa-bot-anchor'></div>",
+                unsafe_allow_html=True,
+            )
+
+        # Script vai DEPOIS de fechar o container, pra rodar quando o
+        # DOM da lista já está montado. Roda dentro de iframe, então
+        # acessa o DOM principal via window.parent.document.
+        import streamlit.components.v1 as _components
+        _components.html(
+            """
+            <script>
+            (function () {
+                try {
+                    var doc = window.parent.document;
+                    var anchor = doc.getElementById('wa-bot-anchor');
+                    if (!anchor) return;
+
+                    // Acha o ancestor scrollable (st.container(height=N) põe
+                    // overflow-y:auto num div interno).
+                    var node = anchor.parentElement;
+                    var scrollable = null;
+                    while (node && node !== doc.body) {
+                        var cs = window.parent.getComputedStyle(node);
+                        if (cs.overflowY === 'auto' || cs.overflowY === 'scroll') {
+                            scrollable = node;
+                            break;
+                        }
+                        node = node.parentElement;
+                    }
+                    if (!scrollable) return;
+
+                    // "Perto do fim" = últimos 200px
+                    var diff = scrollable.scrollHeight
+                             - scrollable.scrollTop
+                             - scrollable.clientHeight;
+                    if (diff < 200) {
+                        scrollable.scrollTop = scrollable.scrollHeight;
+                    }
+                } catch (e) { /* silencia erro de JS */ }
+            })();
+            </script>
+            """,
+            height=0,
+        )
+
     # === FRAGMENTO GLOBAL: TOAST DE NOVA MENSAGEM / MENÇÃO NO DIÁRIO ===
-    # Re-roda a cada 30s em QUALQUER aba. (Era 5s — afrouxado p/ 30s; notificação
-    # de menção/mensagem não precisa ser instantânea e isso corta muito a carga
-    # de fundo com 20+ usuários logados.)
-    @st.fragment(run_every="30s")
+    # Re-roda a cada 10s em QUALQUER aba. (Foi 30s; trazendo de volta pra 10s
+    # pra toast de nova mensagem aparecer rápido conforme pedido do usuário,
+    # mantendo carga modesta — 1 SELECT a cada 10s/usuario online.)
+    @st.fragment(run_every="10s")
     def _global_notif(usuario):
         # 1) Chat
         ultimas_chat = st.session_state.get('_chat_ultimas_contagens', {})
@@ -4304,7 +4353,10 @@ else:
             anterior = ultimas_chat.get(rem, 0)
             if qtd > anterior:
                 novas = qtd - anterior
-                st.toast(f"💬 **{novas} nova(s) mensagem(ns) de {rem}**", icon="🔔")
+                st.toast(
+                    f"💬 **{novas} nova(s) mensagem(ns) de {rem}**",
+                    icon="🔔",
+                )
         st.session_state['_chat_ultimas_contagens'] = atuais_chat
 
         # 2) Menções no Diário (decisão 5: toast mesmo se ja tinha acesso)
@@ -4328,12 +4380,31 @@ else:
         st.header("💬 Chat Interno")
         st.caption("🟢 Tempo real — mensagens novas aparecem em até 2 segundos sem precisar atualizar.")
 
-        # 1. Seleção de Contato
+        # 1. Seleção de Contato com badge de não-lidas por usuário
         lista_usuarios = df_u['nome'].tolist() if not df_u.empty else []
         if st.session_state.usuario in lista_usuarios:
             lista_usuarios.remove(st.session_state.usuario)
 
-        contato = st.selectbox("Conversar com:", lista_usuarios, key="sel_contato_final_v2")
+        # Mapa "remetente → qtd não lidas" pra mostrar (N) ao lado do nome.
+        # Sara Borges (3) · Leticia · Rodrigo (1)
+        _nao_lidas_por_user = dict(
+            db.listar_remetentes_com_nao_lidas(st.session_state.usuario)
+        )
+        # Ordena: quem tem não-lidas vai pro topo, depois alfabético
+        lista_usuarios.sort(
+            key=lambda n: (-int(_nao_lidas_por_user.get(n, 0)), n.lower())
+        )
+
+        def _fmt_contato(nome):
+            _q = int(_nao_lidas_por_user.get(nome, 0))
+            return f"🔴 {nome} ({_q})" if _q > 0 else nome
+
+        contato = st.selectbox(
+            "Conversar com:",
+            lista_usuarios,
+            format_func=_fmt_contato,
+            key="sel_contato_final_v2",
+        )
 
         if contato:
             # Marca como lidas todas as mensagens recebidas desse contato
