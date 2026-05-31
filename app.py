@@ -2098,22 +2098,22 @@ else:
                         "📊",
                         "Nenhum projeto selecionado",
                         "Use o multiselect acima pra escolher os projetos que "
-                        "quer comparar no heatmap.",
+                        "quer comparar.",
                         cor_borda="#3b82f6",
                     )
                 else:
                     # ════════════════════════════════════════════════════════
-                    #  HEATMAP "PROJETO × DISCIPLINA"
-                    #  Substituiu o facet_col bar chart (que embolava em
-                    #  3 colunas × N linhas com labels sobrepostos). Um
-                    #  heatmap único mostra TODOS os projetos × disciplinas
-                    #  em uma matriz colorida, fácil de ler em volume.
+                    #  3 VISUALIZAÇÕES SELECIONÁVEIS
+                    #  - Heatmap: matriz Projeto × Disciplina (denso, visão única)
+                    #  - Barras agrupadas: 1 gráfico só, barras lado a lado por
+                    #    disciplina, eixo X = projeto. NÃO usa facet (que embolava).
+                    #  - Tabela: pivot HTML compacta pra triagem
                     # ════════════════════════════════════════════════════════
                     df_graf = df_evolucao[
                         df_evolucao['projeto'].isin(projetos_sel)
                     ].copy()
 
-                    # Pivot: linha=projeto, coluna=disciplina, valor=média(%)
+                    # Pivot reutilizado por Heatmap e Tabela
                     _pivot = df_graf.pivot_table(
                         index='projeto', columns='disciplina',
                         values='percentual', aggfunc='mean',
@@ -2121,56 +2121,160 @@ else:
                     # Ordena projetos por progresso médio (mais completos no topo)
                     _ordem_proj = _pivot.mean(axis=1).sort_values(ascending=True).index
                     _pivot = _pivot.loc[_ordem_proj]
-                    # Disciplinas em ordem alfabética
                     _pivot = _pivot.reindex(sorted(_pivot.columns), axis=1)
 
-                    # Mostra "—" pra NaN (disciplina não aplicável àquele projeto)
-                    _z = _pivot.values
-                    _text = [
-                        [f"{v:.0f}%" if pd.notna(v) else "—" for v in row]
-                        for row in _z
-                    ]
+                    _modo_viz = _pill_select(
+                        st, "Visualização",
+                        options=["Heatmap", "Barras", "Tabela"],
+                        default="Barras",
+                        key="evolucao_modo_viz",
+                        label_visibility="collapsed",
+                    ) or "Barras"
 
-                    import plotly.graph_objects as go
-                    fig_disc = go.Figure(data=go.Heatmap(
-                        z=_z,
-                        x=_pivot.columns.tolist(),
-                        y=_pivot.index.tolist(),
-                        text=_text,
-                        texttemplate="%{text}",
-                        textfont={"size": 11, "color": "#fff"},
-                        # Escala vermelho → laranja → verde
-                        colorscale=[
-                            [0.00, "#7f1d1d"],   # 0% bordô
-                            [0.25, "#b91c1c"],   # 25% vermelho
-                            [0.50, "#d97706"],   # 50% laranja
-                            [0.75, "#65a30d"],   # 75% verde-amarelado
-                            [1.00, "#16a34a"],   # 100% verde
-                        ],
-                        zmin=0, zmax=100,
-                        colorbar=dict(
-                            title=dict(text="Progresso (%)", side="right"),
-                            tickvals=[0, 25, 50, 75, 100],
-                            ticktext=["0%", "25%", "50%", "75%", "100%"],
-                            thickness=14, len=0.85,
-                        ),
-                        hovertemplate=("<b>%{y}</b><br>"
-                                       "Disciplina: %{x}<br>"
-                                       "Progresso: %{z:.0f}%<extra></extra>"),
-                        xgap=2, ygap=2,
-                    ))
-                    fig_disc.update_layout(
-                        height=max(280, 36 * len(_pivot.index) + 120),
-                        margin=dict(t=20, b=60, l=10, r=10),
-                        xaxis=dict(side="bottom", tickangle=-30,
-                                   title=None, fixedrange=True),
-                        yaxis=dict(title=None, fixedrange=True,
-                                   autorange="reversed"),
-                    )
-                    _estiliza_plotly(fig_disc)
-                    st.plotly_chart(fig_disc, use_container_width=True)
+                    # ── HEATMAP ────────────────────────────────────────
+                    if _modo_viz == "Heatmap":
+                        _z = _pivot.values
+                        _text = [
+                            [f"{v:.0f}%" if pd.notna(v) else "—" for v in row]
+                            for row in _z
+                        ]
+                        import plotly.graph_objects as go
+                        fig_disc = go.Figure(data=go.Heatmap(
+                            z=_z,
+                            x=_pivot.columns.tolist(),
+                            y=_pivot.index.tolist(),
+                            text=_text,
+                            texttemplate="%{text}",
+                            textfont={"size": 11, "color": "#fff"},
+                            colorscale=[
+                                [0.00, "#7f1d1d"],
+                                [0.25, "#b91c1c"],
+                                [0.50, "#d97706"],
+                                [0.75, "#65a30d"],
+                                [1.00, "#16a34a"],
+                            ],
+                            zmin=0, zmax=100,
+                            colorbar=dict(
+                                title=dict(text="Progresso (%)", side="right"),
+                                tickvals=[0, 25, 50, 75, 100],
+                                ticktext=["0%", "25%", "50%", "75%", "100%"],
+                                thickness=14, len=0.85,
+                            ),
+                            hovertemplate=("<b>%{y}</b><br>"
+                                           "Disciplina: %{x}<br>"
+                                           "Progresso: %{z:.0f}%<extra></extra>"),
+                            xgap=2, ygap=2,
+                        ))
+                        fig_disc.update_layout(
+                            height=max(280, 36 * len(_pivot.index) + 120),
+                            margin=dict(t=20, b=60, l=10, r=10),
+                            xaxis=dict(side="bottom", tickangle=-30,
+                                       title=None, fixedrange=True),
+                            yaxis=dict(title=None, fixedrange=True,
+                                       autorange="reversed"),
+                        )
+                        _estiliza_plotly(fig_disc)
+                        st.plotly_chart(fig_disc, use_container_width=True)
 
-                    # Sumário de leitura — 1 linha de stats por baixo
+                    # ── BARRAS AGRUPADAS (1 gráfico só, sem facet) ────
+                    elif _modo_viz == "Barras":
+                        # Usa o df flat (não pivot): 1 barra por (projeto, disciplina)
+                        fig_disc = px.bar(
+                            df_graf,
+                            x="projeto",
+                            y="percentual",
+                            color="disciplina",
+                            barmode="group",
+                            text_auto=".0f",
+                            range_y=[0, 110],
+                            labels={
+                                "projeto":    "Projeto",
+                                "disciplina": "Disciplina",
+                                "percentual": "Progresso (%)",
+                            },
+                            hover_data={"projetista": True},
+                            category_orders={
+                                "projeto": list(_pivot.index)[::-1],
+                                "disciplina": sorted(df_graf['disciplina'].unique()),
+                            },
+                        )
+                        fig_disc.update_traces(
+                            textposition="outside",
+                            textfont_size=10,
+                            cliponaxis=False,
+                        )
+                        fig_disc.update_layout(
+                            height=max(420, len(projetos_sel) * 35 + 220),
+                            margin=dict(t=20, b=120, l=40, r=10),
+                            xaxis=dict(tickangle=-25, title=None),
+                            yaxis=dict(title="Progresso (%)"),
+                            legend=dict(
+                                title=dict(text="<b>Disciplina</b>"),
+                                orientation="h",
+                                yanchor="top", y=-0.25,
+                                xanchor="center", x=0.5,
+                            ),
+                            bargap=0.20, bargroupgap=0.05,
+                        )
+                        _estiliza_plotly(fig_disc)
+                        st.plotly_chart(fig_disc, use_container_width=True)
+
+                    # ── TABELA (pivot HTML compacto) ──────────────────
+                    else:  # Tabela
+                        def _cor_cel(v):
+                            if pd.isna(v): return "#1f2937"
+                            v = float(v)
+                            if v >= 75: return "#16a34a"
+                            if v >= 50: return "#65a30d"
+                            if v >= 25: return "#d97706"
+                            return "#b91c1c"
+
+                        _ths = "".join(
+                            f"<th style='padding:6px 10px;font-size:11px;"
+                            f"color:#94a3b8;text-align:center;border-bottom:"
+                            f"1px solid #1f2937;'>{c}</th>"
+                            for c in _pivot.columns
+                        )
+                        _media_row = _pivot.mean(axis=1)
+                        _rows_html = ""
+                        for proj, row in _pivot.iterrows():
+                            _cells = "".join(
+                                f"<td style='padding:6px;text-align:center;"
+                                f"background:{_cor_cel(v)};color:#fff;"
+                                f"font-weight:600;font-size:12px;'>"
+                                f"{'—' if pd.isna(v) else f'{v:.0f}%'}</td>"
+                                for v in row
+                            )
+                            _med = _media_row[proj]
+                            _rows_html += (
+                                f"<tr>"
+                                f"<td style='padding:6px 10px;font-weight:600;"
+                                f"color:#e5e7eb;border-bottom:1px solid #1f2937;'>"
+                                f"{proj}</td>{_cells}"
+                                f"<td style='padding:6px;text-align:center;"
+                                f"background:{_cor_cel(_med)};color:#fff;"
+                                f"font-weight:700;font-size:12px;'>"
+                                f"{_med:.0f}%</td>"
+                                f"</tr>"
+                            )
+                        st.markdown(
+                            f"<div style='overflow-x:auto;'>"
+                            f"<table style='width:100%;border-collapse:separate;"
+                            f"border-spacing:2px;'>"
+                            f"<thead><tr>"
+                            f"<th style='padding:6px 10px;font-size:11px;"
+                            f"color:#94a3b8;text-align:left;border-bottom:"
+                            f"1px solid #1f2937;'>Projeto</th>{_ths}"
+                            f"<th style='padding:6px 10px;font-size:11px;"
+                            f"color:#fbbf24;text-align:center;border-bottom:"
+                            f"1px solid #1f2937;'>MÉDIA</th>"
+                            f"</tr></thead>"
+                            f"<tbody>{_rows_html}</tbody>"
+                            f"</table></div>",
+                            unsafe_allow_html=True,
+                        )
+
+                    # Sumário de leitura — sempre embaixo (qualquer visualização)
                     _media_geral = float(_pivot.stack().mean()) \
                                    if not _pivot.stack().empty else 0.0
                     _top_proj = _pivot.mean(axis=1).idxmax() \
