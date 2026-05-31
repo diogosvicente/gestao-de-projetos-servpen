@@ -71,8 +71,44 @@ de referência: o app rodando em `http://<IP-DO-SERVIDOR>/gestao-de-projetos/`.
 >   restart loop).
 >   No 238.40 (Xeon Gold 5220 com AVX-512) é seguro atualizar pra
 >   `streamlit>=1.40,<1.50` — ganha `st.segmented_control` (UI mais
->   bonita), pero requer trocar `st.radio(horizontal=True)` por
+>   bonita), mas requer trocar `st.radio(horizontal=True)` por
 >   `st.segmented_control` nos 2 lugares do Kanban onde uso.
+
+### 1.1 Checklist de upgrade após migrar pro 238.40 (Xeon Gold 5220)
+
+O 238.40 tem `AVX`, `AVX2` e `AVX-512` — pyarrow e wheels modernos do
+PyPI rodam sem SIGILL. Aproveite pra remover gambiarras do 228.20:
+
+```bash
+# 1. Sobe pyarrow + Streamlit moderno
+sudo /var/www/html/gestao_de_projetos/venv/bin/pip install --upgrade \
+    'streamlit>=1.40,<1.50' 'pyarrow>=17'
+
+# 2. Atualize requirements.txt do projeto:
+#    - streamlit==1.39.0 → streamlit>=1.40,<1.50
+#    + pyarrow>=17  (opcional explicitar)
+
+# 3. (Opcional, melhoria UX) Troque st.radio por st.segmented_control
+#    nos 2 lugares do Kanban (Visão + Densidade) em app.py.
+grep -n "st.radio\b" app.py
+# Edite manualmente. Padrão:
+#   st.radio(label, options=[...], index=0, horizontal=True, key=...)
+# Vira:
+#   st.segmented_control(label, options=[...], default=opções[0], key=...)
+
+# 4. O passo 7/13 do install.sh (remove pyarrow do venv) vira no-op
+#    no Xeon — pode deixar. Ou pode também limpar dele a parte de
+#    rm -rf pyarrow* se quiser deixar o script mais elegante.
+
+# 5. Restart e validação
+sudo systemctl restart gestao-de-projetos
+curl -sI http://127.0.0.1:8501/gestao-de-projetos/_stcore/health
+```
+
+Recomendação: **NÃO** atualize Streamlit antes de testar tudo no
+hardware novo — primeiro migra o sistema com `streamlit==1.39.0` (que
+funciona), valida no navegador, **depois** sobe pra 1.40+. Risco
+isolado.
 
 ---
 
