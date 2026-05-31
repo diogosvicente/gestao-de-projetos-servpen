@@ -17,13 +17,21 @@ import hashlib
 import secrets
 import time
 import os
+from functools import lru_cache
+from urllib.parse import quote_plus
 
 from passlib.hash import bcrypt as _bcrypt
+from sqlalchemy import create_engine
 
 
 # ─── CONEXÃO ──────────────────────────────────────────────
 def conectar():
-    """Abre uma nova conexão Postgres."""
+    """Abre uma nova conexão Postgres (psycopg3).
+
+    Use para cursor manual em INSERT/UPDATE/DELETE. Para SELECT com
+    pandas (`pd.read_sql_query`), prefira `get_engine()` — evita warning
+    do pandas e reusa conexões do pool.
+    """
     url = os.environ.get('DATABASE_URL')
     if url:
         return psycopg.connect(url)
@@ -33,6 +41,65 @@ def conectar():
         dbname=os.environ.get('DB_NAME', 'gestao_servpen'),
         user=os.environ.get('DB_USER', 'gestao_servpen'),
         password=os.environ.get('DB_PASSWORD', ''),
+    )
+
+
+def _montar_database_url():
+    """Constrói uma URL SQLAlchemy-friendly a partir das env vars do servidor.
+
+    Prioridade:
+      1. DATABASE_URL — se já estiver no formato `postgresql+psycopg://...`,
+         retorna como está. Se for o formato curto `postgresql://...`,
+         injeta `+psycopg` pra forçar o driver psycopg3.
+      2. DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD — monta a URL.
+    """
+    url = os.environ.get('DATABASE_URL')
+    if url:
+        if url.startswith('postgresql+'):
+            return url
+        if url.startswith('postgresql://'):
+            return 'postgresql+psycopg://' + url[len('postgresql://'):]
+        if url.startswith('postgres://'):  # Heroku-style
+            return 'postgresql+psycopg://' + url[len('postgres://'):]
+        return url  # entrega como veio — usuário sabe o que está fazendo
+
+    host = os.environ.get('DB_HOST', 'localhost')
+    port = os.environ.get('DB_PORT', '5432')
+    dbname = os.environ.get('DB_NAME', 'gestao_servpen')
+    user = os.environ.get('DB_USER', 'gestao_servpen')
+    password = os.environ.get('DB_PASSWORD', '')
+    return (
+        f"postgresql+psycopg://{quote_plus(user)}:{quote_plus(password)}"
+        f"@{host}:{port}/{dbname}"
+    )
+
+
+@lru_cache(maxsize=1)
+def get_engine():
+    """Engine SQLAlchemy compartilhado, com pool de conexões.
+
+    Usado por `pd.read_sql_query(sql, db.get_engine(), ...)` em vez da
+    conexão psycopg crua — satisfaz o pandas (sem warning de DBAPI
+    desconhecido) e reusa conexões do pool entre queries.
+
+    Cacheado com `lru_cache(maxsize=1)` em vez de `@st.cache_resource` pra
+    funcionar fora do runtime Streamlit (scripts standalone, REPL, etc.).
+    Em processos Streamlit isso ainda dá single instance por processo, que
+    é o que queremos — o servidor de prod tem 1 processo Streamlit só.
+
+    Configuração do pool:
+      - pool_size=5    → 5 conexões persistentes
+      - max_overflow=5 → até 5 conexões extras sob pressão
+      - pool_recycle=3600 → recicla conexões com >1h pra evitar idle timeout
+      - pool_pre_ping=True → testa conexão antes de cada uso (pega conn morta)
+    """
+    return create_engine(
+        _montar_database_url(),
+        pool_size=5,
+        max_overflow=5,
+        pool_recycle=3600,
+        pool_pre_ping=True,
+        future=True,
     )
 
 

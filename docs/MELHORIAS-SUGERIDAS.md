@@ -77,7 +77,7 @@ maduro (psycopg3), defaults sensatos.
 |---|---|---|---|
 | 🔴 | **Trocar o servidor** | CPU de 2009 sem AVX é o ceiling de tudo. Sozinho rende mais que qualquer software-change | Baixo (custo de hardware) |
 | 🟠 | **Modularizar `app.py`** (~3.500 linhas hoje) usando `st.navigation` + `st.Page` | Hoje o arquivo inteiro re-executa a cada clique. Quebrando em `pages/dashboard.py`, `pages/diario.py`, etc., **só a aba ativa roda**. Corte de ~60% de trabalho por interação | Médio |
-| 🟠 | **`@st.cache_resource` pra conexão SQLite** | Hoje cada `db.conectar()` abre conexão nova. Uma só compartilhada cai bem com WAL | Baixo |
+| ✅ | ~~**`@st.cache_resource` pra conexão SQLite**~~ Substituído por **engine SQLAlchemy + pool** (maio/2026) | — | `db.get_engine()` com `lru_cache` retorna engine SQLAlchemy compartilhado; `pd.read_sql_query(..., db.get_engine())` em vez de conn psycopg crua → resolve warning pandas + reuso de conexão via pool. | ✅ Feito |
 | 🟢 | **Static assets via Apache** (em vez de Streamlit servir tudo) | Apache é mais rápido pra static. Streamlit fica só pro dinâmico | Baixo |
 
 ---

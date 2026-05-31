@@ -146,8 +146,9 @@ fi
 [ -d "${APP_DIR}/venv" ] || python3 -m venv --system-site-packages "${APP_DIR}/venv"
 "${APP_DIR}/venv/bin/pip" install --upgrade pip wheel
 
-# --- 6/13 — pip libs puras-Python + psycopg3 + passlib (bcrypt) -------------
-echo "==>  6/13 Instalando libs Python (Streamlit, Plotly, fpdf2, xlsxwriter, openpyxl, psycopg3, passlib[bcrypt])"
+# --- 6/13 — pip libs (Streamlit + Plotly + fpdf2 + xlsx + openpyxl
+#            + psycopg3 + passlib[bcrypt] + SQLAlchemy) ----------------------
+echo "==>  6/13 Instalando libs Python via pip"
 "${APP_DIR}/venv/bin/pip" install \
     'streamlit==1.39.0' \
     'plotly==5.24.1' \
@@ -155,7 +156,8 @@ echo "==>  6/13 Instalando libs Python (Streamlit, Plotly, fpdf2, xlsxwriter, op
     'xlsxwriter==3.2.0' \
     'openpyxl==3.1.5' \
     'psycopg[binary]>=3.1,<4' \
-    'passlib[bcrypt]>=1.7.4'
+    'passlib[bcrypt]>=1.7.4' \
+    'SQLAlchemy>=2.0,<3'
 
 # --- 7/13 — Apaga wheels do PyPI que dão SIGILL em CPUs sem AVX2 ------------
 # Mantido por defesa — em CPUs modernas é no-op. numpy/pandas/scipy/reportlab/pil

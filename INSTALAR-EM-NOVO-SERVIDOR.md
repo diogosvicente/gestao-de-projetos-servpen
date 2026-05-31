@@ -47,6 +47,10 @@ de referência: o app rodando em `http://<IP-DO-SERVIDOR>/gestao-de-projetos/`.
 >   continuam aceitos no login e são re-gravados como bcrypt no primeiro
 >   login bem-sucedido (rehash transparente). Nenhum usuário precisa
 >   trocar a senha após a migração.
+> - **SQLAlchemy engine** (`db.get_engine()`) com pool de conexões para
+>   `pd.read_sql_query`. Resolve warning do pandas ("DBAPI desconhecido") e
+>   evita abrir/fechar conexão em cada SELECT. `db.conectar()` continua
+>   existindo para cursor manual em INSERT/UPDATE/DELETE.
 
 ---
 

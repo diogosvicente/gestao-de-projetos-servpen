@@ -240,14 +240,10 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
     fixos). Sem isso, num st.rerun(scope='fragment') o fragmento mostraria dados
     antigos (resolver/excluir não refletiria). Aplica os mesmos filtros de busca e
     'só pendências' que a aba usa."""
-    conn = db.conectar()
-    try:
-        df_proj_d = pd.read_sql_query(
-            "SELECT * FROM diario WHERE projeto_id = %s ORDER BY id DESC",
-            conn, params=(int(proj_id),),
-        )
-    finally:
-        conn.close()
+    df_proj_d = pd.read_sql_query(
+        "SELECT * FROM diario WHERE projeto_id = %s ORDER BY id DESC",
+        db.get_engine(), params=(int(proj_id),),
+    )
 
     if busca and busca.strip():
         t = busca.lower()
@@ -482,10 +478,8 @@ if not os.path.exists("anexos"):
 # antigo. Antes isso lia de um arquivo e escrevia em outro (split-brain) -> a agenda
 # do boot mostrava dados desatualizados.
 try:
-    conn = db.conectar()
-    df_agenda = pd.read_sql("SELECT * FROM agenda", conn)
-    conn.close()
-    
+    df_agenda = pd.read_sql("SELECT * FROM agenda", db.get_engine())
+
     # SINAL DE ALERTA (Toast)
     hoje = datetime.now().date()
     if not df_agenda.empty:
@@ -506,37 +500,25 @@ except Exception as e:
 # a mudança na hora. O TTL é só rede de segurança caso algum write não invalide.
 @st.cache_data(ttl=8, show_spinner=False)
 def _load_df_u():
-    conn = db.conectar()
-    try:
-        return pd.read_sql_query("SELECT nome FROM usuarios", conn)
-    finally:
-        conn.close()
+    return pd.read_sql_query("SELECT nome FROM usuarios", db.get_engine())
 
 @st.cache_data(ttl=8, show_spinner=False)
 def _load_df_d():
-    conn = db.conectar()
-    try:
-        return pd.read_sql_query("SELECT * FROM diario", conn)
-    finally:
-        conn.close()
+    return pd.read_sql_query("SELECT * FROM diario", db.get_engine())
 
 @st.cache_data(ttl=8, show_spinner=False)
 def _load_df_p(usuario, perfil):
     """Projetos visíveis. Cacheado por (usuario, perfil) pra não vazar visibilidade
     entre usuários diferentes."""
-    conn = db.conectar()
-    try:
-        if perfil in ("Projetista", "Visualizador"):
-            projs = db.listar_projetos_por_mencao(usuario)
-            params = [f"%{usuario}%"]
-            sql = "SELECT * FROM projetos WHERE projetista LIKE %s"
-            if projs:
-                sql += " OR id IN (" + ",".join(["%s"] * len(projs)) + ")"
-                params.extend(int(x) for x in projs)
-            return pd.read_sql_query(sql, conn, params=tuple(params))
-        return pd.read_sql_query("SELECT * FROM projetos", conn)
-    finally:
-        conn.close()
+    if perfil in ("Projetista", "Visualizador"):
+        projs = db.listar_projetos_por_mencao(usuario)
+        params = [f"%{usuario}%"]
+        sql = "SELECT * FROM projetos WHERE projetista LIKE %s"
+        if projs:
+            sql += " OR id IN (" + ",".join(["%s"] * len(projs)) + ")"
+            params.extend(int(x) for x in projs)
+        return pd.read_sql_query(sql, db.get_engine(), params=tuple(params))
+    return pd.read_sql_query("SELECT * FROM projetos", db.get_engine())
 
 def _invalidar_dados():
     """Chamar após escrever no banco (projeto/diário/usuário/arquivo/agenda) para
@@ -1604,15 +1586,13 @@ else:
         st.subheader("📉 Evolução Técnica por Projeto")
 
         try:
-            conn = db.conectar()
             df_evolucao = pd.read_sql("""
                 SELECT p.id as projeto_id, p.projeto, p.projetista,
                     pd.disciplina, pd.percentual
                 FROM progresso_disciplinas pd
                 JOIN projetos p ON pd.projeto_id = p.id
                 ORDER BY p.projeto, pd.disciplina
-            """, conn)
-            conn.close()
+            """, db.get_engine())
 
             if not df_evolucao.empty:
                 projetos_com_dados = df_evolucao['projeto'].unique().tolist()
@@ -1796,19 +1776,18 @@ else:
 
         # Carrega dados auxiliares para os relatórios
         try:
-            _conn_rel = db.conectar()
+            _eng_rel = db.get_engine()
             _df_etapas_rel = pd.read_sql("""
                 SELECT e.*, p.projeto, p.data_inicio
                 FROM etapas_projeto e
                 JOIN projetos p ON e.projeto_id = p.id
                 ORDER BY e.projeto_id, e.ordem
-            """, _conn_rel)
+            """, _eng_rel)
             _df_prog_rel = pd.read_sql("""
                 SELECT pd.*, p.projeto, p.id as projeto_id
                 FROM progresso_disciplinas pd
                 JOIN projetos p ON pd.projeto_id = p.id
-            """, _conn_rel)
-            _conn_rel.close()
+            """, _eng_rel)
         except Exception:
             _df_etapas_rel = pd.DataFrame()
             _df_prog_rel   = pd.DataFrame()
@@ -2124,11 +2103,10 @@ else:
             id_ed = st.session_state.projeto_em_edicao
  
             # Recarrega sempre do banco para ter dados frescos
-            conn = db.conectar()
             _df_ed = pd.read_sql_query(
-                "SELECT * FROM projetos WHERE id = %s", conn, params=(int(id_ed),)
+                "SELECT * FROM projetos WHERE id = %s",
+                db.get_engine(), params=(int(id_ed),),
             )
-            conn.close()
  
             if _df_ed.empty:
                 st.warning("Projeto não encontrado.")
@@ -2387,12 +2365,10 @@ else:
                     "Adicione-as no campo **Disciplinas do Projeto** acima e salve."
                 )
             else:
-                conn = db.conectar()
                 df_prog = pd.read_sql(
                     "SELECT * FROM progresso_disciplinas WHERE projeto_id = %s",
-                    conn, params=(int(id_ed),),
+                    db.get_engine(), params=(int(id_ed),),
                 )
-                conn.close()
 
                 disciplinas_no_banco = df_prog['disciplina'].tolist()
 
@@ -2988,13 +2964,12 @@ else:
     @st.fragment(run_every="5s")
     def _render_chat_messages(usuario, contato_nome):
         try:
-            conn = db.conectar()
             df_m = pd.read_sql_query(
                 "SELECT * FROM chat WHERE (remetente = %s AND destinatario = %s) "
                 "OR (remetente = %s AND destinatario = %s) ORDER BY id ASC",
-                conn, params=(usuario, contato_nome, contato_nome, usuario),
+                db.get_engine(),
+                params=(usuario, contato_nome, contato_nome, usuario),
             )
-            conn.close()
         except Exception as e:
             st.error(f"Erro ao carregar mensagens: {e}")
             df_m = pd.DataFrame()
@@ -3178,9 +3153,11 @@ else:
             st.divider()
 
             # 3. LISTAGEM DE USUÁRIOS
-            conn = db.conectar()
-            df_membros = pd.read_sql_query("SELECT * FROM usuarios ORDER BY CASE perfil WHEN 'Gestor' THEN 0 WHEN 'Projetista' THEN 1 ELSE 2 END, nome", conn)
-            conn.close()
+            df_membros = pd.read_sql_query(
+                "SELECT * FROM usuarios ORDER BY "
+                "CASE perfil WHEN 'Gestor' THEN 0 WHEN 'Projetista' THEN 1 ELSE 2 END, nome",
+                db.get_engine(),
+            )
 
             # Métricas de composição da equipe
             mc1, mc2, mc3, mc4 = st.columns(4)
@@ -3496,9 +3473,10 @@ else:
 
         # ── recarrega agenda do banco único ──────────────────────────
         try:
-            conn = db.conectar()
-            df_agenda = pd.read_sql("SELECT * FROM agenda ORDER BY data_inicio ASC", conn)
-            conn.close()
+            df_agenda = pd.read_sql(
+                "SELECT * FROM agenda ORDER BY data_inicio ASC",
+                db.get_engine(),
+            )
         except Exception:
             df_agenda = pd.DataFrame(columns=['id','titulo','tipo','data_inicio',
                                             'data_fim','responsaveis','descricao','local'])
