@@ -208,7 +208,7 @@ sudo -u www-data \
 import sys
 sys.path.insert(0, '${APP_DIR}')
 import database as db
-db.criar_banco()
+db.criar_tabelas()
 print('     schema garantido')
 "
 

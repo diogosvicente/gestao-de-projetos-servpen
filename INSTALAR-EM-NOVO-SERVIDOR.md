@@ -109,7 +109,7 @@ Em ~5-8 minutos ele faz tudo:
 7. Ajusta `chown www-data:www-data` + `chmod g+s` (assim você pode editar
    pelos grupos depois)
 8. Escreve `.streamlit/config.toml` com o IP do servidor
-9. **Cria o schema no Postgres** chamando `database.criar_banco()`. Se
+9. **Cria o schema no Postgres** chamando `database.criar_tabelas()`. Se
    houver `gestao_equipe.db` ou `servpen.db` legados na pasta, **roda
    `migrar-sqlite-para-postgres.py`** — preserva IDs, hashes de senha e
    é idempotente (rodar de novo não duplica).

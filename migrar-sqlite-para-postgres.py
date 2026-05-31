@@ -212,12 +212,12 @@ def main(argv: list[str]) -> int:
     try:
         # IMPORTANTE: o schema do Postgres tem que existir. database.py cria
         # as tabelas no primeiro boot. Se você ainda não rodou o app, rode antes:
-        #   python -c "import database as db; db.criar_banco()"
-        from database import criar_banco
-        print("\nGarantindo schema no Postgres (criar_banco)…")
-        criar_banco()
+        #   python -c "import database as db; db.criar_tabelas()"
+        from database import criar_tabelas
+        print("\nGarantindo schema no Postgres (criar_tabelas)…")
+        criar_tabelas()
     except Exception as e:
-        print(f"  [warn] não consegui chamar database.criar_banco(): {e}")
+        print(f"  [warn] não consegui chamar database.criar_tabelas(): {e}")
         print(f"  Continuando — assumindo que o schema já existe")
 
     total: dict[str, tuple[int, int]] = {t: (0, 0) for t in TABELAS}
