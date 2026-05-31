@@ -1051,9 +1051,21 @@ db.limpar_sessoes_expiradas()
 # (depois do parse natural de query params do Streamlit), setamos o contato
 # pra pré-selecionar no selectbox da aba Chat e limpamos o param da URL pra
 # não persistir entre reruns.
+#
+# IMPORTANTE — bug fix grave (2026-05):
+# Usamos `_chat_force_target` (NÃO `_chat_proximo_contato`) porque o
+# fragmento global `_global_notif` (run_every=10s) também escreve em
+# `_chat_proximo_contato` com o "último remetente do iterator" — que vem de
+# um GROUP BY sem ORDER BY (ordem arbitrária no Postgres). Resultado: se
+# outra pessoa mandava msg entre o clique e o render da aba Chat, o user
+# caía na conversa errada (parecia "ir pra primeira da lista", que era a
+# ordenada por não-lidas DESC).
+#
+# `_chat_force_target` é uma intenção EXPLÍCITA do usuário (ele clicou),
+# tem precedência absoluta e o fragmento foi instruído a NÃO sobrescrevê-la.
 _goto_chat = st.query_params.get('_goto_chat')
 if _goto_chat:
-    st.session_state['_chat_proximo_contato'] = _goto_chat
+    st.session_state['_chat_force_target'] = _goto_chat
     # Mostra feedback visual depois — o toast fechou, então user precisa
     # saber que foi direcionado.
     st.session_state['_chat_aviso_redirect'] = _goto_chat
@@ -4639,7 +4651,15 @@ else:
         st.session_state['_chat_ultimas_contagens'] = atuais_chat
         # Memoriza o último remetente com msg nova → o selectbox da aba Chat
         # vai abrir nele automaticamente, sem o usuário precisar caçar.
-        if _ultimo_remetente_novo:
+        #
+        # ATENÇÃO: NÃO sobrescrever se o usuário JÁ clicou explicitamente num
+        # toast (`_chat_force_target` setado pelo boot). O fragmento é só um
+        # fallback passivo; o clique é a intenção real. Sobrescrever aqui
+        # causaria o bug "vai pra conversa errada" (a iteração de `atuais_chat`
+        # vem de um GROUP BY sem ORDER BY = ordem arbitrária no Postgres).
+        if _ultimo_remetente_novo and not st.session_state.get(
+            '_chat_force_target'
+        ):
             st.session_state['_chat_proximo_contato'] = _ultimo_remetente_novo
 
         # 2) Menções no Diário (decisão 5: toast mesmo se ja tinha acesso)
@@ -4682,13 +4702,37 @@ else:
             _q = int(_nao_lidas_por_user.get(nome, 0))
             return f"🔴 {nome} ({_q})" if _q > 0 else nome
 
-        # Pré-seleção: se o toast global setou alguém com msg nova, sobrescreve
-        # a key do widget ANTES dele renderizar (Streamlit usa o session_state
-        # como valor inicial). Equivale a "clicar no toast" → entrar direto na
-        # conversa certa, sem o usuário ter que caçar na lista.
-        _prox = st.session_state.pop('_chat_proximo_contato', None)
-        if _prox and _prox in lista_usuarios:
-            st.session_state["sel_contato_final_v2"] = _prox
+        # Pré-seleção do contato. Ordem de PRECEDÊNCIA (intenção mais forte
+        # primeiro):
+        #
+        #  1. `_chat_force_target` — usuário clicou EXPLICITAMENTE no toast
+        #     "Ver mensagem" (URL `?_goto_chat=NOME`). É o que ele quer.
+        #     PRIORIDADE ABSOLUTA. O fragmento global (`_global_notif`) está
+        #     proibido de sobrescrever essa flag.
+        #
+        #  2. `_chat_proximo_contato` — hint passivo do fragmento que diz
+        #     "esse foi o último remetente com msg nova". Usado quando o user
+        #     navega pra aba Chat manualmente, sem ter clicado no toast.
+        #
+        # Match com fallback case-insensitive + strip pra blindar contra
+        # whitespace/encoding (decode de query param, normalização Unicode etc).
+        _target = (
+            st.session_state.pop('_chat_force_target', None)
+            or st.session_state.pop('_chat_proximo_contato', None)
+        )
+        if _target:
+            _hit = _target if _target in lista_usuarios else None
+            if _hit is None:
+                _tnorm = str(_target).strip().lower()
+                for _nome in lista_usuarios:
+                    if str(_nome).strip().lower() == _tnorm:
+                        _hit = _nome
+                        break
+            if _hit is not None:
+                # Setar a key ANTES do widget renderizar: Streamlit lê
+                # session_state[key] como valor inicial. Funciona mesmo se
+                # `sel_contato_final_v2` já tinha valor de rerun anterior.
+                st.session_state["sel_contato_final_v2"] = _hit
 
         contato = st.selectbox(
             "Conversar com:",
@@ -4802,6 +4846,11 @@ else:
                     # Workaround: sinalizar _chat_aviso_redirect → o JS no boot
                     # auto-clica na aba 💬 Chat de volta.
                     st.session_state['_chat_aviso_redirect'] = contato
+                    # E garante que o selectbox abra NA conversa atual mesmo
+                    # se o fragmento global tiver setado outro `_chat_proximo_
+                    # contato` (msg nova de terceiro durante o envio).
+                    # `_chat_force_target` tem precedência sobre o hint.
+                    st.session_state['_chat_force_target'] = contato
                     st.rerun()
         else:
             st.info("Selecione um contato pra iniciar a conversa.")
