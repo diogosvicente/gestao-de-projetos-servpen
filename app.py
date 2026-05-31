@@ -4532,6 +4532,8 @@ else:
                         toast.className = 'wa-toast';
                         toast.setAttribute('data-rem', REM);
                     }}
+                    // Layout: header com nome+qtd + um único botão ✖ (fechar),
+                    // footer com APENAS "Ver mensagem" (1 ação primária).
                     // "📨 Ver mensagem" é um <a target="_top"> em vez de <button>
                     // porque o iframe do components.html é sandboxed sem
                     // 'allow-top-navigation' — JS via window.parent.location
@@ -4543,7 +4545,6 @@ else:
                         + '<button class="wa-toast-close" title="Fechar">✖</button>'
                         + '</div>'
                         + '<div class="wa-toast-actions">'
-                        + '<button class="wa-btn-close">Fechar</button>'
                         + '<a class="primary wa-btn-go" target="_top" '
                         + '   style="display:flex;align-items:center;'
                         + '          justify-content:center;text-decoration:none;">'
@@ -4569,10 +4570,13 @@ else:
                                  '?_goto_chat=' + encodeURIComponent(REM));
                     }}
 
-                    // Wiring dos botões de fechar
+                    // Wiring do botão ✖ (único fechar)
                     toast.querySelector('.wa-toast-close')
                          .addEventListener('click', function () {{ closeToast(toast); }});
-                    toast.querySelector('.wa-btn-close')
+                    // Click em "Ver mensagem" também fecha visualmente antes
+                    // do navigate. Não chama preventDefault — deixa o <a>
+                    // navegar normal.
+                    toast.querySelector('.wa-btn-go')
                          .addEventListener('click', function () {{ closeToast(toast); }});
 
                     if (!existing) {{
