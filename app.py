@@ -180,6 +180,52 @@ def _render_tag_chips(tags_str, *, small=False):
         )
     return ''.join(chips)
 
+
+def _popover_mencionar(text_key, nomes_disponiveis, *, label="@ Mencionar",
+                       pop_key=None, selecionado_key=None, eu_mesmo=None):
+    """Popover compacto que appenda `@"Nome"` ao text_area associado.
+
+    Como Streamlit não permite injetar texto na posição do cursor em
+    `st.text_area`, este helper faz append ao final — é o trade-off de UX
+    aceitável pra evitar gambiarra de JS dentro do widget.
+
+    Args:
+        text_key: a `key=` do st.text_area onde a menção será inserida.
+        nomes_disponiveis: lista de strings (nomes dos membros).
+        label: texto do botão do popover.
+        pop_key, selecionado_key: chaves únicas se houver múltiplos popovers
+            na mesma página (ex.: form de novo + form de resposta).
+        eu_mesmo: se passado, remove esse nome da lista (não faz sentido
+            mencionar a si próprio).
+    """
+    if pop_key is None:
+        pop_key = f"pop_men_{text_key}"
+    if selecionado_key is None:
+        selecionado_key = f"pop_men_sel_{text_key}"
+
+    opcoes = [n for n in (nomes_disponiveis or []) if n and n != eu_mesmo]
+    if not opcoes:
+        return  # nada a fazer
+
+    with st.popover(label, use_container_width=False):
+        st.caption("Selecione um membro pra inserir `@\"Nome\"` no fim do texto.")
+        sel = st.selectbox(
+            "Membro",
+            options=["—"] + sorted(opcoes, key=str.lower),
+            key=selecionado_key,
+            label_visibility="collapsed",
+        )
+        if st.button("➕ Inserir menção", key=f"{pop_key}_btn",
+                     use_container_width=True):
+            if sel and sel != "—":
+                atual = st.session_state.get(text_key, "") or ""
+                sep = "" if atual.endswith((" ", "\n", "")) else " "
+                st.session_state[text_key] = f'{atual}{sep}@"{sel}" '
+                # Reseta o select pra "—" pra próximo uso
+                st.session_state[selecionado_key] = "—"
+                st.rerun()
+
+
 def _gerar_ics(df_eventos):
     """Gera conteudo .ics (RFC 5545) a partir de um DataFrame de eventos da agenda.
        Colunas esperadas: titulo, tipo, data_inicio, data_fim, responsaveis, descricao."""
@@ -459,6 +505,18 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
                 "Adicionar resposta/comentário:",
                 placeholder="Escreva aqui para continuar o assunto...",
                 key=f"area_{d['id']}",
+            )
+
+            # @mention popover: insere `@"Nome"` no fim do texto (vai disparar
+            # _processar_mencoes_diario quando enviar). É distinto do multiselect
+            # acima — aquele só registra "Ref: @X" no rodapé sem disparar fluxo.
+            _popover_mencionar(
+                text_key=f"area_{d['id']}",
+                nomes_disponiveis=lista_usuarios_int,
+                label="@ Mencionar inline",
+                pop_key=f"pop_men_resp_{d['id']}",
+                selecionado_key=f"pop_men_sel_resp_{d['id']}",
+                eu_mesmo=autor_logado,
             )
 
             if st.button("📤 Enviar", key=f"env_{d['id']}", use_container_width=True):
@@ -3012,6 +3070,17 @@ else:
             r_disc = c_d2.selectbox("Disciplina", lista_disc, key="diario_disc")
 
             r_rel = st.text_area("Descrição do Relato", key="diario_texto")
+
+            # Popover @mention: dropdown com nomes da equipe → appenda `@"Nome"`
+            # no fim do texto. Substitui a digitação manual de `@"Nome Completo"`.
+            _popover_mencionar(
+                text_key="diario_texto",
+                nomes_disponiveis=df_u['nome'].tolist() if not df_u.empty else [],
+                label="@ Mencionar alguém da equipe",
+                pop_key="pop_men_novo_relato",
+                selecionado_key="pop_men_sel_novo_relato",
+                eu_mesmo=st.session_state.get('usuario'),
+            )
 
             c_h, c_a = st.columns([1, 3])
             r_horas = c_h.number_input(

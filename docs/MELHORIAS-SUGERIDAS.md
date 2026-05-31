@@ -86,7 +86,7 @@ maduro (psycopg3), defaults sensatos.
 
 | # | Item | Por que dói hoje | Esforço |
 |---|---|---|---|
-| 🟠 | **Autocomplete no `@` mention** | Hoje tem que digitar `@"Nome Completo"` exato com aspas. Esquece a aspa, não menciona | Médio (componente custom) |
+| ✅ | ~~**Autocomplete no `@` mention**~~ Implementado em maio/2026: popover **@ Mencionar** ao lado de cada `st.text_area` do Diário (novo relato + resposta). Selectbox com filtro nativo + botão "➕ Inserir menção" appenda `@"Nome"` no fim do texto. Sem deps externas, sem JS injection. | ✅ Feito |
 | 🟠 | **Notificação por e-mail** | Quem não tá logado perde menções/respostas. Painel persistente ajuda, mas e-mail é o canal definitivo | Médio (SMTP + template) |
 | 🟠 | **Loading states / spinners** em operações lentas (PDF, upload, geração de relatório) | Sem feedback, usuário clica de novo achando que travou | Baixo |
 | 🟠 | **Mensagens de erro humanas** | Hoje vaza stack trace pro usuário em vários pontos | Baixo |
