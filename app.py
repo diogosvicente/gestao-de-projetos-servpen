@@ -332,11 +332,12 @@ def _pill_select(container, label, options, *, default=None,
 
 
 def _render_lista_kanban(df_kanban, df_d):
-    """Visão 'Lista' do Kanban: tabela densa com sort + botão de detalhe por linha.
+    """Visão 'Lista' do Kanban: tabela densa com sort + checkbox por linha
+    + toolbar de bulk actions (mover status, adicionar tag em lote).
 
-    Pensada pra triagem rápida quando há muitos projetos. Mostra mais
-    informação por linha do que um card Kanban, com possibilidade de
-    ordenar e abrir cada um com 1 clique.
+    Pensada pra triagem rápida quando há muitos projetos. Bulk actions
+    aceleram operações típicas tipo "mover 5 finalizados pra Concluído"
+    ou "marcar todos com tag Aguardando Cliente".
     """
     if df_kanban.empty:
         _empty_state(
@@ -370,11 +371,121 @@ def _render_lista_kanban(df_kanban, df_d):
     )
     df_l = df_l.sort_values(_opcoes_sort[_sort_label])
 
-    # Cabeçalho da tabela
-    hdr = st.columns([0.6, 1.5, 3, 2, 1.5, 1.2, 2, 0.6])
+    # ── BULK SELECTION STATE ─────────────────────────────────────
+    # Mantém set de IDs entre reruns. Limpa IDs que não estão mais no
+    # filtro atual (defensivo, evita "fantasmas" após mudar busca).
+    _ids_visiveis = set(int(x) for x in df_l['id'].tolist())
+    sel_ids = st.session_state.setdefault("kanban_bulk_sel", set())
+    sel_ids = sel_ids & _ids_visiveis
+    st.session_state["kanban_bulk_sel"] = sel_ids
+
+    # ── TOOLBAR DE BULK ACTIONS (só aparece se houver seleção) ──
+    if sel_ids and _pode_editar():
+        with st.container(border=True):
+            st.markdown(
+                f"<div style='color:#3b82f6;font-weight:600;font-size:.9rem;"
+                f"margin-bottom:6px;'>"
+                f"☑ {len(sel_ids)} projeto(s) selecionado(s)</div>",
+                unsafe_allow_html=True,
+            )
+            with st.form("bulk_actions_form", clear_on_submit=False):
+                bc1, bc2, bc3, bc4 = st.columns([2, 2, 1, 1])
+                _novo_status = bc1.selectbox(
+                    "Mover pra status",
+                    options=["— (não mudar)", "Em Espera", "Ativo",
+                             "🛑 Parado", "Cancelado", "Concluído"],
+                    key="bulk_novo_status",
+                )
+                _tags_disp = db.listar_tags_existentes()
+                _opcoes_tag = ["— (não mudar)"] + _tags_disp
+                _tag_add = bc2.selectbox(
+                    "Adicionar tag",
+                    options=_opcoes_tag,
+                    key="bulk_tag_add",
+                    help="Adiciona a tag a TODOS os projetos selecionados. "
+                         "Não remove tags existentes — só acrescenta.",
+                )
+                _aplicar = bc3.form_submit_button(
+                    "✅ Aplicar", use_container_width=True,
+                )
+                _limpar = bc4.form_submit_button(
+                    "✖ Limpar", use_container_width=True,
+                )
+
+            if _aplicar:
+                _vai_status = (_novo_status and
+                               not _novo_status.startswith("—"))
+                _vai_tag = (_tag_add and not _tag_add.startswith("—"))
+                if not _vai_status and not _vai_tag:
+                    st.warning("Nada selecionado pra mudar.")
+                else:
+                    _n = 0
+                    for _pid in sorted(sel_ids):
+                        if _vai_status:
+                            db.atualizar_campo_projeto(
+                                _pid, "status", _novo_status
+                            )
+                        if _vai_tag:
+                            # Adiciona tag sem perder as existentes
+                            _conn_t = db.conectar(); _c_t = _conn_t.cursor()
+                            try:
+                                _c_t.execute(
+                                    "SELECT tags FROM projetos WHERE id = %s",
+                                    (int(_pid),),
+                                )
+                                _r_t = _c_t.fetchone()
+                                _atuais = db.parse_tags(_r_t[0] if _r_t else None)
+                                if _tag_add not in _atuais:
+                                    _atuais.append(_tag_add)
+                                _novo_csv = db.serializar_tags(_atuais) or None
+                                _c_t.execute(
+                                    "UPDATE projetos SET tags = %s WHERE id = %s",
+                                    (_novo_csv, int(_pid)),
+                                )
+                                _conn_t.commit()
+                            finally:
+                                _conn_t.close()
+                        _n += 1
+                    db.log_aud(
+                        st.session_state.usuario, 'bulk_acao', 'projeto',
+                        None,
+                        f"{_n} projetos · status={_novo_status if _vai_status else '—'}"
+                        f" · tag={_tag_add if _vai_tag else '—'}",
+                    )
+                    st.session_state["kanban_bulk_sel"] = set()
+                    _invalidar_dados()
+                    st.success(f"✅ {_n} projeto(s) atualizado(s).")
+                    st.rerun()
+
+            if _limpar:
+                st.session_state["kanban_bulk_sel"] = set()
+                st.rerun()
+
+    # ── CABEÇALHO DA TABELA ──────────────────────────────────────
+    # +1 coluna inicial pra "selecionar todos" / espaço do checkbox
+    _COLS_ET = [0.35, 1.4, 3, 2, 1.5, 1.2, 2, 0.6]
+    hdr = st.columns(_COLS_ET)
+    # "Selecionar todos" no header se for Gestor/edit
+    if _pode_editar():
+        _todos_marcados = (len(sel_ids) > 0
+                           and sel_ids >= _ids_visiveis)
+        _toggle_all = hdr[0].checkbox(
+            "", value=_todos_marcados, key="bulk_sel_all",
+            help="Selecionar/desmarcar todos os visíveis",
+            label_visibility="collapsed",
+        )
+        # Reage só se mudou de estado vs. derivado
+        if _toggle_all and not _todos_marcados:
+            st.session_state["kanban_bulk_sel"] = _ids_visiveis.copy()
+            st.rerun()
+        elif (not _toggle_all) and _todos_marcados:
+            st.session_state["kanban_bulk_sel"] = set()
+            st.rerun()
+    else:
+        hdr[0].markdown(" ")
     for col_obj, txt in zip(
-        hdr,
-        ["#", "Status", "Projeto", "Projetista", "Prazo", "Prioridade", "Tags", ""],
+        hdr[1:],
+        ["Status", "Projeto", "Projetista", "Prazo", "Prioridade", "Tags", ""],
     ):
         col_obj.markdown(
             f"<small style='color:#94a3b8;text-transform:uppercase;"
@@ -382,24 +493,35 @@ def _render_lista_kanban(df_kanban, df_d):
             unsafe_allow_html=True,
         )
 
-    # Container com altura limitada pra lista grande
+    # ── LINHAS DA TABELA ─────────────────────────────────────────
     with st.container(height=720, border=False):
         for _, row in df_l.iterrows():
-            cols = st.columns([0.6, 1.5, 3, 2, 1.5, 1.2, 2, 0.6])
+            cols = st.columns(_COLS_ET)
             pid = int(row['id'])
 
-            cols[0].markdown(
-                f"<div style='padding-top:8px;color:#64748b;"
-                f"font-size:11px;'>#{pid}</div>",
-                unsafe_allow_html=True,
-            )
+            # Checkbox de seleção (col 0) — só se pode editar
+            if _pode_editar():
+                _checked = cols[0].checkbox(
+                    "", value=(pid in sel_ids),
+                    key=f"lista_chk_{pid}",
+                    label_visibility="collapsed",
+                )
+                if _checked:
+                    sel_ids.add(pid)
+                else:
+                    sel_ids.discard(pid)
+            else:
+                cols[0].markdown(" ")
+
             cols[1].markdown(
                 f"<div style='padding-top:6px;'>{_badge_status(row.get('status'))}</div>",
                 unsafe_allow_html=True,
             )
             cols[2].markdown(
-                f"<div style='padding-top:8px;font-weight:600;'>"
-                f"{row.get('projeto', '—')}</div>",
+                f"<div style='padding-top:6px;font-weight:600;'>"
+                f"{row.get('projeto', '—')} "
+                f"<span style='color:#64748b;font-weight:400;font-size:11px;'>"
+                f"#{pid}</span></div>",
                 unsafe_allow_html=True,
             )
             cols[3].markdown(
@@ -430,6 +552,9 @@ def _render_lista_kanban(df_kanban, df_d):
                               help="Abrir detalhes / editar"):
                 st.session_state.projeto_em_edicao = pid
                 st.rerun()
+
+    # Persiste estado final (depois de processar todos os checkboxes)
+    st.session_state["kanban_bulk_sel"] = sel_ids
 
 
 def _render_resumo_kanban(df_kanban, df_d):
