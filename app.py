@@ -226,6 +226,45 @@ def _popover_mencionar(text_key, nomes_disponiveis, *, label="@ Mencionar",
                 st.rerun()
 
 
+def _empty_state(icone, titulo, mensagem="", cta_label=None, cta_key=None,
+                 cor_borda="#3b82f6"):
+    """Empty state padrão: ícone grande, título, mensagem opcional e CTA.
+
+    Substitui `st.info("Nenhum X cadastrado")` por algo visualmente
+    mais convidativo — sem fazer o usuário se perguntar "e agora?".
+
+    Args:
+        icone: emoji ou char grande pra ilustrar (📂, 📅, 📊, 👥…)
+        titulo: frase curta em destaque (ex.: "Nenhum projeto cadastrado")
+        mensagem: subtítulo opcional explicando o que fazer
+        cta_label: texto do botão "call to action" (ex.: "➕ Cadastrar primeiro")
+        cta_key: key única do botão (obrigatório quando cta_label é passado)
+        cor_borda: borda esquerda do card pra dar identidade visual
+
+    Returns:
+        True se o usuário clicou no CTA, False caso contrário.
+    """
+    st.markdown(
+        f"""
+        <div style="background:rgba(255,255,255,0.02);
+                    border:1px dashed rgba(255,255,255,0.12);
+                    border-left:4px solid {cor_borda};
+                    border-radius:10px; padding:24px 18px; text-align:center;
+                    margin:8px 0;">
+            <div style="font-size:2.4rem; margin-bottom:6px;">{icone}</div>
+            <div style="font-size:1rem; font-weight:600; color:#e5e7eb;
+                        margin-bottom:6px;">{titulo}</div>
+            {f'<div style="font-size:.82rem; color:#94a3b8; max-width:520px; margin:0 auto;">{mensagem}</div>' if mensagem else ''}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if cta_label and cta_key:
+        c1, c2, c3 = st.columns([1, 2, 1])
+        return bool(c2.button(cta_label, key=cta_key, use_container_width=True))
+    return False
+
+
 def _pill_select(container, label, options, *, default=None,
                  key=None, label_visibility="visible", help=None):
     """Pill-button select que escolhe o melhor widget disponível em runtime.
@@ -270,7 +309,12 @@ def _render_lista_kanban(df_kanban, df_d):
     ordenar e abrir cada um com 1 clique.
     """
     if df_kanban.empty:
-        st.info("Nenhum projeto pra mostrar com o filtro atual.")
+        _empty_state(
+            "📋",
+            "Nenhum projeto pra mostrar",
+            "Limpe a busca/filtros acima ou cadastre um projeto novo.",
+            cor_borda="#7c3aed",
+        )
         return
 
     # Ordenação
@@ -362,7 +406,12 @@ def _render_resumo_kanban(df_kanban, df_d):
     """Visão 'Resumo' do Kanban: visão executiva com top urgentes + atrasados +
     distribuição. Pensada como 'dashboard de cima' pra reuniões/decisão."""
     if df_kanban.empty:
-        st.info("Nenhum projeto pra mostrar com o filtro atual.")
+        _empty_state(
+            "📊",
+            "Nada pra resumir",
+            "Limpe a busca/filtros acima — sem projetos visíveis não há resumo.",
+            cor_borda="#0891b2",
+        )
         return
 
     hoje = datetime.now().date()
@@ -1782,7 +1831,13 @@ else:
             st.session_state[_key_gantt_user] = projetos_selecionados_gantt
 
             if not projetos_selecionados_gantt:
-                st.info("Nenhum projeto selecionado para o Gantt.")
+                _empty_state(
+                    "📊",
+                    "Nenhum projeto selecionado pro Gantt",
+                    "Use o multiselect acima pra escolher os projetos "
+                    "que você quer ver no cronograma.",
+                    cor_borda="#3b82f6",
+                )
             else:
                 # Filtrar df_p_limpo pelos projetos selecionados
                 df_p_filtrado_gantt = df_p_limpo[df_p_limpo['projeto'].isin(projetos_selecionados_gantt)].copy()
@@ -1835,9 +1890,22 @@ else:
                             _estiliza_plotly(fig_gantt)
                             st.plotly_chart(fig_gantt, use_container_width=True)
                         else:
-                            st.info("Nenhuma etapa cadastrada nos projetos selecionados ainda.")
+                            _empty_state(
+                                "🏁",
+                                "Sem etapas nos projetos escolhidos",
+                                "Os projetos selecionados ainda não têm etapas. "
+                                "Abra cada um pelo Kanban → ⚙️ Detalhes → "
+                                "🏁 Etapas pra cadastrar.",
+                                cor_borda="#3b82f6",
+                            )
                     else:
-                        st.info("Nenhuma etapa cadastrada. Adicione etapas ao criar ou editar um projeto.")
+                        _empty_state(
+                            "🏁",
+                            "Nenhuma etapa cadastrada",
+                            "Pra cadastrar etapas de um projeto: Kanban → "
+                            "**⚙️ Detalhes** no card → seção **🏁 Etapas do Projeto**.",
+                            cor_borda="#3b82f6",
+                        )
                 else:
                     # Gantt padrão por projeto
                     # Usar df_p_filtrado_gantt aqui
@@ -1867,7 +1935,13 @@ else:
                     else:
                         st.info("Nenhum projeto com datas válidas para exibir no Gantt.")
         else:
-            st.info("Nenhum projeto ativo para exibir no Gantt.")
+            _empty_state(
+                "🛠️",
+                "Nenhum projeto ativo no momento",
+                "Cadastre projetos novos pela aba **➕ Novo Projeto** e "
+                "mova pra status **Ativo** no Kanban quando começar.",
+                cor_borda="#3b82f6",
+            )
 
         st.divider() # Adicionado para garantir que o divider original seja mantidopara exibir no cronograma.")
 
@@ -3883,7 +3957,13 @@ else:
             _cores_perfil = {'Gestor': '#b01a2c', 'Projetista': '#0056b3', 'Visualizador': '#6b7280'}
 
             if df_membros.empty:
-                st.info("Nenhum membro encontrado para essa busca.")
+                _empty_state(
+                    "🔎",
+                    "Nenhum membro encontrado",
+                    "Sua busca não retornou ninguém. Tente outro termo, "
+                    "ou apague o filtro pra ver todos.",
+                    cor_borda="#d97706",
+                )
 
             for _, u in df_membros.iterrows():
                 cor_p = _cores_perfil.get(u['perfil'], '#0056b3')
@@ -4582,7 +4662,13 @@ else:
                 # A tabela com filtros já existe mais embaixo na aba; só
                 # damos um atalho visual aqui em cima.
                 if _df_ag_visivel.empty:
-                    st.info("Nenhum compromisso cadastrado ainda.")
+                    _empty_state(
+                        "📅",
+                        "Nenhum compromisso cadastrado ainda",
+                        "Use o formulário ao lado pra agendar a primeira "
+                        "visita técnica, reunião ou ausência da equipe.",
+                        cor_borda="#7c3aed",
+                    )
                 else:
                     _qtd_futuros = int(_df_ag_visivel.apply(
                         lambda r: r.get('_df', r.get('_di')) >= _hoje_ag
@@ -4817,7 +4903,13 @@ else:
             df_show = df_show.sort_values('data_inicio')
 
             if df_show.empty:
-                st.info("Nenhum compromisso encontrado para os filtros aplicados.")
+                _empty_state(
+                    "🔍",
+                    "Nenhum compromisso encontrado",
+                    "Tente afrouxar os filtros acima — pelo menos um critério "
+                    "(categoria / membro / só futuros) está muito restritivo.",
+                    cor_borda="#d97706",
+                )
             else:
                 TIPO_ICONE = {"Visita Técnica":"🏗️","Reunião":"🤝","Férias":"🏖️",
                             "Licença":"🏥","Folga":"😴"}
