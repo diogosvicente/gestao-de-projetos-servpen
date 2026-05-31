@@ -47,9 +47,9 @@ maduro (psycopg3), defaults sensatos.
 | # | Passo | Por que | Status |
 |---|---|---|---|
 | 1 | **Git + GitHub privado** | Single point of failure absoluto — sumiu o `app.py` = perdeu o sistema. Já vimos isso acontecer | ✅ **Feito** (repo `diogosvicente/gestao-de-projetos-servpen`) |
-| 2 | **Backup automático diário dos `.db`** | Hoje só faz backup quando o `install.sh` roda. Se algo corromper hoje, último backup foi quando? | Pendente |
+| 2 | **Backup automático diário do Postgres** | Hoje só faz backup quando o `install.sh` roda. Se algo corromper hoje, último backup foi quando? | ✅ **Feito** (timer systemd `backup-gestao-de-projetos.timer`, retenção 30 dias) |
 | 3 | **HTTPS** com Let's Encrypt + certbot | Token de sessão vai em texto puro pela rede. Qualquer sniff captura e rouba sessão | Pendente |
-| 4 | **bcrypt** no lugar de SHA-256 puro | Vulnerável a rainbow tables se o `.db` vazar. Migrar hashes existentes incluído no esforço | Pendente |
+| 4 | **bcrypt** no lugar de SHA-256 puro | Vulnerável a rainbow tables se o `.db` vazar. Migrar hashes existentes incluído no esforço | ✅ **Feito** (`passlib[bcrypt]`, rehash transparente no login — usuários antigos migram sem precisar trocar senha) |
 | 5 | **Trocar o servidor** (qualquer CPU dos últimos ~8 anos com AVX2) | Sozinho resolve mais que qualquer mudança de software | Pendente |
 
 ---
@@ -58,13 +58,13 @@ maduro (psycopg3), defaults sensatos.
 
 | # | Item | Risco atual | Solução | Esforço |
 |---|---|---|---|---|
-| 🔴 | **Senhas em SHA-256 sem salt** | Vulnerável a rainbow tables. SHA-256 é pra hash de conteúdo, não senha | `bcrypt` ou `argon2` (lib `passlib`); migrar hashes existentes | Médio |
+| ✅ | ~~**Senhas em SHA-256 sem salt**~~ Migrado pra **bcrypt** (maio/2026) | — | `passlib[bcrypt]`. Rehash transparente no login — hashes legados migram conforme cada usuário loga. | ✅ Feito |
 | 🔴 | **HTTP sem TLS** | Token de sessão em texto puro em URL e cookies. Sniff trivial | Let's Encrypt + certbot no Apache | Baixo |
-| 🔴 | **Sem rate limiting no login** | Brute-force livre. Bot pode fazer milhares de tentativas/s | Bloqueio temporário após N falhas (tabela `login_falhas`) | Baixo |
+| ✅ | ~~**Sem rate limiting no login**~~ Implementado em maio/2026 | — | Tabela `login_falhas` + 5 falhas em 15min bloqueiam usuário por 15min. Backup diário purga falhas >24h. | ✅ Feito |
 | 🟠 | **Token de sessão no querystring** (`?t=...`) | Aparece em logs do Apache, no histórico do browser, em headers Referer | Migrar pra cookie HttpOnly; precisa sessão server-side real | Médio |
 | 🟠 | **Upload de arquivo sem validação** | Aceita qualquer extensão até 100MB. `.html` malicioso? Sem sanitização? | Whitelist de extensões + magic-byte check (`python-magic`) + opcionalmente ClamAV | Baixo |
 | 🟠 | **Sem complexidade mínima de senha** | "123" é aceito | Mínimo 8 chars + 1 número ou classe diversa | Baixo |
-| 🟠 | **XSRF desabilitado** (`enableXsrfProtection = false`) | Foi necessário pra funcionar com o Apache, mas deixa CSRF aberto | Re-habilitar com `trusted_origins` configurado | Médio |
+| ✅ | ~~**XSRF desabilitado**~~ Re-habilitado em maio/2026 | — | `enableXsrfProtection = true` no config.toml. Funciona porque vhost Apache usa `ProxyPreserveHost On` + `X-Forwarded-Host`. | ✅ Feito |
 | 🟢 | **Auditoria sem IP** | Loga "Sara fez X" mas não de onde | Adicionar `ip` na tabela `auditoria` (vem do header `X-Forwarded-For`) | Baixo |
 | 🟢 | **Sessões de 7 dias sem rotação** | Token roubado vale uma semana inteira | Rotacionar token a cada N horas de uso | Baixo |
 | 🟢 | **Sem 2FA** | Para perfis Gestor seria desejável | TOTP (Google Authenticator) via `pyotp` | Médio |
@@ -77,7 +77,7 @@ maduro (psycopg3), defaults sensatos.
 |---|---|---|---|
 | 🔴 | **Trocar o servidor** | CPU de 2009 sem AVX é o ceiling de tudo. Sozinho rende mais que qualquer software-change | Baixo (custo de hardware) |
 | 🟠 | **Modularizar `app.py`** (~3.500 linhas hoje) usando `st.navigation` + `st.Page` | Hoje o arquivo inteiro re-executa a cada clique. Quebrando em `pages/dashboard.py`, `pages/diario.py`, etc., **só a aba ativa roda**. Corte de ~60% de trabalho por interação | Médio |
-| 🟠 | **`@st.cache_resource` pra conexão SQLite** | Hoje cada `db.conectar()` abre conexão nova. Uma só compartilhada cai bem com WAL | Baixo |
+| ✅ | ~~**`@st.cache_resource` pra conexão SQLite**~~ Substituído por **engine SQLAlchemy + pool** (maio/2026) | — | `db.get_engine()` com `lru_cache` retorna engine SQLAlchemy compartilhado; `pd.read_sql_query(..., db.get_engine())` em vez de conn psycopg crua → resolve warning pandas + reuso de conexão via pool. | ✅ Feito |
 | 🟢 | **Static assets via Apache** (em vez de Streamlit servir tudo) | Apache é mais rápido pra static. Streamlit fica só pro dinâmico | Baixo |
 
 ---
@@ -93,7 +93,7 @@ maduro (psycopg3), defaults sensatos.
 | 🟢 | **Calendário visual da Agenda** | Hoje é só lista com expanders. Visualização mensal seria muito mais útil | Médio |
 | 🟢 | **Inline edit em campos do projeto** | Hoje precisa abrir form gigante pra mudar 1 prioridade | Médio |
 | 🟢 | **Bulk actions** | Selecionar 5 projetos e mudar status de todos. Hoje 1 a 1 | Médio |
-| 🟢 | **Tags/labels nos projetos** | Status é binário. Tags livres ("Crítico", "Aguardando Cliente", "Aprovado") agrupam melhor | Médio |
+| ✅ | ~~**Tags/labels nos projetos**~~ Implementado em maio/2026: coluna `tags` CSV, input nos forms novo+editar, chips coloridos no Kanban (cor determinística por hash), filtro AND no topo do Kanban | ✅ Feito |
 | 🟢 | **Empty states com CTA** | Aba vazia hoje mostra "Nenhum dado". Devia mostrar "Cadastre seu primeiro projeto" com botão | Baixo |
 | 🟢 | **Atalhos de teclado** | Esc fecha modal, Ctrl+S salva form, etc. | Baixo |
 
@@ -104,14 +104,14 @@ maduro (psycopg3), defaults sensatos.
 | # | Item | Por que urgente | Esforço |
 |---|---|---|---|
 | 🔴 | **Git versionando o código** | Single point of failure absoluto. Já visto na conversa real | ✅ Feito |
-| 🔴 | **Backup automático diário** dos `.db` (cron) | Hoje só backup quando `install.sh` roda. Se corromper hoje, recupera de quando? | Baixo |
+| 🔴 | **Backup automático diário** do Postgres (timer systemd) | Hoje só backup quando `install.sh` roda. Se corromper hoje, recupera de quando? | ✅ Feito |
 | 🟠 | **Modularizar `app.py`** em `pages/` | 3.500 linhas num arquivo só. Insustentável a longo prazo | Médio |
 | 🟠 | **Testes automatizados** (pelo menos smoke tests) | Zero coverage. Quebra calado ao mexer em qualquer coisa | Médio |
-| 🟠 | **Logs estruturados** | Hoje erro do usuário não vira log. Difícil diagnosticar incidente | Baixo |
+| ✅ | ~~**Logs estruturados**~~ Implementado em maio/2026 | `logging.basicConfig` no boot do `app.py` com timestamp+nível+módulo. `LOG_LEVEL` env var controla verbosidade (default INFO; DEBUG pra investigar). | ✅ Feito |
 | 🟠 | **Monitoramento** (uptime, error rate) | Quando o serviço cai, ninguém sabe até alguém reclamar | Baixo (UptimeRobot grátis serve) |
 | 🟠 | **Config por env var**, não hardcoded | IPs no código, paths no código. Mudar de servidor exige editar código | Baixo |
 | 🟢 | **Migrations de DB em arquivos separados** (não ALTER inline em código) | Hoje migração é "tente ALTER, ignore erro". Difícil saber o estado real do schema | Médio |
-| 🟢 | **Linter + formatador** (ruff + black) | Estilo varia muito. Diff de revisão fica poluído | Baixo |
+| ✅ | ~~**Linter + formatador**~~ ruff configurado em `pyproject.toml` (maio/2026). Rodar: `ruff check .` (lint) + `ruff format .` (format). | ✅ Feito |
 | 🟢 | **Dockerizar** | Reprodutibilidade real. `docker compose up` em qualquer Linux funciona | Médio |
 
 ---
@@ -121,7 +121,7 @@ maduro (psycopg3), defaults sensatos.
 | # | Item | Por que | Esforço |
 |---|---|---|---|
 | 🟢 | **Comentários encadeados no diário** | Hoje é tudo concatenado num `resposta_gestor` separado por `\n` — feio e sem edição/exclusão individual | Médio (nova tabela `comentarios_diario`) |
-| 🟢 | **Time tracking** | Campo `horas` existe na tabela `diario` mas não tem UI pra preencher ou relatórios em cima | Baixo |
+| ✅ | ~~**Time tracking**~~ Implementado em maio/2026: input `⏱ Horas` no form, chip no card de cada relato, expander "Horas registradas" agregando minhas/equipe × hoje/semana/mês + top 5 projetos do mês + breakdown por projetista | ✅ Feito |
 | 🟢 | **Templates de projeto** | Clonar projeto existente como ponto de partida | Baixo |
 | 🟢 | **Histórico de versões** dos relatos | Hoje editar relato sobrescreve sem rastro. Útil pra auditoria | Médio (nova tabela ou versionar via JSON) |
 | 🟢 | **PWA / mobile-first** | Streamlit não é ideal pra isso. Vale considerar app web nativo se mobile virar prioridade | Alto (reescreve frontend) |

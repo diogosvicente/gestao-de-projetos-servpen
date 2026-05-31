@@ -1,0 +1,16 @@
+[Unit]
+Description=Backup diário do Postgres - Gestão de Projetos SERVPEN
+Documentation=https://github.com/diogosvicente/gestao-de-projetos-servpen
+After=postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/backup-gestao-de-projetos.sh
+# Roda como root porque precisa de `sudo -u postgres pg_dump` + escrita em
+# /var/www/html/gestao_de_projetos/backups/ (dono www-data) com chown final.
+User=root
+# Timeout generoso pra DBs maiores no futuro
+TimeoutStartSec=15min
+StandardOutput=journal
+StandardError=journal

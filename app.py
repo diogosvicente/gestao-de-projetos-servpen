@@ -1,12 +1,37 @@
+import logging
 import streamlit as st
-import pandas as pd                    
-import sqlite3        # <-- Verifique se esta linha existe
-import database as db  # Você definiu como 'db' aqui
+import pandas as pd
+import database as db
 import auth
 import os
 from datetime import datetime
 import plotly.express as px
 import relatorios
+
+
+# ─── LOGGING ─────────────────────────────────────────────────────
+# Configura ANTES de qualquer st.* ou import pesado pra capturar tudo.
+# Em produção (systemd com StandardOutput=append) o log vai pro arquivo;
+# em dev (streamlit run local) vai pro stdout.
+# Nível controlado por env LOG_LEVEL (default INFO; DEBUG pra investigar).
+_LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, _LOG_LEVEL, logging.INFO),
+    format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    force=True,  # sobrescreve config default do Streamlit/Tornado
+)
+# Streamlit/Tornado/Plotly são MUITO verbosos em DEBUG — silencia-os
+# a menos que o usuário explicitamente queira ver tudo.
+if _LOG_LEVEL != "DEBUG":
+    for noisy in ("tornado.access", "tornado.application", "watchdog",
+                  "matplotlib", "PIL", "fontTools", "sqlalchemy.engine"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+log = logging.getLogger(__name__)
+# (sem log.info no top-level: Streamlit re-executa o script a cada
+#  interação do usuário, então logar aqui vira ruído. Use log.info/warning
+#  dentro de handlers específicos quando algo relevante acontecer.)
+
 
 # 1. CONFIGURAÇÃO DA PÁGINA (Sempre o PRIMEIRO comando Streamlit)
 st.set_page_config(page_title="GESTÃO DE PROJETOS - SERVPEN", layout="wide", page_icon="🏢")
@@ -106,6 +131,54 @@ def _badge_status(status):
     return (f"<span style='display:inline-block; background:{bg}; color:{fg}; "
             f"padding:2px 10px; border-radius:12px; font-size:11px; font-weight:600; "
             f"letter-spacing:0.5px; text-transform:uppercase;'>{s}</span>")
+
+
+def _cor_tag(tag):
+    """Devolve par (bg, fg) determinístico pra uma tag — mesma tag = mesma cor.
+
+    Usa hash da string lowercased como índice numa paleta curada. Assim a
+    UI fica visualmente estável (não muda cor entre páginas) sem precisar
+    catálogo persistente.
+    """
+    import hashlib as _hl
+    paleta = [
+        ('#2b6cb0', '#ffffff'),  # azul
+        ('#2f855a', '#ffffff'),  # verde
+        ('#b7791f', '#ffffff'),  # amarelo escuro
+        ('#9c4221', '#ffffff'),  # laranja queimado
+        ('#702459', '#ffffff'),  # roxo
+        ('#2c5282', '#ffffff'),  # azul escuro
+        ('#276749', '#ffffff'),  # verde escuro
+        ('#b03a2e', '#ffffff'),  # vermelho
+        ('#553c9a', '#ffffff'),  # violeta
+        ('#0987a0', '#ffffff'),  # teal
+    ]
+    idx = int(_hl.md5(str(tag).strip().lower().encode()).hexdigest(), 16) % len(paleta)
+    return paleta[idx]
+
+
+def _render_tag_chips(tags_str, *, small=False):
+    """Renderiza chips coloridos a partir de string CSV de tags.
+
+    `small=True` reduz padding/fonte (pra chip no card do Kanban).
+    Retorna string HTML pronta pra `unsafe_allow_html=True`. Vazio se sem tags.
+    """
+    if not tags_str:
+        return ''
+    chips = []
+    pad = "1px 6px" if small else "2px 8px"
+    fz  = "10px"    if small else "11px"
+    mar = "2px 3px 0 0"
+    for t in db.parse_tags(tags_str):
+        bg, fg = _cor_tag(t)
+        # Escape HTML básico no nome da tag
+        safe = (t.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'))
+        chips.append(
+            f"<span style='display:inline-block;background:{bg};color:{fg};"
+            f"padding:{pad};border-radius:10px;font-size:{fz};font-weight:600;"
+            f"margin:{mar};letter-spacing:0.3px;'>{safe}</span>"
+        )
+    return ''.join(chips)
 
 def _gerar_ics(df_eventos):
     """Gera conteudo .ics (RFC 5545) a partir de um DataFrame de eventos da agenda.
@@ -240,14 +313,10 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
     fixos). Sem isso, num st.rerun(scope='fragment') o fragmento mostraria dados
     antigos (resolver/excluir não refletiria). Aplica os mesmos filtros de busca e
     'só pendências' que a aba usa."""
-    conn = db.conectar()
-    try:
-        df_proj_d = pd.read_sql_query(
-            "SELECT * FROM diario WHERE projeto_id = ? ORDER BY id DESC",
-            conn, params=(int(proj_id),),
-        )
-    finally:
-        conn.close()
+    df_proj_d = pd.read_sql_query(
+        "SELECT * FROM diario WHERE projeto_id = %s ORDER BY id DESC",
+        db.get_engine(), params=(int(proj_id),),
+    )
 
     if busca and busca.strip():
         t = busca.lower()
@@ -296,12 +365,28 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
         )
         _wrap_post = '</div>' if _destaque_relato else ''
 
+        # Chip ⏱ Xh: só exibe quando horas > 0 (campo opcional)
+        _horas_val = d.get('horas') or 0
+        try:
+            _horas_num = float(_horas_val)
+        except (TypeError, ValueError):
+            _horas_num = 0.0
+        _horas_chip = (
+            f'<span style="background:rgba(255,255,255,0.18);padding:2px 8px;'
+            f'border-radius:4px;font-variant-numeric:tabular-nums;">'
+            f'⏱ {_horas_num:.2f} h</span>'
+            if _horas_num > 0 else ''
+        )
+
         st.markdown(f"""
             {_wrap_pre}
             <div style="background-color:{cor_topo};color:white; padding:12px 15px;border-radius:10px 10px 0 0;margin-top:10px;">
-            <div style="display:flex;justify-content:space-between;font-size:10px;text-transform:uppercase;letter-spacing:1px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:10px;text-transform:uppercase;letter-spacing:1px;">
                 <span style="background:rgba(0,0,0,0.3);padding:2px 8px;border-radius:4px;">{tag}</span>
-                <span title="{d['data']}">{_tempo_relativo(d['data'])}</span>
+                <span style="display:flex;gap:8px;align-items:center;">
+                    {_horas_chip}
+                    <span title="{d['data']}">{_tempo_relativo(d['data'])}</span>
+                </span>
             </div>
             <div style="font-size:16px;font-weight:700;margin-top:6px;">
                 {d['disciplina'] if d['disciplina'] else 'Geral'}
@@ -345,14 +430,14 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
                 if bc4.button("✅ Resolver", key=f"btn_res_{d['id']}", use_container_width=True):
                     with db.conectar() as conn:
                         _c = conn.cursor()
-                        _c.execute("UPDATE diario SET resolvido=1 WHERE id=?", (d['id'],))
+                        _c.execute("UPDATE diario SET resolvido=1 WHERE id=%s", (d['id'],))
                         conn.commit()
                     st.rerun(scope="fragment")
             else:
                 if bc4.button("🔓 Reabrir", key=f"btn_reap_{d['id']}", use_container_width=True):
                     with db.conectar() as conn:
                         _c = conn.cursor()
-                        _c.execute("UPDATE diario SET resolvido=0 WHERE id=?", (d['id'],))
+                        _c.execute("UPDATE diario SET resolvido=0 WHERE id=%s", (d['id'],))
                         conn.commit()
                     st.rerun(scope="fragment")
 
@@ -388,7 +473,7 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
 
                     with db.conectar() as conn:
                         _c = conn.cursor()
-                        _c.execute("UPDATE diario SET resposta_gestor=? WHERE id=?", (texto_final, d['id']))
+                        _c.execute("UPDATE diario SET resposta_gestor=%s WHERE id=%s", (texto_final, d['id']))
                         conn.commit()
 
                     _processar_mencoes_diario(
@@ -482,10 +567,8 @@ if not os.path.exists("anexos"):
 # antigo. Antes isso lia de um arquivo e escrevia em outro (split-brain) -> a agenda
 # do boot mostrava dados desatualizados.
 try:
-    conn = db.conectar()
-    df_agenda = pd.read_sql("SELECT * FROM agenda", conn)
-    conn.close()
-    
+    df_agenda = pd.read_sql("SELECT * FROM agenda", db.get_engine())
+
     # SINAL DE ALERTA (Toast)
     hoje = datetime.now().date()
     if not df_agenda.empty:
@@ -506,37 +589,25 @@ except Exception as e:
 # a mudança na hora. O TTL é só rede de segurança caso algum write não invalide.
 @st.cache_data(ttl=8, show_spinner=False)
 def _load_df_u():
-    conn = db.conectar()
-    try:
-        return pd.read_sql_query("SELECT nome FROM usuarios", conn)
-    finally:
-        conn.close()
+    return pd.read_sql_query("SELECT nome FROM usuarios", db.get_engine())
 
 @st.cache_data(ttl=8, show_spinner=False)
 def _load_df_d():
-    conn = db.conectar()
-    try:
-        return pd.read_sql_query("SELECT * FROM diario", conn)
-    finally:
-        conn.close()
+    return pd.read_sql_query("SELECT * FROM diario", db.get_engine())
 
 @st.cache_data(ttl=8, show_spinner=False)
 def _load_df_p(usuario, perfil):
     """Projetos visíveis. Cacheado por (usuario, perfil) pra não vazar visibilidade
     entre usuários diferentes."""
-    conn = db.conectar()
-    try:
-        if perfil in ("Projetista", "Visualizador"):
-            projs = db.listar_projetos_por_mencao(usuario)
-            params = [f"%{usuario}%"]
-            sql = "SELECT * FROM projetos WHERE projetista LIKE ?"
-            if projs:
-                sql += " OR id IN (" + ",".join("?" * len(projs)) + ")"
-                params.extend(int(x) for x in projs)
-            return pd.read_sql_query(sql, conn, params=tuple(params))
-        return pd.read_sql_query("SELECT * FROM projetos", conn)
-    finally:
-        conn.close()
+    if perfil in ("Projetista", "Visualizador"):
+        projs = db.listar_projetos_por_mencao(usuario)
+        params = [f"%{usuario}%"]
+        sql = "SELECT * FROM projetos WHERE projetista LIKE %s"
+        if projs:
+            sql += " OR id IN (" + ",".join(["%s"] * len(projs)) + ")"
+            params.extend(int(x) for x in projs)
+        return pd.read_sql_query(sql, db.get_engine(), params=tuple(params))
+    return pd.read_sql_query("SELECT * FROM projetos", db.get_engine())
 
 def _invalidar_dados():
     """Chamar após escrever no banco (projeto/diário/usuário/arquivo/agenda) para
@@ -1183,8 +1254,21 @@ if not st.session_state.autenticado:
             st.success("Login realizado!")
             st.rerun()
         else:
-            db.log_aud(u or '(vazio)', 'login_falha', 'sessao', None, 'usuario ou senha invalidos')
-            st.error("Usuário ou senha incorretos.")
+            # Distingue bloqueio por rate-limit de senha inválida (auth.py
+            # popula `_login_bloqueado_ate` quando bloqueia).
+            _bloq_ate = st.session_state.pop('_login_bloqueado_ate', None)
+            if _bloq_ate:
+                _mins = max(1, int((_bloq_ate - datetime.now()).total_seconds() / 60))
+                db.log_aud(u or '(vazio)', 'login_bloqueado', 'sessao', None,
+                           f'rate limit ate {_bloq_ate.isoformat(timespec="seconds")}')
+                st.error(
+                    f"🛑 Muitas tentativas falhas para **{u}**. "
+                    f"Tente novamente em ~{_mins} min."
+                )
+            else:
+                db.log_aud(u or '(vazio)', 'login_falha', 'sessao', None,
+                           'usuario ou senha invalidos')
+                st.error("Usuário ou senha incorretos.")
 
     # ── ESQUECI MINHA SENHA (pergunta secreta) ──────────────────────
     with st.expander("🔑 Esqueci minha senha"):
@@ -1604,15 +1688,13 @@ else:
         st.subheader("📉 Evolução Técnica por Projeto")
 
         try:
-            conn = db.conectar()
             df_evolucao = pd.read_sql("""
                 SELECT p.id as projeto_id, p.projeto, p.projetista,
                     pd.disciplina, pd.percentual
                 FROM progresso_disciplinas pd
                 JOIN projetos p ON pd.projeto_id = p.id
                 ORDER BY p.projeto, pd.disciplina
-            """, conn)
-            conn.close()
+            """, db.get_engine())
 
             if not df_evolucao.empty:
                 projetos_com_dados = df_evolucao['projeto'].unique().tolist()
@@ -1796,19 +1878,18 @@ else:
 
         # Carrega dados auxiliares para os relatórios
         try:
-            _conn_rel = db.conectar()
+            _eng_rel = db.get_engine()
             _df_etapas_rel = pd.read_sql("""
                 SELECT e.*, p.projeto, p.data_inicio
                 FROM etapas_projeto e
                 JOIN projetos p ON e.projeto_id = p.id
                 ORDER BY e.projeto_id, e.ordem
-            """, _conn_rel)
+            """, _eng_rel)
             _df_prog_rel = pd.read_sql("""
                 SELECT pd.*, p.projeto, p.id as projeto_id
                 FROM progresso_disciplinas pd
                 JOIN projetos p ON pd.projeto_id = p.id
-            """, _conn_rel)
-            _conn_rel.close()
+            """, _eng_rel)
         except Exception:
             _df_etapas_rel = pd.DataFrame()
             _df_prog_rel   = pd.DataFrame()
@@ -1880,13 +1961,24 @@ else:
     with t_kanban:
         st.header("📋 Controle de Fluxo")
 
-        # ── BUSCA ────────────────────────────────────────────────────
-        col_busca, col_total = st.columns([3, 1])
+        # ── BUSCA + FILTRO DE TAGS ───────────────────────────────────
+        col_busca, col_tags = st.columns([3, 2])
         busca_kanban = col_busca.text_input(
             "🔍 Buscar por nome, projetista ou cliente",
             placeholder="ex.: residencial silva, joão, prefeitura...",
             key="kanban_search",
         )
+        _todas_tags_kanban = db.listar_tags_existentes()
+        tags_filtro = col_tags.multiselect(
+            "🏷 Filtrar por tags",
+            options=_todas_tags_kanban,
+            default=[],
+            key="kanban_tags_filter",
+            help="Mostra apenas projetos que contêm TODAS as tags selecionadas. Vazio = não filtra.",
+            placeholder="(qualquer tag)" if _todas_tags_kanban else "Nenhuma tag cadastrada ainda",
+            disabled=not _todas_tags_kanban,
+        )
+
         if busca_kanban:
             termo = busca_kanban.lower().strip()
             mask = (
@@ -1897,6 +1989,18 @@ else:
             df_kanban = df_p[mask].copy()
         else:
             df_kanban = df_p.copy() if not df_p.empty else pd.DataFrame()
+
+        # Filtro de tags: projeto deve conter TODAS as tags selecionadas (AND).
+        if tags_filtro and not df_kanban.empty:
+            sel_lower = {t.lower() for t in tags_filtro}
+            def _tem_todas(s):
+                proj_tags = {t.lower() for t in db.parse_tags(s)}
+                return sel_lower.issubset(proj_tags)
+            # Defensivo: se a coluna ainda não existir (migration não rodou),
+            # apply em Series vazia retorna False pra tudo → df vazio.
+            _col_tags = df_kanban['tags'] if 'tags' in df_kanban.columns \
+                        else pd.Series([''] * len(df_kanban), index=df_kanban.index)
+            df_kanban = df_kanban[_col_tags.apply(_tem_todas)].copy()
 
         col_total.metric("Resultados", len(df_kanban) if not df_kanban.empty else 0)
 
@@ -2041,6 +2145,13 @@ else:
 
                     prazo_str = str(p.get('data_fim', '') or p.get('data_termino', '') or '—')
 
+                    # Chips de tags (small=True pra caber no card compacto)
+                    _tags_html = _render_tag_chips(p.get('tags'), small=True)
+                    _tags_wrap = (
+                        f'<div style="margin-top:6px;">{_tags_html}</div>'
+                        if _tags_html else ''
+                    )
+
                     card_html = (
                         f'<div class="{cfg["css_class"]}">'
                         f'{alerta_html}'
@@ -2050,6 +2161,7 @@ else:
                         f'<div style="font-size:.78rem;opacity:.9;">'
                         f'👤 {p["projetista"]}<br>'
                         f'📅 {prazo_str}</div>'
+                        f'{_tags_wrap}'
                         f'</div>'
                     )
                     st.markdown(card_html, unsafe_allow_html=True)
@@ -2124,11 +2236,10 @@ else:
             id_ed = st.session_state.projeto_em_edicao
  
             # Recarrega sempre do banco para ter dados frescos
-            conn = db.conectar()
             _df_ed = pd.read_sql_query(
-                "SELECT * FROM projetos WHERE id = ?", conn, params=(int(id_ed),)
+                "SELECT * FROM projetos WHERE id = %s",
+                db.get_engine(), params=(int(id_ed),),
             )
-            conn.close()
  
             if _df_ed.empty:
                 st.warning("Projeto não encontrado.")
@@ -2181,10 +2292,25 @@ else:
  
                 lista_pri = ["Máxima", "Média", "Mínima"]
                 pri_atual  = str(dados.get('prioridade', 'Média')).strip()
-                ed_pr = st.selectbox("Prioridade", lista_pri,
+
+                ed_r4c1, ed_r4c2 = st.columns([1, 2])
+                ed_pr = ed_r4c1.selectbox("Prioridade", lista_pri,
                                      index=lista_pri.index(pri_atual)
                                      if pri_atual in lista_pri else 1)
- 
+
+                _tags_existentes_e = db.listar_tags_existentes()
+                _tags_atuais_csv = str(dados.get('tags') or '')
+                ed_tags = ed_r4c2.text_input(
+                    "🏷 Tags (separadas por vírgula)",
+                    value=_tags_atuais_csv,
+                    placeholder=", ".join(_tags_existentes_e[:3]) if _tags_existentes_e else "Crítico, Aprovado",
+                    help=(
+                        "Etiquetas livres pra agrupar projetos. "
+                        + (f"Já em uso: {', '.join(_tags_existentes_e)}."
+                           if _tags_existentes_e else "")
+                    ),
+                )
+
                 st.markdown("#### 📅 Datas")
                 dc1, dc2, dc3, dc4 = st.columns(4)
                 ed_drec = dc1.date_input("Data de Recebimento",
@@ -2244,8 +2370,12 @@ else:
                     ed_li, checklist_final, ed_esc, ed_pr,
                 )
                 db.atualizar_projeto_completo(id_ed, dados_finais)
+                # `atualizar_projeto_completo` tem assinatura fixa de 14 valores
+                # (compat). Tags vão num UPDATE separado pra não quebrar.
+                _tags_csv_save = db.serializar_tags(db.parse_tags(ed_tags)) or None
+                db.atualizar_campo_projeto(id_ed, "tags", _tags_csv_save)
                 db.log_aud(st.session_state.usuario, 'editar', 'projeto',
-                           id_ed, f"nome='{ed_nm}'")
+                           id_ed, f"nome='{ed_nm}' tags='{_tags_csv_save or ''}'")
                 del st.session_state.projeto_em_edicao
                 _invalidar_dados(); st.rerun()
 
@@ -2387,12 +2517,10 @@ else:
                     "Adicione-as no campo **Disciplinas do Projeto** acima e salve."
                 )
             else:
-                conn = db.conectar()
                 df_prog = pd.read_sql(
-                    "SELECT * FROM progresso_disciplinas WHERE projeto_id = ?",
-                    conn, params=(int(id_ed),),
+                    "SELECT * FROM progresso_disciplinas WHERE projeto_id = %s",
+                    db.get_engine(), params=(int(id_ed),),
                 )
-                conn.close()
 
                 disciplinas_no_banco = df_prog['disciplina'].tolist()
 
@@ -2403,7 +2531,7 @@ else:
                         _c = db.conectar(); _cu = _c.cursor()
                         _cu.execute(
                             "INSERT INTO progresso_disciplinas "
-                            "(projeto_id, disciplina, concluido, percentual) VALUES (?,?,?,?)",
+                            "(projeto_id, disciplina, concluido, percentual) VALUES (%s,%s,%s,%s)",
                             (int(id_ed), _d, 0, 0),
                         )
                         _c.commit(); _c.close()
@@ -2414,7 +2542,7 @@ else:
                         _c = db.conectar(); _cu = _c.cursor()
                         _cu.execute(
                             "DELETE FROM progresso_disciplinas "
-                            "WHERE projeto_id=? AND disciplina=?",
+                            "WHERE projeto_id=%s AND disciplina=%s",
                             (int(id_ed), _d),
                         )
                         _c.commit(); _c.close()
@@ -2501,7 +2629,7 @@ else:
                         for _s, _p, _i in novos_vals:
                             _cu.execute(
                                 "UPDATE progresso_disciplinas "
-                                "SET concluido=?, percentual=? WHERE id=?",
+                                "SET concluido=%s, percentual=%s WHERE id=%s",
                                 (_s, _p, _i),
                             )
                         _c.commit(); _c.close()
@@ -2540,7 +2668,25 @@ else:
             f_li  = r3c2.text_input("Link da Pasta (Drive/Nuvem)")
 
             f_eq  = st.multiselect("Equipe Responsável *", df_u['nome'].tolist() if not df_u.empty else [])
-            f_pr  = st.selectbox("Prioridade", ["Máxima", "Média", "Mínima"], index=1)
+
+            r4c1, r4c2 = st.columns([1, 2])
+            f_pr  = r4c1.selectbox("Prioridade", ["Máxima", "Média", "Mínima"], index=1)
+            # Tags livres separadas por vírgula. Mostra as já existentes como hint.
+            _tags_existentes = db.listar_tags_existentes()
+            _placeholder_tags = (
+                ", ".join(_tags_existentes[:3]) if _tags_existentes
+                else "Crítico, Aguardando Cliente, Aprovado"
+            )
+            f_tags = r4c2.text_input(
+                "🏷 Tags (separadas por vírgula)",
+                value="",
+                placeholder=_placeholder_tags,
+                help=(
+                    "Etiquetas livres pra agrupar projetos além do status. "
+                    "Ex.: setor, fase, urgência, cliente. "
+                    + (f"Já em uso: {', '.join(_tags_existentes)}." if _tags_existentes else "")
+                ),
+            )
 
             st.markdown("#### 📅 Datas")
             dc1, dc2, dc3, dc4 = st.columns(4)
@@ -2635,6 +2781,7 @@ else:
     
             if f_nm and f_eq:
                 checklist_final = ", ".join(f_chk) + (" | " + f_dem if f_dem.strip() else "")
+                _tags_csv = db.serializar_tags(db.parse_tags(f_tags)) or None
                 dados_sql = (
                     ", ".join(f_eq),   # projetista
                     f_nm,              # projeto
@@ -2652,6 +2799,7 @@ else:
                     checklist_final,   # demandas
                     f_esc,             # solicitacao
                     f_pr,              # prioridade
+                    _tags_csv,         # tags (string CSV ou None)
                 )
                 novo_id = db.salvar_projeto(dados_sql)
                 if novo_id:
@@ -2773,6 +2921,80 @@ else:
         # ── Mapa de não lidos por projeto ────────────────────────────
         _mapa_nao_lidos = db.contar_nao_lidos_diario(st.session_state.usuario)
 
+        # ── HORAS REGISTRADAS (time tracking) ────────────────────────
+        # Agregação simples: hoje / semana / mês × minhas / equipe inteira +
+        # top 5 projetos do mês. Campo `horas` no diário é REAL; relatos sem
+        # horas (=0 ou NULL) ficam de fora.
+        with st.expander("⏱ Horas registradas", expanded=False):
+            try:
+                _df_h = pd.read_sql_query(
+                    """SELECT d.projeto_id, p.projeto, d.autor,
+                              COALESCE(d.horas, 0) AS horas, d.data
+                       FROM diario d
+                       LEFT JOIN projetos p ON p.id = d.projeto_id
+                       WHERE COALESCE(d.horas, 0) > 0""",
+                    db.get_engine(),
+                )
+                # `data` é TEXT em "DD/MM/YYYY HH:MM" — parse aqui no pandas.
+                _df_h['dt'] = pd.to_datetime(
+                    _df_h['data'], format='%d/%m/%Y %H:%M', errors='coerce'
+                )
+                _df_h = _df_h.dropna(subset=['dt'])
+            except Exception as e:
+                st.warning(f"Não foi possível carregar horas: {e}")
+                _df_h = pd.DataFrame(columns=['projeto_id','projeto','autor','horas','dt'])
+
+            if _df_h.empty:
+                st.info(
+                    "Nenhum relato com horas registradas ainda. Preencha o campo "
+                    "**⏱ Horas** ao criar um novo relato pra começar a acompanhar."
+                )
+            else:
+                _agora    = datetime.now()
+                _ini_dia  = _agora.replace(hour=0, minute=0, second=0, microsecond=0)
+                _ini_sem  = _ini_dia - pd.Timedelta(days=_agora.weekday())  # seg=0
+                _ini_mes  = _ini_dia.replace(day=1)
+
+                _eu = st.session_state.usuario
+
+                def _soma(df, ini):
+                    return float(df[df['dt'] >= ini]['horas'].sum())
+
+                _minha = _df_h[_df_h['autor'] == _eu]
+                cA, cB, cC = st.columns(3)
+                cA.metric("Hoje (minhas / equipe)",
+                          f"{_soma(_minha, _ini_dia):.1f} h",
+                          f"equipe: {_soma(_df_h, _ini_dia):.1f} h")
+                cB.metric("Semana (minhas / equipe)",
+                          f"{_soma(_minha, _ini_sem):.1f} h",
+                          f"equipe: {_soma(_df_h, _ini_sem):.1f} h")
+                cC.metric("Mês (minhas / equipe)",
+                          f"{_soma(_minha, _ini_mes):.1f} h",
+                          f"equipe: {_soma(_df_h, _ini_mes):.1f} h")
+
+                # Top projetos do mês (equipe)
+                _df_mes = _df_h[_df_h['dt'] >= _ini_mes]
+                if not _df_mes.empty:
+                    _top_p = (
+                        _df_mes.groupby('projeto', dropna=False)['horas']
+                        .sum().sort_values(ascending=False).head(5)
+                    )
+                    if not _top_p.empty:
+                        st.markdown("**🏆 Top projetos no mês** (horas totais da equipe)")
+                        for _nome_p, _h in _top_p.items():
+                            _nome_p = _nome_p if _nome_p else "(sem projeto)"
+                            st.markdown(f"- **{_nome_p}** — {_h:.1f} h")
+
+                # Breakdown por projetista no mês (só se há >1 autor)
+                _aut_mes = (
+                    _df_mes.groupby('autor')['horas']
+                    .sum().sort_values(ascending=False)
+                )
+                if len(_aut_mes) > 1:
+                    st.markdown("**👥 Horas por projetista no mês**")
+                    for _aut, _h in _aut_mes.items():
+                        st.markdown(f"- **{_aut}** — {_h:.1f} h")
+
         # ── 1. FORMULÁRIO DE NOVO REGISTRO ───────────────────────────
         with st.expander("➕ Novo Relato, Dúvida ou Impedimento", expanded=False):
             _proj_opts = df_p['projeto'].tolist() if not df_p.empty else ["-"]
@@ -2790,7 +3012,16 @@ else:
             r_disc = c_d2.selectbox("Disciplina", lista_disc, key="diario_disc")
 
             r_rel = st.text_area("Descrição do Relato", key="diario_texto")
-            r_arq = st.file_uploader(
+
+            c_h, c_a = st.columns([1, 3])
+            r_horas = c_h.number_input(
+                "⏱ Horas",
+                min_value=0.0, max_value=24.0, step=0.25, value=0.0,
+                format="%.2f",
+                key="diario_horas",
+                help="Tempo dedicado a este relato (em horas, frações OK). 0 = não preenchido.",
+            )
+            r_arq = c_a.file_uploader(
                 "Anexo (Opcional)", type=['pdf', 'png', 'jpg', 'dwg', 'zip'],
                 key="diario_upload",
             )
@@ -2817,15 +3048,19 @@ else:
                         c = conn.cursor()
                         c.execute(
                             """INSERT INTO diario
-                            (projeto_id, data, executado, autor, disciplina, anexo, resolvido)
-                            VALUES (?,?,?,?,?,?,?)""",
+                            (projeto_id, data, executado, autor, disciplina,
+                             horas, anexo, resolvido)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                            RETURNING id""",
                             (int(pid),
                             datetime.now().strftime("%d/%m/%Y %H:%M"),
                             texto_final_banco,
                             st.session_state.usuario,
-                            r_disc, path, 0),
+                            r_disc,
+                            float(r_horas or 0),
+                            path, 0),
                         )
-                        _novo_relato_id = c.lastrowid
+                        _novo_relato_id = c.fetchone()[0]
                         conn.commit()
 
                     # Processa mencoes @"Nome" do texto: concede acesso + notifica + audita
@@ -2987,13 +3222,12 @@ else:
     @st.fragment(run_every="5s")
     def _render_chat_messages(usuario, contato_nome):
         try:
-            conn = db.conectar()
             df_m = pd.read_sql_query(
-                "SELECT * FROM chat WHERE (remetente = ? AND destinatario = ?) "
-                "OR (remetente = ? AND destinatario = ?) ORDER BY id ASC",
-                conn, params=(usuario, contato_nome, contato_nome, usuario),
+                "SELECT * FROM chat WHERE (remetente = %s AND destinatario = %s) "
+                "OR (remetente = %s AND destinatario = %s) ORDER BY id ASC",
+                db.get_engine(),
+                params=(usuario, contato_nome, contato_nome, usuario),
             )
-            conn.close()
         except Exception as e:
             st.error(f"Erro ao carregar mensagens: {e}")
             df_m = pd.DataFrame()
@@ -3106,7 +3340,7 @@ else:
                     if msg_input:
                         conn = db.conectar(); c = conn.cursor()
                         agora = datetime.now().strftime("%H:%M")
-                        c.execute("INSERT INTO chat (remetente, destinatario, mensagem, data) VALUES (?,?,?,?)",
+                        c.execute("INSERT INTO chat (remetente, destinatario, mensagem, data) VALUES (%s,%s,%s,%s)",
                                  (st.session_state.usuario, contato, msg_input, agora))
                         conn.commit(); conn.close()
                         st.rerun()  # pagina inteira -> remetente ve a mensagem imediato
@@ -3153,14 +3387,14 @@ else:
                     if st.form_submit_button("Finalizar Cadastro", use_container_width=True):
                         if n_nome and n_senha:
                             conn = db.conectar(); c = conn.cursor()
-                            c.execute("SELECT * FROM usuarios WHERE nome = ?", (n_nome,))
+                            c.execute("SELECT * FROM usuarios WHERE nome = %s", (n_nome,))
                             if c.fetchone():
                                 st.error("Este nome já está cadastrado.")
                             else:
                                 _resp_hash = db.gerar_hash(n_resp.strip().lower()) if n_resp.strip() else None
                                 c.execute(
                                     "INSERT INTO usuarios (nome, senha, perfil, cargo, email, pergunta_secreta, resposta_secreta) "
-                                    "VALUES (?,?,?,?,?,?,?)",
+                                    "VALUES (%s,%s,%s,%s,%s,%s,%s)",
                                     (n_nome, db.gerar_hash(n_senha), n_perf, n_cargo,
                                      n_email.strip() or None,
                                      n_perg.strip() or None, _resp_hash),
@@ -3177,9 +3411,11 @@ else:
             st.divider()
 
             # 3. LISTAGEM DE USUÁRIOS
-            conn = db.conectar()
-            df_membros = pd.read_sql_query("SELECT * FROM usuarios ORDER BY CASE perfil WHEN 'Gestor' THEN 0 WHEN 'Projetista' THEN 1 ELSE 2 END, nome", conn)
-            conn.close()
+            df_membros = pd.read_sql_query(
+                "SELECT * FROM usuarios ORDER BY "
+                "CASE perfil WHEN 'Gestor' THEN 0 WHEN 'Projetista' THEN 1 ELSE 2 END, nome",
+                db.get_engine(),
+            )
 
             # Métricas de composição da equipe
             mc1, mc2, mc3, mc4 = st.columns(4)
@@ -3252,7 +3488,7 @@ else:
                             st.caption("Esta ação não pode ser desfeita. O usuário perderá acesso imediatamente.")
                             if st.button("✅ Sim, remover", key=f"yes_del_u_{u['id']}", type="primary", use_container_width=True):
                                 conn = db.conectar(); c = conn.cursor()
-                                c.execute("DELETE FROM usuarios WHERE id = ?", (u['id'],))
+                                c.execute("DELETE FROM usuarios WHERE id = %s", (u['id'],))
                                 conn.commit(); conn.close()
                                 db.log_aud(st.session_state.usuario, 'excluir', 'usuario', u['id'], f"nome='{u['nome']}'")
                                 st.toast(f"Membro '{u['nome']}' removido.")
@@ -3319,8 +3555,8 @@ else:
                                 _resp_para_salvar = u.get('resposta_secreta')
                             conn = db.conectar(); c = conn.cursor()
                             c.execute(
-                                "UPDATE usuarios SET nome=?, cargo=?, senha=?, perfil=?, "
-                                "pergunta_secreta=?, resposta_secreta=? WHERE id=?",
+                                "UPDATE usuarios SET nome=%s, cargo=%s, senha=%s, perfil=%s, "
+                                "pergunta_secreta=%s, resposta_secreta=%s WHERE id=%s",
                                 (up_nome, up_cargo, _senha_para_salvar, up_perf,
                                  up_perg.strip() or None, _resp_para_salvar, u['id']),
                             )
@@ -3495,9 +3731,10 @@ else:
 
         # ── recarrega agenda do banco único ──────────────────────────
         try:
-            conn = db.conectar()
-            df_agenda = pd.read_sql("SELECT * FROM agenda ORDER BY data_inicio ASC", conn)
-            conn.close()
+            df_agenda = pd.read_sql(
+                "SELECT * FROM agenda ORDER BY data_inicio ASC",
+                db.get_engine(),
+            )
         except Exception:
             df_agenda = pd.DataFrame(columns=['id','titulo','tipo','data_inicio',
                                             'data_fim','responsaveis','descricao','local'])

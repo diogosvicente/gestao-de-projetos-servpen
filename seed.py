@@ -1,15 +1,27 @@
 #!/usr/bin/env python3
 """
-SERVPEN - Populador de dados realistas.
+SERVPEN - Populador de dados realistas.  *** OBSOLETO desde a migração pra Postgres ***
+
+Este script foi escrito pra SQLite (sqlite3 + arquivos .db separados + placeholders `?`).
+Após a migração pra PostgreSQL ele NÃO FUNCIONA mais como está — precisa ser reescrito
+pra usar database.conectar() + placeholders %s + nome único de schema.
+
+Como o sistema agora roda em produção com dados reais (migrados do SQLite via
+migrar-sqlite-para-postgres.py), seed.py perdeu utilidade prática. Mantido só pra
+referência histórica. Se quiser usar de novo, reescreva pra Postgres.
 
 Mantem usuarios cadastrados. Apaga projetos/arquivos/diario/agenda/progresso atuais e
 recria com cenarios verossimies de engenharia.
 
-Rodar no servidor:
+Rodar no servidor (NÃO ROLA MAIS — quebrar com OperationalError):
     sudo systemctl stop gestao-de-projetos
     sudo -u www-data /var/www/html/gestao_de_projetos/venv/bin/python /var/www/html/gestao_de_projetos/seed.py
     sudo systemctl start gestao-de-projetos
 """
+import sys
+print("ERRO: seed.py está obsoleto após a migração pra PostgreSQL.", file=sys.stderr)
+print("Leia o docstring no topo. Abortando pra evitar corrupção de dados.", file=sys.stderr)
+sys.exit(2)
 
 import sqlite3
 import os

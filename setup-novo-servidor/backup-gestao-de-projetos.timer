@@ -1,0 +1,20 @@
+[Unit]
+Description=Diariamente às 03:00 — Backup do Postgres do Gestão de Projetos
+Documentation=https://github.com/diogosvicente/gestao-de-projetos-servpen
+
+[Timer]
+# 3h da manhã (UTC do servidor) — horário de menor uso
+OnCalendar=*-*-* 03:00:00
+
+# Se o servidor estiver desligado às 3h, roda assim que ligar de novo.
+Persistent=true
+
+# Espalha até 15min pra evitar tempestades de IO se houver outros timers no
+# mesmo horário (não há, mas é boa prática).
+RandomizedDelaySec=15min
+
+# Acumulação: se perder N execuções (servidor parado por dias), roda apenas 1
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

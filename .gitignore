@@ -74,6 +74,12 @@ logs/
 # ─── Streamlit secrets ───────────────────────────────────
 .streamlit/secrets.toml
 
+# ─── Credenciais de banco (PostgreSQL) ───────────────────
+# A versão .example fica versionada; a versão real NUNCA.
+db.env
+*.env
+!*.env.example
+
 # ─── SO ──────────────────────────────────────────────────
 .DS_Store
 Thumbs.db

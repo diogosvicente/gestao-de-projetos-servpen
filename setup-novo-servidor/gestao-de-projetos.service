@@ -10,6 +10,9 @@ WorkingDirectory=__APP_DIR__
 Environment="PATH=__APP_DIR__/venv/bin"
 Environment="HOME=__APP_DIR__"
 Environment="PYTHONUNBUFFERED=1"
+# Credenciais do PostgreSQL (DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD).
+# Arquivo NÃO versionado — criado pelo install.sh ou manualmente.
+EnvironmentFile=/etc/gestao-de-projetos/db.env
 ExecStart=__APP_DIR__/venv/bin/streamlit run app.py
 Restart=on-failure
 RestartSec=5s

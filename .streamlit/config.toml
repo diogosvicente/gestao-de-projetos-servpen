@@ -3,8 +3,13 @@ headless = true
 address = "127.0.0.1"
 port = 8501
 baseUrlPath = "gestao-de-projetos"
-enableCORS = false
-enableXsrfProtection = false
+# CORS + XSRF re-habilitados (maio/2026). O Streamlit EXIGE que sejam ambos
+# `true` ou ambos `false` — caso contrário ele força e avisa no log.
+# O vhost Apache preserva Host via `ProxyPreserveHost On` + `X-Forwarded-Host`,
+# então o check do XSRF bate. Se algum POST falhar com erro de XSRF token,
+# volte ambos pra `false` e investigue antes de re-habilitar.
+enableCORS = true
+enableXsrfProtection = true
 enableWebsocketCompression = false
 maxUploadSize = 100
 fileWatcherType = "poll"
