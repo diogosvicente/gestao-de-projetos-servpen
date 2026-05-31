@@ -1,0 +1,21 @@
+[server]
+headless = true
+address = "127.0.0.1"
+port = 8501
+baseUrlPath = "gestao-de-projetos"
+enableCORS = false
+enableXsrfProtection = false
+enableWebsocketCompression = false
+maxUploadSize = 100
+fileWatcherType = "poll"
+
+[browser]
+gatherUsageStats = false
+serverAddress = "152.92.228.20"
+serverPort = 80
+
+[logger]
+level = "info"
+
+[theme]
+base = "dark"

@@ -1,0 +1,20 @@
+[Unit]
+Description=Streamlit - Gestao de Projetos SERVPEN
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=__APP_DIR__
+Environment="PATH=__APP_DIR__/venv/bin"
+Environment="HOME=__APP_DIR__"
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=__APP_DIR__/venv/bin/streamlit run app.py
+Restart=on-failure
+RestartSec=5s
+StandardOutput=append:/var/log/gestao-de-projetos.log
+StandardError=append:/var/log/gestao-de-projetos.log
+
+[Install]
+WantedBy=multi-user.target

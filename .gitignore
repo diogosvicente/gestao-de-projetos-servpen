@@ -1,0 +1,78 @@
+# ─── Python ───────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.Python
+build/
+dist/
+
+# ─── Virtual envs ────────────────────────────────────────
+venv/
+.venv/
+env/
+.env/
+ENV/
+
+# ─── User-local (HOME do usuário sara é a pasta do projeto) ──
+.local/
+.cache/
+.bashrc
+.bash_history
+.bash_logout
+.profile
+.sudo_as_admin_successful
+.wget-hsts
+.lesshst
+.viminfo
+.gitconfig
+.git-credentials
+.netrc
+
+# ─── IDEs / Editores ─────────────────────────────────────
+.vscode/
+.vscode-server/
+.idea/
+.spyderproject/
+.spyproject/
+*.swp
+*.swo
+.ipynb_checkpoints/
+
+# ─── Claude Code ─────────────────────────────────────────
+.claude/
+
+# ─── BANCOS DE DADOS (DADOS REAIS — NUNCA versionar) ───
+# Schema é recriado pelo database.py em todo boot.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# ─── Uploads dos usuários ────────────────────────────────
+anexos/
+
+# ─── Backups locais ──────────────────────────────────────
+backups/
+*.bak
+*.bak-*
+*.backup
+
+# ─── Logs ────────────────────────────────────────────────
+*.log
+logs/
+
+# ─── Streamlit secrets ───────────────────────────────────
+.streamlit/secrets.toml
+
+# ─── SO ──────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── Misc temporário ─────────────────────────────────────
+*.tmp
+*.temp
+~*
