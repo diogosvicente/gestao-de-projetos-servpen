@@ -817,6 +817,88 @@ def excluir_projeto(id_p):
         conn.close()
 
 
+def clonar_projeto(id_origem, sufixo=" (cópia)"):
+    """Cria um novo projeto baseado em `id_origem` e retorna o id novo.
+
+    O que é COPIADO:
+      - Dados básicos: projetista, endereço, solicitante, contato, número SEI,
+        link, demandas (checklist), solicitação/escopo, prioridade, tags
+      - Estrutura de etapas (nomes, durações, offsets, ordem)
+
+    O que NÃO é copiado (o novo projeto começa do zero nestes):
+      - Status (vai pra "Em Espera")
+      - Datas concretas (recebimento/início/fim → hoje, previsão → hoje)
+      - Diário / arquivos / progresso de disciplinas
+      - Menções (acesso e notificações)
+
+    O nome ganha um `sufixo` (default " (cópia)") pra distinguir do original.
+    """
+    from datetime import datetime as _dt
+    hoje = _dt.now().date()
+
+    conn = conectar(); c = conn.cursor()
+    try:
+        # Lê o origem
+        c.execute(
+            """SELECT projetista, projeto, endereco, solicitante, contato,
+                      numero_sei, link_projeto, demandas, solicitacao,
+                      prioridade, tags
+                 FROM projetos WHERE id = %s""",
+            (int(id_origem),),
+        )
+        row = c.fetchone()
+        if not row:
+            raise ValueError(f"projeto id={id_origem} não existe")
+        (projetista, projeto, endereco, solicitante, contato, numero_sei,
+         link_projeto, demandas, solicitacao, prioridade, tags) = row
+
+        novo_nome = f"{projeto}{sufixo}" if sufixo else projeto
+
+        # Cria novo projeto (status default "Em Espera", datas → hoje)
+        c.execute(
+            """INSERT INTO projetos
+               (projetista, projeto, endereco, solicitante, contato,
+                numero_sei, data_recebimento, previsao_execucao,
+                data_inicio, data_termino, data_fim,
+                status, link_projeto, demandas, solicitacao, prioridade,
+                tags)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               RETURNING id""",
+            (projetista, novo_nome, endereco, solicitante, contato,
+             numero_sei, hoje, hoje, hoje, hoje, hoje,
+             "Em Espera", link_projeto, demandas, solicitacao, prioridade,
+             tags),
+        )
+        novo_id = c.fetchone()[0]
+
+        # Copia etapas (estrutura do cronograma, sem datas)
+        c.execute(
+            """SELECT nome, dias_offset, duracao_dias, ordem
+                 FROM etapas_projeto WHERE projeto_id = %s
+                 ORDER BY ordem""",
+            (int(id_origem),),
+        )
+        etapas = c.fetchall()
+        for nome_et, offset, duracao, ordem in etapas:
+            c.execute(
+                """INSERT INTO etapas_projeto
+                   (projeto_id, nome, dias_offset, duracao_dias, ordem)
+                   VALUES (%s,%s,%s,%s,%s)""",
+                (novo_id, nome_et, offset, duracao, ordem),
+            )
+
+        conn.commit()
+        log.info("clonar_projeto: id_origem=%s -> novo_id=%s, %d etapas copiadas",
+                 id_origem, novo_id, len(etapas))
+        return novo_id
+    except Exception as e:
+        log.exception("Erro ao clonar projeto %s: %s", id_origem, e)
+        conn.rollback()
+        return None
+    finally:
+        conn.close()
+
+
 # ─── ETAPAS ───────────────────────────────────────────────
 def salvar_etapas(projeto_id, etapas):
     """etapas = lista de dicts: {nome, dias_offset, duracao_dias, ordem}.

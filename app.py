@@ -2410,15 +2410,21 @@ else:
                                       value=_dem_extra, height=70)
  
                 # ── BOTÕES ──────────────────────────────────────────
-                f_c1, f_c2, f_c3 = st.columns(3)
- 
+                f_c1, f_c2, f_c3, f_c4 = st.columns(4)
+
                 _salvar = f_c1.form_submit_button("💾 Salvar e Sair",
                                                    use_container_width=True)
-                _excluir = f_c2.form_submit_button("🗑️ Excluir Projeto",
+                _clonar = f_c2.form_submit_button(
+                    "📋 Clonar projeto",
+                    use_container_width=True,
+                    help="Cria um novo projeto copiando dados básicos + estrutura de etapas. "
+                         "Não copia diário, arquivos nem progresso de disciplinas.",
+                )
+                _excluir = f_c3.form_submit_button("🗑️ Excluir Projeto",
                                                     use_container_width=True)
-                _fechar  = f_c3.form_submit_button("❌ Fechar",
+                _fechar  = f_c4.form_submit_button("❌ Fechar",
                                                     use_container_width=True)
- 
+
                 confirmar_del = st.checkbox(
                     f"⚠️ Confirmo EXCLUIR permanentemente '{dados['projeto']}'",
                     key=f"conf_del_{id_ed}",
@@ -2453,7 +2459,29 @@ else:
                                id_ed, f"nome='{dados['projeto']}'")
                     del st.session_state.projeto_em_edicao
                     _invalidar_dados(); st.rerun()
- 
+
+            if _clonar:
+                # Cria projeto novo no banco baseado neste, redireciona pra
+                # edição dele pra Sara ajustar nome/datas/equipe antes de salvar.
+                novo_id = db.clonar_projeto(id_ed)
+                if novo_id:
+                    db.log_aud(st.session_state.usuario, 'clonar', 'projeto',
+                               id_ed,
+                               f"origem='{dados['projeto']}' -> novo_id={novo_id}")
+                    _invalidar_dados()
+                    st.success(
+                        f"📋 Projeto clonado! Novo id={novo_id} criado em **Em Espera**. "
+                        f"Abrindo edição pra você ajustar nome/datas/equipe."
+                    )
+                    # Abre direto o painel de edição do novo clone
+                    st.session_state.projeto_em_edicao = int(novo_id)
+                    st.rerun()
+                else:
+                    st.error(
+                        "Não foi possível clonar o projeto. "
+                        "Veja o log do servidor pra detalhes."
+                    )
+
             if _fechar:
                 del st.session_state.projeto_em_edicao
                 st.rerun()

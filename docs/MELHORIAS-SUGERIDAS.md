@@ -122,7 +122,7 @@ maduro (psycopg3), defaults sensatos.
 |---|---|---|---|
 | 🟢 | **Comentários encadeados no diário** | Hoje é tudo concatenado num `resposta_gestor` separado por `\n` — feio e sem edição/exclusão individual | Médio (nova tabela `comentarios_diario`) |
 | ✅ | ~~**Time tracking**~~ Implementado em maio/2026: input `⏱ Horas` no form, chip no card de cada relato, expander "Horas registradas" agregando minhas/equipe × hoje/semana/mês + top 5 projetos do mês + breakdown por projetista | ✅ Feito |
-| 🟢 | **Templates de projeto** | Clonar projeto existente como ponto de partida | Baixo |
+| ✅ | ~~**Templates de projeto**~~ Implementado em maio/2026: botão **📋 Clonar projeto** no painel de edição. Copia dados básicos (projetista, endereço, contato, demandas, prioridade, tags, link, escopo) + estrutura de etapas. Não copia diário, arquivos nem progresso. Novo projeto entra em "Em Espera" e abre direto na edição pra ajustar. | ✅ Feito |
 | 🟢 | **Histórico de versões** dos relatos | Hoje editar relato sobrescreve sem rastro. Útil pra auditoria | Médio (nova tabela ou versionar via JSON) |
 | 🟢 | **PWA / mobile-first** | Streamlit não é ideal pra isso. Vale considerar app web nativo se mobile virar prioridade | Alto (reescreve frontend) |
 
