@@ -318,6 +318,99 @@ def verificar_senha(usuario, senha):
         conn.close()
 
 
+# ─── RATE LIMITING DE LOGIN ───────────────────────────────
+# Constantes ajustadas em maio/2026 após bcrypt. Pra mudar:
+#   - LIMITE_FALHAS_LOGIN: tolerância antes de bloquear (humano)
+#   - JANELA_MIN_LOGIN: janela em minutos pra contar falhas e duração do bloqueio
+LIMITE_FALHAS_LOGIN = 5
+JANELA_MIN_LOGIN = 15
+
+
+def registrar_falha_login(usuario, ip=None):
+    """Loga uma tentativa de login falha. Best-effort: não interrompe o login."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute(
+            "INSERT INTO login_falhas (usuario, ip) VALUES (%s, %s)",
+            (usuario, ip),
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        log.warning("não consegui registrar falha de login pra %s: %s", usuario, e)
+    finally:
+        conn.close()
+
+
+def contar_falhas_login_recentes(usuario, janela_min=None):
+    """Quantas falhas de login esse usuário acumulou nos últimos `janela_min`."""
+    j = int(janela_min if janela_min is not None else JANELA_MIN_LOGIN)
+    conn = conectar(); c = conn.cursor()
+    try:
+        # f-string com cast a int blinda contra SQL injection (PG não aceita
+        # placeholder dentro de literal INTERVAL; o cast int() acima fecha o gap).
+        c.execute(
+            f"SELECT COUNT(*) FROM login_falhas "
+            f"WHERE usuario = %s AND criado_em > NOW() - INTERVAL '{j} minutes'",
+            (usuario,),
+        )
+        return int(c.fetchone()[0] or 0)
+    finally:
+        conn.close()
+
+
+def proxima_tentativa_login_em(usuario, janela_min=None):
+    """Quando o bloqueio expira (= falha mais antiga na janela + janela_min).
+    Retorna `datetime` ou `None` se não há falhas na janela."""
+    j = int(janela_min if janela_min is not None else JANELA_MIN_LOGIN)
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute(
+            f"SELECT MIN(criado_em) + INTERVAL '{j} minutes' "
+            f"FROM login_falhas "
+            f"WHERE usuario = %s AND criado_em > NOW() - INTERVAL '{j} minutes'",
+            (usuario,),
+        )
+        row = c.fetchone()
+        return row[0] if row and row[0] else None
+    finally:
+        conn.close()
+
+
+def limpar_falhas_login(usuario):
+    """Apaga histórico de falhas pra um usuário (chamado em login bem-sucedido)."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("DELETE FROM login_falhas WHERE usuario = %s", (usuario,))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        log.warning("não consegui limpar falhas de login pra %s: %s", usuario, e)
+    finally:
+        conn.close()
+
+
+def purgar_falhas_login_antigas(horas=24):
+    """Remove registros com mais de N horas. Mantém a tabela enxuta. Chame de
+    tempos em tempos (não é crítico — a contagem usa janela curta de qualquer
+    jeito, mas evita inflar a tabela)."""
+    h = int(horas)
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute(
+            f"DELETE FROM login_falhas "
+            f"WHERE criado_em < NOW() - INTERVAL '{h} hours'"
+        )
+        conn.commit()
+        return c.rowcount
+    except Exception as e:
+        conn.rollback()
+        log.warning("não consegui purgar falhas antigas: %s", e)
+        return 0
+    finally:
+        conn.close()
+
+
 # ─── SESSÕES ──────────────────────────────────────────────
 def criar_tabela_sessoes():
     conn = conectar(); c = conn.cursor()
@@ -527,6 +620,21 @@ def criar_tabelas():
         )''')
         c.execute("CREATE INDEX IF NOT EXISTS idx_dl_usuario ON diario_leituras(usuario)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_dl_diario  ON diario_leituras(diario_id)")
+
+        # ── RATE LIMITING DE LOGIN ──
+        # Rastreia falhas recentes pra brecar brute-force.
+        # `validar_login()` em auth.py conta falhas dos últimos `JANELA_MIN`
+        # minutos pra cada usuário; ao atingir `LIMITE_FALHAS`, recusa novos
+        # logins até a janela expirar. Login bem-sucedido limpa o histórico
+        # daquele usuário.
+        c.execute('''CREATE TABLE IF NOT EXISTS login_falhas (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            usuario TEXT NOT NULL,
+            ip TEXT,
+            criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )''')
+        c.execute("CREATE INDEX IF NOT EXISTS idx_login_falhas_usuario_data "
+                  "ON login_falhas(usuario, criado_em)")
 
         # ── MIGRAÇÕES INCREMENTAIS (PG 9.6+: ADD COLUMN IF NOT EXISTS) ──
         # Pra bancos pré-existentes onde a tabela já existe sem essas colunas.

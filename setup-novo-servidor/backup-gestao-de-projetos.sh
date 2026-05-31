@@ -52,3 +52,9 @@ KEPT="$(find "${BACKUP_DIR}" -maxdepth 1 -type f \
 
 echo "backup ok: ${OUT##*/} (${SIZE_HUM})"
 echo "retenção: ${KEPT} backups mantidos, ${DELETED} apagados (>${RETAIN_DAYS}d)"
+
+# Manutenção barata: purga `login_falhas` com >24h (rate limiting usa janela
+# de 15 min, então mais que isso é só lixo histórico que infla a tabela).
+PURGE_OUT="$(sudo -u postgres psql -tA -d "${DB_NAME}" -c \
+    "DELETE FROM login_falhas WHERE criado_em < NOW() - INTERVAL '24 hours'" 2>&1 || true)"
+echo "login_falhas: ${PURGE_OUT}"

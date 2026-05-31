@@ -28,7 +28,9 @@ if _LOG_LEVEL != "DEBUG":
                   "matplotlib", "PIL", "fontTools", "sqlalchemy.engine"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 log = logging.getLogger(__name__)
-log.info("boot do app — LOG_LEVEL=%s", _LOG_LEVEL)
+# (sem log.info no top-level: Streamlit re-executa o script a cada
+#  interação do usuário, então logar aqui vira ruído. Use log.info/warning
+#  dentro de handlers específicos quando algo relevante acontecer.)
 
 
 # 1. CONFIGURAÇÃO DA PÁGINA (Sempre o PRIMEIRO comando Streamlit)
@@ -1188,8 +1190,21 @@ if not st.session_state.autenticado:
             st.success("Login realizado!")
             st.rerun()
         else:
-            db.log_aud(u or '(vazio)', 'login_falha', 'sessao', None, 'usuario ou senha invalidos')
-            st.error("Usuário ou senha incorretos.")
+            # Distingue bloqueio por rate-limit de senha inválida (auth.py
+            # popula `_login_bloqueado_ate` quando bloqueia).
+            _bloq_ate = st.session_state.pop('_login_bloqueado_ate', None)
+            if _bloq_ate:
+                _mins = max(1, int((_bloq_ate - datetime.now()).total_seconds() / 60))
+                db.log_aud(u or '(vazio)', 'login_bloqueado', 'sessao', None,
+                           f'rate limit ate {_bloq_ate.isoformat(timespec="seconds")}')
+                st.error(
+                    f"🛑 Muitas tentativas falhas para **{u}**. "
+                    f"Tente novamente em ~{_mins} min."
+                )
+            else:
+                db.log_aud(u or '(vazio)', 'login_falha', 'sessao', None,
+                           'usuario ou senha invalidos')
+                st.error("Usuário ou senha incorretos.")
 
     # ── ESQUECI MINHA SENHA (pergunta secreta) ──────────────────────
     with st.expander("🔑 Esqueci minha senha"):

@@ -60,7 +60,7 @@ maduro (psycopg3), defaults sensatos.
 |---|---|---|---|---|
 | ✅ | ~~**Senhas em SHA-256 sem salt**~~ Migrado pra **bcrypt** (maio/2026) | — | `passlib[bcrypt]`. Rehash transparente no login — hashes legados migram conforme cada usuário loga. | ✅ Feito |
 | 🔴 | **HTTP sem TLS** | Token de sessão em texto puro em URL e cookies. Sniff trivial | Let's Encrypt + certbot no Apache | Baixo |
-| 🔴 | **Sem rate limiting no login** | Brute-force livre. Bot pode fazer milhares de tentativas/s | Bloqueio temporário após N falhas (tabela `login_falhas`) | Baixo |
+| ✅ | ~~**Sem rate limiting no login**~~ Implementado em maio/2026 | — | Tabela `login_falhas` + 5 falhas em 15min bloqueiam usuário por 15min. Backup diário purga falhas >24h. | ✅ Feito |
 | 🟠 | **Token de sessão no querystring** (`?t=...`) | Aparece em logs do Apache, no histórico do browser, em headers Referer | Migrar pra cookie HttpOnly; precisa sessão server-side real | Médio |
 | 🟠 | **Upload de arquivo sem validação** | Aceita qualquer extensão até 100MB. `.html` malicioso? Sem sanitização? | Whitelist de extensões + magic-byte check (`python-magic`) + opcionalmente ClamAV | Baixo |
 | 🟠 | **Sem complexidade mínima de senha** | "123" é aceito | Mínimo 8 chars + 1 número ou classe diversa | Baixo |
