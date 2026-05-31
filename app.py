@@ -317,12 +317,28 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
         )
         _wrap_post = '</div>' if _destaque_relato else ''
 
+        # Chip ⏱ Xh: só exibe quando horas > 0 (campo opcional)
+        _horas_val = d.get('horas') or 0
+        try:
+            _horas_num = float(_horas_val)
+        except (TypeError, ValueError):
+            _horas_num = 0.0
+        _horas_chip = (
+            f'<span style="background:rgba(255,255,255,0.18);padding:2px 8px;'
+            f'border-radius:4px;font-variant-numeric:tabular-nums;">'
+            f'⏱ {_horas_num:.2f} h</span>'
+            if _horas_num > 0 else ''
+        )
+
         st.markdown(f"""
             {_wrap_pre}
             <div style="background-color:{cor_topo};color:white; padding:12px 15px;border-radius:10px 10px 0 0;margin-top:10px;">
-            <div style="display:flex;justify-content:space-between;font-size:10px;text-transform:uppercase;letter-spacing:1px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:10px;text-transform:uppercase;letter-spacing:1px;">
                 <span style="background:rgba(0,0,0,0.3);padding:2px 8px;border-radius:4px;">{tag}</span>
-                <span title="{d['data']}">{_tempo_relativo(d['data'])}</span>
+                <span style="display:flex;gap:8px;align-items:center;">
+                    {_horas_chip}
+                    <span title="{d['data']}">{_tempo_relativo(d['data'])}</span>
+                </span>
             </div>
             <div style="font-size:16px;font-weight:700;margin-top:6px;">
                 {d['disciplina'] if d['disciplina'] else 'Geral'}
@@ -2787,6 +2803,80 @@ else:
         # ── Mapa de não lidos por projeto ────────────────────────────
         _mapa_nao_lidos = db.contar_nao_lidos_diario(st.session_state.usuario)
 
+        # ── HORAS REGISTRADAS (time tracking) ────────────────────────
+        # Agregação simples: hoje / semana / mês × minhas / equipe inteira +
+        # top 5 projetos do mês. Campo `horas` no diário é REAL; relatos sem
+        # horas (=0 ou NULL) ficam de fora.
+        with st.expander("⏱ Horas registradas", expanded=False):
+            try:
+                _df_h = pd.read_sql_query(
+                    """SELECT d.projeto_id, p.projeto, d.autor,
+                              COALESCE(d.horas, 0) AS horas, d.data
+                       FROM diario d
+                       LEFT JOIN projetos p ON p.id = d.projeto_id
+                       WHERE COALESCE(d.horas, 0) > 0""",
+                    db.get_engine(),
+                )
+                # `data` é TEXT em "DD/MM/YYYY HH:MM" — parse aqui no pandas.
+                _df_h['dt'] = pd.to_datetime(
+                    _df_h['data'], format='%d/%m/%Y %H:%M', errors='coerce'
+                )
+                _df_h = _df_h.dropna(subset=['dt'])
+            except Exception as e:
+                st.warning(f"Não foi possível carregar horas: {e}")
+                _df_h = pd.DataFrame(columns=['projeto_id','projeto','autor','horas','dt'])
+
+            if _df_h.empty:
+                st.info(
+                    "Nenhum relato com horas registradas ainda. Preencha o campo "
+                    "**⏱ Horas** ao criar um novo relato pra começar a acompanhar."
+                )
+            else:
+                _agora    = datetime.now()
+                _ini_dia  = _agora.replace(hour=0, minute=0, second=0, microsecond=0)
+                _ini_sem  = _ini_dia - pd.Timedelta(days=_agora.weekday())  # seg=0
+                _ini_mes  = _ini_dia.replace(day=1)
+
+                _eu = st.session_state.usuario
+
+                def _soma(df, ini):
+                    return float(df[df['dt'] >= ini]['horas'].sum())
+
+                _minha = _df_h[_df_h['autor'] == _eu]
+                cA, cB, cC = st.columns(3)
+                cA.metric("Hoje (minhas / equipe)",
+                          f"{_soma(_minha, _ini_dia):.1f} h",
+                          f"equipe: {_soma(_df_h, _ini_dia):.1f} h")
+                cB.metric("Semana (minhas / equipe)",
+                          f"{_soma(_minha, _ini_sem):.1f} h",
+                          f"equipe: {_soma(_df_h, _ini_sem):.1f} h")
+                cC.metric("Mês (minhas / equipe)",
+                          f"{_soma(_minha, _ini_mes):.1f} h",
+                          f"equipe: {_soma(_df_h, _ini_mes):.1f} h")
+
+                # Top projetos do mês (equipe)
+                _df_mes = _df_h[_df_h['dt'] >= _ini_mes]
+                if not _df_mes.empty:
+                    _top_p = (
+                        _df_mes.groupby('projeto', dropna=False)['horas']
+                        .sum().sort_values(ascending=False).head(5)
+                    )
+                    if not _top_p.empty:
+                        st.markdown("**🏆 Top projetos no mês** (horas totais da equipe)")
+                        for _nome_p, _h in _top_p.items():
+                            _nome_p = _nome_p if _nome_p else "(sem projeto)"
+                            st.markdown(f"- **{_nome_p}** — {_h:.1f} h")
+
+                # Breakdown por projetista no mês (só se há >1 autor)
+                _aut_mes = (
+                    _df_mes.groupby('autor')['horas']
+                    .sum().sort_values(ascending=False)
+                )
+                if len(_aut_mes) > 1:
+                    st.markdown("**👥 Horas por projetista no mês**")
+                    for _aut, _h in _aut_mes.items():
+                        st.markdown(f"- **{_aut}** — {_h:.1f} h")
+
         # ── 1. FORMULÁRIO DE NOVO REGISTRO ───────────────────────────
         with st.expander("➕ Novo Relato, Dúvida ou Impedimento", expanded=False):
             _proj_opts = df_p['projeto'].tolist() if not df_p.empty else ["-"]
@@ -2804,7 +2894,16 @@ else:
             r_disc = c_d2.selectbox("Disciplina", lista_disc, key="diario_disc")
 
             r_rel = st.text_area("Descrição do Relato", key="diario_texto")
-            r_arq = st.file_uploader(
+
+            c_h, c_a = st.columns([1, 3])
+            r_horas = c_h.number_input(
+                "⏱ Horas",
+                min_value=0.0, max_value=24.0, step=0.25, value=0.0,
+                format="%.2f",
+                key="diario_horas",
+                help="Tempo dedicado a este relato (em horas, frações OK). 0 = não preenchido.",
+            )
+            r_arq = c_a.file_uploader(
                 "Anexo (Opcional)", type=['pdf', 'png', 'jpg', 'dwg', 'zip'],
                 key="diario_upload",
             )
@@ -2831,14 +2930,17 @@ else:
                         c = conn.cursor()
                         c.execute(
                             """INSERT INTO diario
-                            (projeto_id, data, executado, autor, disciplina, anexo, resolvido)
-                            VALUES (%s,%s,%s,%s,%s,%s,%s)
+                            (projeto_id, data, executado, autor, disciplina,
+                             horas, anexo, resolvido)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
                             RETURNING id""",
                             (int(pid),
                             datetime.now().strftime("%d/%m/%Y %H:%M"),
                             texto_final_banco,
                             st.session_state.usuario,
-                            r_disc, path, 0),
+                            r_disc,
+                            float(r_horas or 0),
+                            path, 0),
                         )
                         _novo_relato_id = c.fetchone()[0]
                         conn.commit()
