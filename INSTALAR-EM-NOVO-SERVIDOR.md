@@ -62,12 +62,17 @@ de referência: o app rodando em `http://<IP-DO-SERVIDOR>/gestao-de-projetos/`.
 > - **ruff** configurado em `pyproject.toml`. Rodar manualmente:
 >   `ruff check .` (lint) e `ruff format .` (format). Não é instalado pelo
 >   `install.sh` (é dev-only).
-> - **Streamlit ≥ 1.40, < 1.50** no requirements.txt. Pode atualizar acima
->   se quiser, mas valide manualmente — versões muito novas costumam
->   deprecar APIs. Toggles do Kanban (Visão / Densidade) usam
->   `st.radio(horizontal=True)` (estável desde 1.25), não
->   `st.segmented_control` (1.40+), pra evitar surpresas tipo
->   AttributeError visto em 1.49.1.
+> - **Streamlit pinado em 1.39.0** porque é o **último que NÃO exige
+>   pyarrow** como dep obrigatória. Em CPU sem AVX2 (Athlon II X2 do
+>   228.20), pyarrow do PyPI **crasha com SIGILL** ao importar.
+>   Sintoma: `restart counter is at N` no systemd + log mostra apenas
+>   "You can now view your Streamlit app" sem stack trace + Apache
+>   responde 503 pra clientes externos (porque o backend está em
+>   restart loop).
+>   No 238.40 (Xeon Gold 5220 com AVX-512) é seguro atualizar pra
+>   `streamlit>=1.40,<1.50` — ganha `st.segmented_control` (UI mais
+>   bonita), pero requer trocar `st.radio(horizontal=True)` por
+>   `st.segmented_control` nos 2 lugares do Kanban onde uso.
 
 ---
 

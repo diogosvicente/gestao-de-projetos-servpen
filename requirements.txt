@@ -1,4 +1,10 @@
-streamlit>=1.40,<1.50
+# Streamlit 1.39 é o último que NÃO exige pyarrow.
+# Em CPU sem AVX2 (ex: Athlon II X2 do servidor antigo 228.20), pyarrow
+# do PyPI dispara SIGILL. Em CPU moderna (Xeon Gold 5220 do 238.40,
+# qualquer Sandy Bridge+ de 2011+), pode subir pra >=1.40 com tranquilidade.
+streamlit==1.39.0
+# Quando estiver no 238.40: trocar pra 'streamlit>=1.40,<1.50' pra ganhar
+# st.segmented_control (UI mais bonita que st.radio horizontal).
 pandas==2.2.3
 plotly==5.24.1
 fpdf2==2.8.1
