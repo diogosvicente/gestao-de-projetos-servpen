@@ -62,10 +62,12 @@ de referência: o app rodando em `http://<IP-DO-SERVIDOR>/gestao-de-projetos/`.
 > - **ruff** configurado em `pyproject.toml`. Rodar manualmente:
 >   `ruff check .` (lint) e `ruff format .` (format). Não é instalado pelo
 >   `install.sh` (é dev-only).
-> - **Streamlit ≥ 1.40** (atualizado de 1.39 em maio/2026): necessário pro
->   `st.segmented_control` usado no Kanban (toggle Visão e Densidade).
->   Se atualizar a versão pinada, manter `<1.50` pra evitar surpresas de
->   API breakage até validar.
+> - **Streamlit ≥ 1.40, < 1.50** no requirements.txt. Pode atualizar acima
+>   se quiser, mas valide manualmente — versões muito novas costumam
+>   deprecar APIs. Toggles do Kanban (Visão / Densidade) usam
+>   `st.radio(horizontal=True)` (estável desde 1.25), não
+>   `st.segmented_control` (1.40+), pra evitar surpresas tipo
+>   AttributeError visto em 1.49.1.
 
 ---
 

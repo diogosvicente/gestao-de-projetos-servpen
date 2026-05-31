@@ -2318,11 +2318,14 @@ else:
         #   - Kanban: fluxo visual por status (atual). Bom pra movimentação.
         #   - Lista:  tabela densa com sort. Bom pra triagem rápida em volume.
         #   - Resumo: dashboard de cima (urgentes + atrasados + distribuição).
-        # Streamlit 1.40+ (pinado em requirements.txt). UI = pill buttons agrupados.
-        visao = st.segmented_control(
+        # `st.radio(horizontal=True)` em vez de `st.segmented_control` porque
+        # esse último, mesmo existindo em Streamlit 1.40+, deu AttributeError
+        # em 1.49.1 no servidor. radio funciona em qualquer versão >=1.25.
+        visao = st.radio(
             "Visão",
             options=["Kanban", "Lista", "Resumo"],
-            default="Kanban",
+            index=0,
+            horizontal=True,
             key="kanban_visao",
             label_visibility="collapsed",
         ) or "Kanban"
@@ -2415,10 +2418,12 @@ else:
 
             # ── TOOLBAR: densidade + collapse finalizados ────────────────
             tb1, tb2, _tb3 = st.columns([1.2, 1.2, 2])
-            densidade = tb1.segmented_control(
+            # radio em vez de segmented_control (vide comentário no toggle Visão).
+            densidade = tb1.radio(
                 "Densidade",
                 options=["Compacto", "Normal", "Expandido"],
-                default="Normal",
+                index=1,
+                horizontal=True,
                 key="kanban_densidade",
                 label_visibility="collapsed",
                 help="Espaçamento dos cards. Compacto = mais cards visíveis.",
