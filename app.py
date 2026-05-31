@@ -4397,23 +4397,38 @@ else:
                             st.session_state[f"edit_mode_{_msg_id}"] = False
                             st.rerun(scope="fragment")
 
-            # ── ÂNCORA + AUTO-SCROLL INTELIGENTE ─────────────────
-            # Só rola pra baixo se o usuário JÁ está perto do fim (≤ 200px).
-            # Se estiver lendo histórico no meio, não bagunça a leitura.
+            # ── ÂNCORA + AUTO-SCROLL ─────────────────────────────
+            # Comportamento (igual WhatsApp):
+            #  - Primeira renderização desta conversa (ou trocou de contato):
+            #    sempre rola pro fim (mostra o que é novo).
+            #  - Renderizações seguintes do fragmento (a cada 2s): só rola
+            #    se o usuário JÁ está perto do fim (≤ 200px). Se estiver
+            #    lendo histórico no meio, não bagunça.
             st.markdown(
                 "<div id='wa-bot-anchor'></div>",
                 unsafe_allow_html=True,
             )
+
+        # Detecta "primeiro render deste contato" comparando contra o último
+        # contato renderizado. Se mudou (ou nunca renderizou nada), força
+        # scroll pro fim.
+        _chave_ult_render = '_chat_ult_render_contato'
+        _eh_primeiro_render = (
+            st.session_state.get(_chave_ult_render) != contato_nome
+        )
+        st.session_state[_chave_ult_render] = contato_nome
+        _force_js = "true" if _eh_primeiro_render else "false"
 
         # Script vai DEPOIS de fechar o container, pra rodar quando o
         # DOM da lista já está montado. Roda dentro de iframe, então
         # acessa o DOM principal via window.parent.document.
         import streamlit.components.v1 as _components
         _components.html(
-            """
+            f"""
             <script>
-            (function () {
-                try {
+            (function () {{
+                try {{
+                    var FORCE_BOTTOM = {_force_js};
                     var doc = window.parent.document;
                     var anchor = doc.getElementById('wa-bot-anchor');
                     if (!anchor) return;
@@ -4422,25 +4437,26 @@ else:
                     // overflow-y:auto num div interno).
                     var node = anchor.parentElement;
                     var scrollable = null;
-                    while (node && node !== doc.body) {
+                    while (node && node !== doc.body) {{
                         var cs = window.parent.getComputedStyle(node);
-                        if (cs.overflowY === 'auto' || cs.overflowY === 'scroll') {
+                        if (cs.overflowY === 'auto' || cs.overflowY === 'scroll') {{
                             scrollable = node;
                             break;
-                        }
+                        }}
                         node = node.parentElement;
-                    }
+                    }}
                     if (!scrollable) return;
 
-                    // "Perto do fim" = últimos 200px
                     var diff = scrollable.scrollHeight
                              - scrollable.scrollTop
                              - scrollable.clientHeight;
-                    if (diff < 200) {
+                    // Força fim na 1ª renderização desta conversa OU se já
+                    // está perto do fim acompanhando msgs novas.
+                    if (FORCE_BOTTOM || diff < 200) {{
                         scrollable.scrollTop = scrollable.scrollHeight;
-                    }
-                } catch (e) { /* silencia erro de JS */ }
-            })();
+                    }}
+                }} catch (e) {{ /* silencia erro de JS */ }}
+            }})();
             </script>
             """,
             height=0,
@@ -4516,11 +4532,21 @@ else:
                         doc.body.appendChild(stack);
                     }}
 
-                    // Função pra fechar (animação + remoção)
+                    // Função pra fechar — animação por inline style + remoção.
+                    // Inline style é mais confiável que CSS @keyframes neste
+                    // contexto (alguns browsers/CSP bloqueavam a animação).
                     function closeToast(toast) {{
                         if (!toast || !toast.parentElement) return;
-                        toast.classList.add('closing');
-                        setTimeout(function () {{ toast.remove(); }}, 200);
+                        if (toast.__timer) {{ clearTimeout(toast.__timer); }}
+                        toast.style.transition =
+                            'transform .2s ease-in, opacity .2s ease-in';
+                        toast.style.transform = 'translateX(120%)';
+                        toast.style.opacity = '0';
+                        setTimeout(function () {{
+                            if (toast.parentElement) {{
+                                toast.parentElement.removeChild(toast);
+                            }}
+                        }}, 230);
                     }}
 
                     // Se já tem toast desse remetente, atualiza qtd e renova timer
@@ -4772,6 +4798,10 @@ else:
                          _agora_iso),
                     )
                     conn.commit(); conn.close()
+                    # st.rerun() reseta `st.tabs` pra primeira aba (Dashboard).
+                    # Workaround: sinalizar _chat_aviso_redirect → o JS no boot
+                    # auto-clica na aba 💬 Chat de volta.
+                    st.session_state['_chat_aviso_redirect'] = contato
                     st.rerun()
         else:
             st.info("Selecione um contato pra iniciar a conversa.")
