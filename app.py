@@ -226,6 +226,36 @@ def _popover_mencionar(text_key, nomes_disponiveis, *, label="@ Mencionar",
                 st.rerun()
 
 
+def _section_header(icone, titulo, subtitulo=None, cor="#3b82f6"):
+    """Header de seção padronizado pra dashboard / abas com vários blocos.
+
+    Visual: ícone + título grande + subtítulo opcional + linha colorida.
+    Usado pra dar identidade visual a cada bloco de informação, sem
+    depender de st.subheader (que vira H2 genérico).
+
+    Args:
+        icone: emoji ou char (📊, 📅, 📉, 👥…)
+        titulo: frase curta
+        subtitulo: opcional, em cinza, explica o que o bloco mostra
+        cor: cor da linha de assinatura (default: azul Streamlit)
+    """
+    _sub = f"<div style='color:#94a3b8;font-size:.82rem;margin-top:2px;'>{subtitulo}</div>" \
+           if subtitulo else ""
+    st.markdown(
+        f"""
+        <div style="border-left:4px solid {cor}; padding:6px 12px;
+                    margin:4px 0 12px;">
+            <div style="font-size:1.05rem; font-weight:700; color:#e5e7eb;
+                        display:flex; align-items:center; gap:8px;">
+                <span style="font-size:1.25rem;">{icone}</span>{titulo}
+            </div>
+            {_sub}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _empty_state(icone, titulo, mensagem="", cta_label=None, cta_key=None,
                  cor_borda="#3b82f6"):
     """Empty state padrão: ícone grande, título, mensagem opcional e CTA.
@@ -1755,10 +1785,39 @@ else:
 
     # --- ABA 1: DASHBOARD BI (COMPLETA E CORRIGIDA) ---
     with t_bi:
-        st.header("📊 Painel Gerencial")
-        
+        st.markdown(
+            """
+            <div style="display:flex;justify-content:space-between;align-items:flex-end;
+                        padding-bottom:6px;border-bottom:1px solid rgba(255,255,255,0.06);
+                        margin-bottom:14px;">
+                <div>
+                    <div style="font-size:1.6rem;font-weight:800;color:#e5e7eb;
+                                letter-spacing:.3px;line-height:1.1;">
+                        📊 Painel Gerencial
+                    </div>
+                    <div style="font-size:.85rem;color:#94a3b8;margin-top:2px;">
+                        Visão executiva da carteira de projetos, equipe e progresso técnico.
+                    </div>
+                </div>
+                <div style="font-size:.75rem;color:#94a3b8;text-align:right;">
+                    Atualizado em<br>
+                    <b style="color:#cbd5e1;">""" + datetime.now().strftime('%d/%m/%Y %H:%M') + """</b>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
         # 1. SEGURANÇA E LIMPEZA DE DADOS
         df_p_limpo = df_p[df_p['projeto'].notna() & (df_p['projeto'] != '')].copy() if not df_p.empty else pd.DataFrame()
+
+        # ── SEÇÃO 1: KPIs ──────────────────────────────────────────
+        _section_header(
+            "📌",
+            "Indicadores Principais",
+            "Métricas do estado atual respeitando seu perfil de acesso.",
+            cor="#0891b2",
+        )
 
         # 2. MÉTRICAS DINÂMICAS
         c1, c2, c3, c4 = st.columns(4)
@@ -1789,7 +1848,13 @@ else:
         
         
         # 3. GRÁFICO DE GANTT
-        st.subheader("📅 Cronograma Integrado (Gantt)")
+        _section_header(
+            "📅",
+            "Cronograma Integrado (Gantt)",
+            "Linha do tempo dos projetos no recorte selecionado. Toggle abaixo "
+            "alterna entre projeto inteiro e detalhamento por etapas.",
+            cor="#3b82f6",
+        )
 
         _toggle_etapas = st.toggle(
             "Detalhar por etapas",
@@ -1946,7 +2011,13 @@ else:
         st.divider() # Adicionado para garantir que o divider original seja mantidopara exibir no cronograma.")
 
         # ── 4. GRÁFICO DE PIZZA: VOLUME POR PESSOA ───────────────────
-        st.subheader("🥧 Volume de Trabalho por Pessoa")
+        _section_header(
+            "🥧",
+            "Volume de Trabalho por Pessoa",
+            "Quantos projetos cada projetista carrega no momento. Útil pra "
+            "balancear a carga e identificar sobrecarga.",
+            cor="#7c3aed",
+        )
 
         if not df_p_limpo.empty and not df_u.empty:
             lista_oficial = df_u['nome'].tolist()
@@ -2062,7 +2133,13 @@ else:
         st.divider()
 
         # ── 5. EVOLUÇÃO TÉCNICA COM SELEÇÃO DE PROJETOS ──────────────
-        st.subheader("📉 Evolução Técnica por Projeto")
+        _section_header(
+            "📉",
+            "Evolução Técnica por Projeto",
+            "Progresso de cada disciplina dentro de cada projeto. Use o toggle "
+            "abaixo pra escolher entre **Barras**, **Heatmap** ou **Tabela**.",
+            cor="#16a34a",
+        )
 
         try:
             df_evolucao = pd.read_sql("""
@@ -2325,10 +2402,20 @@ else:
 
         # 5. CARDS COLORIDOS
         if st.session_state.perfil == "Gestor":
-            st.subheader("👥 Detalhamento da Equipe")
+            _section_header(
+                "👥",
+                "Detalhamento da Equipe",
+                "Distribuição dos projetos por projetista e visão da carga atual.",
+                cor="#7c3aed",
+            )
             lista_exibicao = df_u['nome'].tolist() if not df_u.empty else []
         else:
-            st.subheader("👤 Minha Carga de Trabalho")
+            _section_header(
+                "👤",
+                "Minha Carga de Trabalho",
+                "Seus projetos, pendências e ações imediatas.",
+                cor="#7c3aed",
+            )
             lista_exibicao = [st.session_state.usuario]
 
         cols_eq = st.columns(3)
@@ -2350,7 +2437,12 @@ else:
                 """, unsafe_allow_html=True)
 
         st.markdown("---")
-        st.subheader("📥 Exportar Relatórios")
+        _section_header(
+            "📥",
+            "Exportar Relatórios",
+            "Baixa snapshots do estado atual em Excel, PDF e CSV.",
+            cor="#d97706",
+        )
 
         # Carrega dados auxiliares para os relatórios
         try:
