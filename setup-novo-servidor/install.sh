@@ -150,7 +150,7 @@ fi
 #            + psycopg3 + passlib[bcrypt] + SQLAlchemy) ----------------------
 echo "==>  6/13 Instalando libs Python via pip"
 "${APP_DIR}/venv/bin/pip" install \
-    'streamlit==1.39.0' \
+    'streamlit>=1.40,<1.50' \
     'plotly==5.24.1' \
     'fpdf2==2.8.1' \
     'xlsxwriter==3.2.0' \
