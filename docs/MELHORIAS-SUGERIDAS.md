@@ -90,7 +90,7 @@ maduro (psycopg3), defaults sensatos.
 | 🟠 | **Notificação por e-mail** | Quem não tá logado perde menções/respostas. Painel persistente ajuda, mas e-mail é o canal definitivo | Médio (SMTP + template) |
 | 🟠 | **Loading states / spinners** em operações lentas (PDF, upload, geração de relatório) | Sem feedback, usuário clica de novo achando que travou | Baixo |
 | 🟠 | **Mensagens de erro humanas** | Hoje vaza stack trace pro usuário em vários pontos | Baixo |
-| 🟢 | **Calendário visual da Agenda** | Hoje é só lista com expanders. Visualização mensal seria muito mais útil | Médio |
+| ✅ | ~~**Calendário visual da Agenda**~~ Já existia desde antes (grid 7 colunas HTML com pílulas coloridas por tipo, navegação Mês anterior/próximo, hoje destacado, legenda). Reforçado em maio/2026 com card **📌 Próximos 7 dias** no topo (atalho de leitura com botão "Abrir" → abre edit). | ✅ Feito |
 | 🟢 | **Inline edit em campos do projeto** | Hoje precisa abrir form gigante pra mudar 1 prioridade | Médio |
 | 🟢 | **Bulk actions** | Selecionar 5 projetos e mudar status de todos. Hoje 1 a 1 | Médio |
 | ✅ | ~~**Tags/labels nos projetos**~~ Implementado em maio/2026: coluna `tags` CSV, input nos forms novo+editar, chips coloridos no Kanban (cor determinística por hash), filtro AND no topo do Kanban | ✅ Feito |

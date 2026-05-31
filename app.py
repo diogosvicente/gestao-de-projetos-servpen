@@ -4183,6 +4183,90 @@ else:
             df_agenda = pd.DataFrame(columns=['id','titulo','tipo','data_inicio',
                                             'data_fim','responsaveis','descricao','local'])
 
+        # ── PRÓXIMOS 7 DIAS (atalho de leitura no topo da aba) ──────
+        # Lista os próximos eventos do usuário em ordem cronológica.
+        # Gestor vê todos; outros perfis veem só aqueles em que estão envolvidos.
+        # Click "Abrir" → popula agenda_edit_id pra rolar pro form em modo edit.
+        with st.container(border=True):
+            _hoje7 = datetime.now().date()
+            _limite7 = _hoje7 + pd.Timedelta(days=7)
+            _df_7 = df_agenda.copy() if not df_agenda.empty else df_agenda
+            if not _df_7.empty:
+                _df_7['_di'] = pd.to_datetime(_df_7['data_inicio'], errors='coerce').dt.date
+                _df_7['_df'] = pd.to_datetime(_df_7['data_fim'],    errors='coerce').dt.date
+                # mantém eventos que TOCAM a janela [hoje, hoje+7d]
+                _df_7 = _df_7[
+                    _df_7['_di'].notna()
+                    & (_df_7['_df'].fillna(_df_7['_di']) >= _hoje7)
+                    & (_df_7['_di'] <= _limite7)
+                ]
+                if perfil_atual != "Gestor":
+                    _df_7 = _df_7[
+                        _df_7['responsaveis'].astype(str).str.contains(usuario_atual, na=False)
+                    ]
+                _df_7 = _df_7.sort_values('_di').head(5)
+
+            _cab1, _cab2 = st.columns([4, 1])
+            _cab1.markdown(
+                f"### 📌 Próximos 7 dias "
+                f"<span style='font-size:.75rem;color:#94a3b8;font-weight:400;'>"
+                f"({'sua agenda' if perfil_atual != 'Gestor' else 'agenda da equipe'})</span>",
+                unsafe_allow_html=True,
+            )
+            _cab2.caption(f"até {_limite7.strftime('%d/%m')}")
+
+            if df_agenda.empty or _df_7.empty:
+                st.markdown(
+                    "<div style='color:#6b7280;font-size:13px;text-align:center;padding:8px;'>"
+                    "Nenhum compromisso nos próximos 7 dias.</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                # Paleta consistente com o calendário abaixo
+                _TIPO_COR_TOPO = {
+                    "Visita Técnica": "#2563eb",
+                    "Reunião":        "#7c3aed",
+                    "Férias":         "#059669",
+                    "Licença":        "#d97706",
+                    "Folga":          "#6b7280",
+                }
+                _TIPO_ICONE_TOPO = {
+                    "Visita Técnica": "🏗️", "Reunião": "🤝",
+                    "Férias": "🏖️", "Licença": "🏥", "Folga": "😴",
+                }
+                for _, _ev in _df_7.iterrows():
+                    _di = _ev['_di']
+                    _df_ = _ev['_df'] or _di
+                    _dias_ate = (_di - _hoje7).days
+                    _quando = (
+                        "**Hoje**" if _dias_ate == 0
+                        else "Amanhã" if _dias_ate == 1
+                        else f"em {_dias_ate} dias"
+                    )
+                    _cor = _TIPO_COR_TOPO.get(str(_ev.get('tipo','')), '#475569')
+                    _ico = _TIPO_ICONE_TOPO.get(str(_ev.get('tipo','')), '📅')
+                    _periodo = (
+                        _di.strftime('%d/%m')
+                        if _di == _df_
+                        else f"{_di.strftime('%d/%m')}–{_df_.strftime('%d/%m')}"
+                    )
+                    _c1, _c2 = st.columns([8, 1])
+                    _c1.markdown(
+                        f"<div style='padding:6px 4px;border-left:3px solid {_cor};"
+                        f"padding-left:10px;margin-bottom:4px;'>"
+                        f"<b>{_ico} {_ev['titulo']}</b> "
+                        f"<span style='color:#94a3b8;font-size:.78rem;'>· {_quando} ({_periodo})</span><br>"
+                        f"<span style='font-size:.75rem;color:#cbd5e1;'>"
+                        f"👥 {_ev.get('responsaveis','') or '—'}"
+                        f"{' · 📍 ' + str(_ev.get('local','')) if _ev.get('local') else ''}"
+                        f"</span></div>",
+                        unsafe_allow_html=True,
+                    )
+                    if _c2.button("Abrir", key=f"prox7_{_ev['id']}",
+                                  help="Abre este compromisso no formulário pra editar"):
+                        st.session_state['agenda_edit_id'] = int(_ev['id'])
+                        st.rerun()
+
         # ── exportar .ics ─────────────────────────────────────────────
         if not df_agenda.empty:
             df_exp = df_agenda if perfil_atual == "Gestor" else \
