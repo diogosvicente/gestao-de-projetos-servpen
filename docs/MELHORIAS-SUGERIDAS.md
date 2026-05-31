@@ -47,7 +47,7 @@ maduro (psycopg3), defaults sensatos.
 | # | Passo | Por que | Status |
 |---|---|---|---|
 | 1 | **Git + GitHub privado** | Single point of failure absoluto — sumiu o `app.py` = perdeu o sistema. Já vimos isso acontecer | ✅ **Feito** (repo `diogosvicente/gestao-de-projetos-servpen`) |
-| 2 | **Backup automático diário dos `.db`** | Hoje só faz backup quando o `install.sh` roda. Se algo corromper hoje, último backup foi quando? | Pendente |
+| 2 | **Backup automático diário do Postgres** | Hoje só faz backup quando o `install.sh` roda. Se algo corromper hoje, último backup foi quando? | ✅ **Feito** (timer systemd `backup-gestao-de-projetos.timer`, retenção 30 dias) |
 | 3 | **HTTPS** com Let's Encrypt + certbot | Token de sessão vai em texto puro pela rede. Qualquer sniff captura e rouba sessão | Pendente |
 | 4 | **bcrypt** no lugar de SHA-256 puro | Vulnerável a rainbow tables se o `.db` vazar. Migrar hashes existentes incluído no esforço | Pendente |
 | 5 | **Trocar o servidor** (qualquer CPU dos últimos ~8 anos com AVX2) | Sozinho resolve mais que qualquer mudança de software | Pendente |
@@ -104,7 +104,7 @@ maduro (psycopg3), defaults sensatos.
 | # | Item | Por que urgente | Esforço |
 |---|---|---|---|
 | 🔴 | **Git versionando o código** | Single point of failure absoluto. Já visto na conversa real | ✅ Feito |
-| 🔴 | **Backup automático diário** dos `.db` (cron) | Hoje só backup quando `install.sh` roda. Se corromper hoje, recupera de quando? | Baixo |
+| 🔴 | **Backup automático diário** do Postgres (timer systemd) | Hoje só backup quando `install.sh` roda. Se corromper hoje, recupera de quando? | ✅ Feito |
 | 🟠 | **Modularizar `app.py`** em `pages/` | 3.500 linhas num arquivo só. Insustentável a longo prazo | Médio |
 | 🟠 | **Testes automatizados** (pelo menos smoke tests) | Zero coverage. Quebra calado ao mexer em qualquer coisa | Médio |
 | 🟠 | **Logs estruturados** | Hoje erro do usuário não vira log. Difícil diagnosticar incidente | Baixo |

@@ -30,6 +30,20 @@ de referência: o app rodando em `http://<IP-DO-SERVIDOR>/gestao-de-projetos/`.
 > dados legados). Veja a seção 4.1 e o arquivo `docs/ROLLBACK-PARA-SQLITE.md`
 > se quiser desfazer.
 
+> **Lições aprendidas validando no 228.20 (maio/2026)**, já refletidas no
+> código atual:
+> - O repo tem `.gitattributes` forçando **LF** em scripts/python/configs.
+>   Sem isso, edição via SMB do Windows escreve CRLF e bash linux quebra
+>   com `set: invalid option name pipefail`.
+> - O `install.sh` gera senha do Postgres com `openssl rand -hex 16`
+>   (não com `tr ... | head` — esse último aborta silenciosamente o script
+>   por `SIGPIPE + pipefail`).
+> - O `database.py` expõe `criar_tabelas()` (não `criar_banco()` — atenção
+>   se encontrar referências antigas na doc).
+> - O `migrar-sqlite-para-postgres.py` usa `INSERT ... OVERRIDING SYSTEM VALUE`
+>   nos `id`s — porque o schema usa `BIGINT GENERATED ALWAYS AS IDENTITY`,
+>   que sem isso rejeita inserts com id explícito.
+
 ---
 
 ## 2. Copie o código para o servidor
@@ -66,19 +80,30 @@ gestao_de_projetos/
 ├── auth.py
 ├── database.py
 ├── relatorios.py
-├── gestao_equipe.db        ← (opcional, se quiser migrar os dados)
+├── requirements.txt
+├── migrar-sqlite-para-postgres.py    ← script ETL SQLite → Postgres
+├── .gitattributes                    ← força LF em scripts/python/configs
+├── gestao_equipe.db        ← (opcional, se quiser migrar os dados antigos)
+├── servpen.db              ← (opcional)
 ├── anexos/                 ← (opcional, arquivos enviados pelos usuários)
-├── setup-novo-servidor/    ← pasta com install.sh, vhost, .service
+├── setup-novo-servidor/
 │   ├── install.sh
 │   ├── gestao-de-projetos.conf
 │   ├── gestao-de-projetos.service
-│   └── INSTALAR-EM-NOVO-SERVIDOR.md  (este arquivo)
-└── (outros .md de referência, opcionais)
+│   └── db.env.example                 ← template das credenciais Postgres
+└── INSTALAR-EM-NOVO-SERVIDOR.md       ← este arquivo (na raiz do projeto)
 ```
 
-> Se você **não copiou os `.db`**, eles serão criados vazios no primeiro boot.
-> O usuário `Sara Borges` com senha `Senbt0408` é garantido pelo
-> `database.py` em todo boot — sempre dá pra entrar.
+> Se você **não copiou os `.db`** legados, o Postgres ficará vazio depois do
+> install — não tem nenhum usuário padrão garantido. Crie um manualmente:
+> ```sql
+> -- Como gestao_servpen no Postgres:
+> INSERT INTO usuarios (nome, senha, perfil, cargo)
+> VALUES ('Sara Borges', encode(digest('Senbt0408', 'sha256'), 'hex'),
+>         'Gestor', 'Engenheira');
+> ```
+> ⚠️ A função `digest()` exige `CREATE EXTENSION pgcrypto;` antes. Ou
+> calcule o SHA-256 fora e cole o hash: `echo -n 'Senbt0408' | sha256sum`.
 
 ---
 
@@ -238,9 +263,77 @@ de 2013+), tecnicamente daria pra instalar pyarrow normal e usar
 | Status do serviço | `sudo systemctl status gestao-de-projetos --no-pager -l` |
 | Reiniciar | `sudo systemctl restart gestao-de-projetos` |
 | Parar | `sudo systemctl stop gestao-de-projetos` |
-| Backup manual do Postgres | `sudo -u postgres pg_dump gestao_servpen \| gzip > ~/bkp-$(date +%F).sql.gz` |
-| Restaurar backup do Postgres | `gunzip -c ~/bkp-YYYY-MM-DD.sql.gz \| sudo -u postgres psql gestao_servpen` |
+| Backup manual ad-hoc do Postgres | `sudo /usr/local/bin/backup-gestao-de-projetos.sh` |
+| Forçar backup automático fora do horário | `sudo systemctl start backup-gestao-de-projetos.service` |
+| Ver próximo horário do backup automático | `systemctl list-timers backup-gestao-de-projetos.timer` |
+| Ver log dos backups | `journalctl -u backup-gestao-de-projetos.service -n 50 --no-pager` |
+| Listar backups disponíveis | `ls -lh /var/www/html/gestao_de_projetos/backups/postgres-*.sql.gz` |
+| Restaurar backup do Postgres | `gunzip -c backups/postgres-gestao_servpen-YYYYMMDD-HHMMSS.sql.gz \| sudo -u postgres psql gestao_servpen` |
 | Status do Postgres | `sudo systemctl status postgresql --no-pager -l` |
+
+---
+
+## 7.1. Backup automático do PostgreSQL (timer systemd)
+
+A partir de maio/2026, o `install.sh` instala um **timer systemd** que faz
+backup do Postgres **diariamente às 03:00** (UTC do servidor). É a defesa
+principal contra perda de dados.
+
+### Como funciona
+
+| Componente | Onde fica | O que faz |
+|---|---|---|
+| Script | `/usr/local/bin/backup-gestao-de-projetos.sh` | Roda `pg_dump`, comprime com gzip, ajusta perms |
+| Service unit | `/etc/systemd/system/backup-gestao-de-projetos.service` | Wrapper one-shot do script |
+| Timer unit | `/etc/systemd/system/backup-gestao-de-projetos.timer` | Agenda execução diária às 03h |
+| Destino | `${APP_DIR}/backups/postgres-gestao_servpen-YYYYMMDD-HHMMSS.sql.gz` | Arquivo gzipado |
+| Retenção | 30 dias (configurável via env `RETAIN_DAYS`) | Apaga sozinho o que envelheceu |
+
+### Recuperação rápida
+
+```bash
+# 1. Para o app (impede escrita durante restore)
+sudo systemctl stop gestao-de-projetos
+
+# 2. Lista backups disponíveis
+ls -lh /var/www/html/gestao_de_projetos/backups/postgres-*.sql.gz
+
+# 3. Drop + recreate do DB (apaga o estado corrompido)
+sudo -u postgres dropdb gestao_servpen
+sudo -u postgres createdb -O gestao_servpen gestao_servpen
+
+# 4. Restaura escolhendo o arquivo
+gunzip -c /var/www/html/gestao_de_projetos/backups/postgres-gestao_servpen-20260531-030000.sql.gz \
+    | sudo -u postgres psql gestao_servpen
+
+# 5. Sobe o app
+sudo systemctl start gestao-de-projetos
+```
+
+### Verificação rotineira (mensal)
+
+Garanta que o timer continua armado e backups recentes existem:
+
+```bash
+# Tem que mostrar "active (waiting)" e próxima execução em <24h
+systemctl status backup-gestao-de-projetos.timer
+
+# Backups recentes (últimos 7)
+ls -lt /var/www/html/gestao_de_projetos/backups/postgres-*.sql.gz | head -7
+
+# Testar uma restauração em DB de descarte (recomendado a cada ~6 meses):
+sudo -u postgres createdb gestao_servpen_test
+gunzip -c backups/postgres-gestao_servpen-AAAAMMDD-HHMMSS.sql.gz \
+    | sudo -u postgres psql gestao_servpen_test
+sudo -u postgres psql gestao_servpen_test -c "SELECT COUNT(*) FROM projetos;"
+sudo -u postgres dropdb gestao_servpen_test
+```
+
+> **Off-site (recomendado quando for pra produção real)**: o backup local
+> só protege contra corrupção de DB. Pra proteger contra falha de disco /
+> roubo / fogo, copie `backups/postgres-*.sql.gz` periodicamente pra um
+> bucket S3, NFS, Google Drive, ou outra máquina. Um simples `rsync` no
+> cron do dia seguinte resolve.
 
 ---
 
@@ -288,7 +381,13 @@ e `create mask = 0775`. Veja o `smb.conf` do servidor antigo como referência.
 | `psycopg.OperationalError: FATAL: password authentication failed` | Senha em `/etc/gestao-de-projetos/db.env` divergiu do role | Rodar `install.sh` de novo (regrava a senha no role) ou usar `ALTER ROLE gestao_servpen PASSWORD '...'` no psql |
 | `psycopg.OperationalError: FATAL: database "gestao_servpen" does not exist` | DB foi dropado | `sudo -u postgres createdb -O gestao_servpen gestao_servpen` + `sudo systemctl restart gestao-de-projetos` |
 | Migração SQLite→Postgres parou no meio | Erro em alguma linha (raro) | Ler o output, corrigir a linha problemática, **rodar de novo** (é idempotente — só insere o que falta) |
-| Sara não consegue logar | Senha do banco diferente | A senha `Senbt0408` é regravada a CADA boot pelo `database.py` — basta restartar |
+| `cannot insert a non-DEFAULT value into column "id"` na migração | Schema usa `GENERATED ALWAYS AS IDENTITY` — o INSERT precisa de `OVERRIDING SYSTEM VALUE` | Já está no `migrar-sqlite-para-postgres.py` atual. Se você está com versão antiga, atualiza pelo git. |
+| `install.sh: line 19: $'\r': command not found` ou `set: invalid option name pipefail` | CRLF em vez de LF no script (editado pelo Windows via SMB) | `sed -i 's/\r$//' setup-novo-servidor/install.sh` no servidor. O `.gitattributes` do repo previne recidiva. |
+| `install.sh` morre silenciosamente após "Configurando PostgreSQL" sem mensagem | `tr -dc … \| head -c N` aborta script via SIGPIPE + `pipefail` | Já corrigido: trocado por `openssl rand -hex 16`. Se voltar, atualiza do git. |
+| `ProgrammingError: the query has 0 placeholders but 2 parameters were passed` no login | Algum arquivo Python ainda usa `?` (placeholder de SQLite) em vez de `%s` (psycopg) | Grep `[\?][\s,\)]` nos .py. Trocar todos por `%s`. Foi o caso de `auth.py` em maio/2026. |
+| `AttributeError: module 'database' has no attribute 'criar_banco'` | Nome correto da função é `criar_tabelas` | Já corrigido no install.sh e migrar.py atuais. |
+| Login não funciona mas DB existe | Postgres vazio (migração não rodou ou rodou e migrou 0) | `psql ... SELECT COUNT(*) FROM usuarios` — se 0, rodar migração novamente. Conferir output: linhas devem ser "X lidas, X novas". |
+| Sara/Diogo não consegue logar | Não há usuário "default" garantido após migração para Postgres | Migrar do `.db` legado, ou inserir manual via psql (`INSERT INTO usuarios ...`). |
 | Não vejo as mudanças no `app.py` | Cache do browser OU módulo cacheado | `Ctrl+Shift+R` no navegador; se for `auth.py`/`database.py`, restart do serviço |
 | Apache `configtest` falha | Sintaxe do vhost | `apache2ctl configtest` mostra a linha; verifica `/etc/apache2/conf-available/gestao-de-projetos.conf` |
 | `chown` ou `chmod` falha | Sem sudo | Tudo aqui exige `sudo` |

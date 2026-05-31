@@ -41,13 +41,13 @@ echo "URL pública:    http://${SERVER_IP}/${URL_PATH}/"
 echo "Banco:          PostgreSQL ${DB_NAME} (usuario ${DB_USER})"
 echo "============================================================"
 
-# --- 1/12 — Pré-requisitos básicos no projeto -------------------------------
-echo "==>  1/12 Verificando ${APP_DIR}/app.py"
+# --- 1/13 — Pré-requisitos básicos no projeto -------------------------------
+echo "==>  1/13 Verificando ${APP_DIR}/app.py"
 test -f "${APP_DIR}/app.py" || { echo "ERRO: ${APP_DIR}/app.py não encontrado. Copie o código antes." ; exit 1; }
 test -f "${APP_DIR}/database.py" || { echo "ERRO: database.py não encontrado." ; exit 1; }
 
-# --- 2/12 — Backup dos bancos SQLite legados antes de migrar ----------------
-echo "==>  2/12 Backup dos bancos SQLite legados (se existirem)"
+# --- 2/13 — Backup dos bancos SQLite legados antes de migrar ----------------
+echo "==>  2/13 Backup dos bancos SQLite legados (se existirem)"
 TS="$(date +%Y%m%d-%H%M%S)"
 mkdir -p "${APP_DIR}/backups"
 for db in gestao_equipe.db servpen.db; do
@@ -57,8 +57,8 @@ for db in gestao_equipe.db servpen.db; do
     fi
 done
 
-# --- 3/12 — apt packages (Python + libs CPU-safe + Apache + PostgreSQL) -----
-echo "==>  3/12 Instalando pacotes do sistema via apt"
+# --- 3/13 — apt packages (Python + libs CPU-safe + Apache + PostgreSQL) -----
+echo "==>  3/13 Instalando pacotes do sistema via apt"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq --allow-releaseinfo-change
 apt-get install -y --no-install-recommends \
@@ -68,8 +68,8 @@ apt-get install -y --no-install-recommends \
     apache2 sqlite3 \
     postgresql postgresql-client
 
-# --- 4/12 — PostgreSQL: garante role + database + db.env --------------------
-echo "==>  4/12 Configurando PostgreSQL (role + database + senha)"
+# --- 4/13 — PostgreSQL: garante role + database + db.env --------------------
+echo "==>  4/13 Configurando PostgreSQL (role + database + senha)"
 
 systemctl enable --now postgresql
 
@@ -135,8 +135,8 @@ echo "     credenciais persistidas em ${DB_ENV_FILE}"
 # Exporta pro restante do script (criar_banco + migração precisam)
 export DB_HOST=localhost DB_PORT=5432 DB_NAME DB_USER DB_PASSWORD
 
-# --- 5/12 — venv com --system-site-packages ---------------------------------
-echo "==>  5/12 Criando venv Linux com --system-site-packages"
+# --- 5/13 — venv com --system-site-packages ---------------------------------
+echo "==>  5/13 Criando venv Linux com --system-site-packages"
 if [ -d "${APP_DIR}/venv" ]; then
     if [ -d "${APP_DIR}/venv/Scripts" ] || [ ! -f "${APP_DIR}/venv/bin/python" ]; then
         echo "     apagando venv inválida"
@@ -146,8 +146,8 @@ fi
 [ -d "${APP_DIR}/venv" ] || python3 -m venv --system-site-packages "${APP_DIR}/venv"
 "${APP_DIR}/venv/bin/pip" install --upgrade pip wheel
 
-# --- 6/12 — pip libs puras-Python + psycopg3 --------------------------------
-echo "==>  6/12 Instalando libs Python (Streamlit, Plotly, fpdf2, xlsxwriter, openpyxl, psycopg3)"
+# --- 6/13 — pip libs puras-Python + psycopg3 --------------------------------
+echo "==>  6/13 Instalando libs Python (Streamlit, Plotly, fpdf2, xlsxwriter, openpyxl, psycopg3)"
 "${APP_DIR}/venv/bin/pip" install \
     'streamlit==1.39.0' \
     'plotly==5.24.1' \
@@ -156,24 +156,24 @@ echo "==>  6/12 Instalando libs Python (Streamlit, Plotly, fpdf2, xlsxwriter, op
     'openpyxl==3.1.5' \
     'psycopg[binary]>=3.1,<4'
 
-# --- 7/12 — Apaga wheels do PyPI que dão SIGILL em CPUs sem AVX2 ------------
+# --- 7/13 — Apaga wheels do PyPI que dão SIGILL em CPUs sem AVX2 ------------
 # Mantido por defesa — em CPUs modernas é no-op. numpy/pandas/scipy/reportlab/pil
 # vêm do apt (baseline x86-64-v1). pyarrow continua AUSENTE.
-echo "==>  7/12 Removendo wheels PyPI conflitantes (caso pip tenha puxado)"
+echo "==>  7/13 Removendo wheels PyPI conflitantes (caso pip tenha puxado)"
 for mod in numpy pandas pyarrow scipy bottleneck numexpr; do
     rm -rf "${APP_DIR}/venv/lib/python3."*/site-packages/${mod}* 2>/dev/null || true
 done
 rm -rf "${APP_DIR}/.local/lib/python3."*/site-packages/{numpy,pandas,pyarrow,scipy,bottleneck,numexpr}* 2>/dev/null || true
 
-# --- 8/12 — Ownership + permissões -----------------------------------------
-echo "==>  8/12 Ajustando dono/permissões (www-data:www-data, setgid em dirs)"
+# --- 8/13 — Ownership + permissões -----------------------------------------
+echo "==>  8/13 Ajustando dono/permissões (www-data:www-data, setgid em dirs)"
 mkdir -p "${APP_DIR}/anexos" "${APP_DIR}/anexos/avatars" "${APP_DIR}/backups" "${APP_DIR}/.streamlit"
 chown -R www-data:www-data "${APP_DIR}"
 chmod -R u+rwX,g+rwX "${APP_DIR}"
 find "${APP_DIR}" -type d -exec chmod g+s {} \; 2>/dev/null || true
 
-# --- 9/12 — Streamlit config ------------------------------------------------
-echo "==>  9/12 Escrevendo .streamlit/config.toml com SERVER_IP=${SERVER_IP}"
+# --- 9/13 — Streamlit config ------------------------------------------------
+echo "==>  9/13 Escrevendo .streamlit/config.toml com SERVER_IP=${SERVER_IP}"
 cat > "${APP_DIR}/.streamlit/config.toml" <<EOF
 [server]
 headless = true
@@ -199,8 +199,8 @@ base = "dark"
 EOF
 chown www-data:www-data "${APP_DIR}/.streamlit/config.toml"
 
-# --- 10/12 — Cria schema no Postgres + migra dados do SQLite (se houver) ----
-echo "==> 10/12 Criando schema no Postgres + migrando dados do SQLite (se houver .db)"
+# --- 10/13 — Cria schema no Postgres + migra dados do SQLite (se houver) ----
+echo "==> 10/13 Criando schema no Postgres + migrando dados do SQLite (se houver .db)"
 sudo -u www-data \
     DATABASE_URL= DB_HOST="${DB_HOST}" DB_PORT="${DB_PORT}" \
     DB_NAME="${DB_NAME}" DB_USER="${DB_USER}" DB_PASSWORD="${DB_PASSWORD}" \
@@ -230,8 +230,8 @@ else
     echo "     SKIP_MIGRATION=1 — migração pulada por opção"
 fi
 
-# --- 11/12 — systemd + Apache ----------------------------------------------
-echo "==> 11/12 Instalando systemd unit + vhost Apache"
+# --- 11/13 — systemd + Apache ----------------------------------------------
+echo "==> 11/13 Instalando systemd unit + vhost Apache"
 DEPLOY_SRC="${APP_DIR}/setup-novo-servidor"
 [ -f "${DEPLOY_SRC}/${SERVICE_NAME}.service" ] || DEPLOY_SRC="${APP_DIR}/deploy"
 
@@ -255,9 +255,36 @@ a2enconf "${APACHE_CONF_NAME}" >/dev/null
 apache2ctl configtest
 systemctl reload apache2
 
-# --- 12/12 — Health-check final --------------------------------------------
+# --- 12/13 — Backup automático Postgres (timer systemd) --------------------
+echo "==> 12/13 Instalando backup automático Postgres (timer systemd diário às 03h)"
+BACKUP_SCRIPT_SRC="${DEPLOY_SRC}/backup-${SERVICE_NAME}.sh"
+BACKUP_UNIT_SRC="${DEPLOY_SRC}/backup-${SERVICE_NAME}"
+BACKUP_BIN="/usr/local/bin/backup-${SERVICE_NAME}.sh"
+
+if [ -f "${BACKUP_SCRIPT_SRC}" ] && [ -f "${BACKUP_UNIT_SRC}.service" ] \
+   && [ -f "${BACKUP_UNIT_SRC}.timer" ]; then
+    # Script
+    install -m 0755 -o root -g root "${BACKUP_SCRIPT_SRC}" "${BACKUP_BIN}"
+
+    # Unit files (não precisam de substituição — paths são fixos)
+    install -m 0644 -o root -g root "${BACKUP_UNIT_SRC}.service" \
+        "/etc/systemd/system/backup-${SERVICE_NAME}.service"
+    install -m 0644 -o root -g root "${BACKUP_UNIT_SRC}.timer" \
+        "/etc/systemd/system/backup-${SERVICE_NAME}.timer"
+
+    systemctl daemon-reload
+    systemctl enable --now "backup-${SERVICE_NAME}.timer"
+
+    echo "     timer ativo. Próxima execução:"
+    systemctl list-timers "backup-${SERVICE_NAME}.timer" --no-pager \
+        | head -2 | tail -1 | awk '{print "     " $0}' || true
+else
+    echo "     [pular] arquivos de backup não encontrados em ${DEPLOY_SRC} — instale manualmente depois"
+fi
+
+# --- 13/13 — Health-check final --------------------------------------------
 echo
-echo "==> 12/12 Aguardando Streamlit subir..."
+echo "==> 13/13 Aguardando Streamlit subir..."
 for i in 1 2 3 4 5 6 7 8 9 10; do
     sleep 2
     if curl -fsS -o /dev/null -w "%{http_code}" "http://127.0.0.1:${STREAMLIT_PORT}/${URL_PATH}/_stcore/health" 2>/dev/null | grep -q 200; then
