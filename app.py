@@ -28,6 +28,7 @@ if _LOG_LEVEL != "DEBUG":
                   "matplotlib", "PIL", "fontTools", "sqlalchemy.engine"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 log = logging.getLogger(__name__)
+log.info("boot do app — LOG_LEVEL=%s", _LOG_LEVEL)
 
 
 # 1. CONFIGURAÇÃO DA PÁGINA (Sempre o PRIMEIRO comando Streamlit)

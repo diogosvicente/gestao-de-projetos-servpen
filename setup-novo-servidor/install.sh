@@ -183,8 +183,10 @@ headless = true
 address = "127.0.0.1"
 port = ${STREAMLIT_PORT}
 baseUrlPath = "${URL_PATH}"
-enableCORS = false
-# XSRF Protection on — Apache preserva Host via ProxyPreserveHost.
+# CORS + XSRF on — Apache preserva Host via ProxyPreserveHost.
+# Streamlit exige que ambos sejam iguais (true/false); deixar mistos faz ele
+# avisar no log e forçar pra true.
+enableCORS = true
 enableXsrfProtection = true
 enableWebsocketCompression = false
 maxUploadSize = 100
