@@ -131,7 +131,13 @@ def migrar_tabela(con_sq: sqlite3.Connection, con_pg, tabela: str) -> tuple[int,
     else:
         conflict_clause = "ON CONFLICT DO NOTHING"
 
-    sql = f"INSERT INTO {tabela} ({cols_sql}) VALUES ({placeholders}) {conflict_clause}"
+    # OVERRIDING SYSTEM VALUE: necessário pq o schema usa
+    # `BIGINT GENERATED ALWAYS AS IDENTITY`, que proíbe INSERTs com id explícito
+    # por default. Sem isso, todas as linhas falham com:
+    #   "cannot insert a non-DEFAULT value into column id"
+    # Aplica só quando estamos inserindo a coluna id (que é o caso na migração).
+    overriding = " OVERRIDING SYSTEM VALUE" if "id" in cols else ""
+    sql = f"INSERT INTO {tabela} ({cols_sql}){overriding} VALUES ({placeholders}) {conflict_clause}"
 
     inseridas = 0
     for linha in linhas:
