@@ -1052,17 +1052,9 @@ db.limpar_sessoes_expiradas()
 # pra pré-selecionar no selectbox da aba Chat e limpamos o param da URL pra
 # não persistir entre reruns.
 #
-# IMPORTANTE — bug fix grave (2026-05):
-# Usamos `_chat_force_target` (NÃO `_chat_proximo_contato`) porque o
-# fragmento global `_global_notif` (run_every=10s) também escreve em
-# `_chat_proximo_contato` com o "último remetente do iterator" — que vem de
-# um GROUP BY sem ORDER BY (ordem arbitrária no Postgres). Resultado: se
-# outra pessoa mandava msg entre o clique e o render da aba Chat, o user
-# caía na conversa errada (parecia "ir pra primeira da lista", que era a
-# ordenada por não-lidas DESC).
-#
-# `_chat_force_target` é uma intenção EXPLÍCITA do usuário (ele clicou),
-# tem precedência absoluta e o fragmento foi instruído a NÃO sobrescrevê-la.
+# `_chat_force_target` é a ÚNICA fonte da pré-seleção de contato no chat.
+# O consumo é feito em `t_chat` com `index=` explícito + delete da key do
+# widget, pra ser à prova de cache interno do Streamlit (ver lá ~4720).
 _goto_chat = st.query_params.get('_goto_chat')
 if _goto_chat:
     st.session_state['_chat_force_target'] = _goto_chat
@@ -4649,18 +4641,18 @@ else:
                 _chat_toast_html(rem, novas)
                 _ultimo_remetente_novo = rem
         st.session_state['_chat_ultimas_contagens'] = atuais_chat
-        # Memoriza o último remetente com msg nova → o selectbox da aba Chat
-        # vai abrir nele automaticamente, sem o usuário precisar caçar.
+        # NÃO usar `_chat_proximo_contato` aqui (REMOVIDO).
         #
-        # ATENÇÃO: NÃO sobrescrever se o usuário JÁ clicou explicitamente num
-        # toast (`_chat_force_target` setado pelo boot). O fragmento é só um
-        # fallback passivo; o clique é a intenção real. Sobrescrever aqui
-        # causaria o bug "vai pra conversa errada" (a iteração de `atuais_chat`
-        # vem de um GROUP BY sem ORDER BY = ordem arbitrária no Postgres).
-        if _ultimo_remetente_novo and not st.session_state.get(
-            '_chat_force_target'
-        ):
-            st.session_state['_chat_proximo_contato'] = _ultimo_remetente_novo
+        # Histórico do bug: o fragmento setava esse hint baseado no "último
+        # remetente do iterator de atuais_chat" — mas isso vinha de um
+        # `SELECT ... GROUP BY remetente` sem ORDER BY, com ordem arbitrária
+        # no Postgres. Resultado: clique no toast da Maria caía na conversa
+        # do Pedro (ou de quem tivesse mais não-lidas).
+        #
+        # Solução: o único mecanismo de redirect é `_chat_force_target`
+        # (setado pelo boot quando o user clica `?_goto_chat=NOME`). Sem
+        # clique, o selectbox já abre em quem tem mais não-lidas porque
+        # `lista_usuarios` é ordenada por não-lidas DESC (linha ~4677).
 
         # 2) Menções no Diário (decisão 5: toast mesmo se ja tinha acesso)
         # Agrupa as pendentes por (remetente, projeto_id) p/ nao spammar 1 toast por relato
@@ -4702,25 +4694,28 @@ else:
             _q = int(_nao_lidas_por_user.get(nome, 0))
             return f"🔴 {nome} ({_q})" if _q > 0 else nome
 
-        # Pré-seleção do contato. Ordem de PRECEDÊNCIA (intenção mais forte
-        # primeiro):
+        # ── PRÉ-SELEÇÃO DO CONTATO (à prova de bug) ────────────────
+        # `_chat_force_target` é a ÚNICA fonte de redirect explícito.
+        # Setado pelo boot quando o user clica no toast (`?_goto_chat=NOME`)
+        # ou pelo handler de envio de msg (pra manter o user na mesma
+        # conversa após rerun).
         #
-        #  1. `_chat_force_target` — usuário clicou EXPLICITAMENTE no toast
-        #     "Ver mensagem" (URL `?_goto_chat=NOME`). É o que ele quer.
-        #     PRIORIDADE ABSOLUTA. O fragmento global (`_global_notif`) está
-        #     proibido de sobrescrever essa flag.
+        # Sem force target, o selectbox usa o default natural — que já é a
+        # pessoa "mais relevante" porque `lista_usuarios` está ordenada por
+        # não-lidas DESC (ver linha ~4677).
         #
-        #  2. `_chat_proximo_contato` — hint passivo do fragmento que diz
-        #     "esse foi o último remetente com msg nova". Usado quando o user
-        #     navega pra aba Chat manualmente, sem ter clicado no toast.
-        #
-        # Match com fallback case-insensitive + strip pra blindar contra
-        # whitespace/encoding (decode de query param, normalização Unicode etc).
-        _target = (
-            st.session_state.pop('_chat_force_target', None)
-            or st.session_state.pop('_chat_proximo_contato', None)
-        )
+        # ESTRATÉGIA À PROVA DE BUG (após várias tentativas frustradas):
+        # NÃO setar `st.session_state["sel_contato_final_v2"]` antes do
+        # widget. O Streamlit às vezes mantém o estado interno do widget
+        # de reruns anteriores e ignora a atribuição. Em vez disso:
+        #   1. DELETAR a key (força o widget a reconstruir do zero).
+        #   2. Passar `index=` explícito.
+        # Esse pattern é determinístico em todas as versões do Streamlit.
+        _target = st.session_state.pop('_chat_force_target', None)
+        _default_index = 0
         if _target:
+            # Match exato + fallback case-insensitive/strip pra blindar contra
+            # whitespace, encoding URL, normalização Unicode.
             _hit = _target if _target in lista_usuarios else None
             if _hit is None:
                 _tnorm = str(_target).strip().lower()
@@ -4729,15 +4724,18 @@ else:
                         _hit = _nome
                         break
             if _hit is not None:
-                # Setar a key ANTES do widget renderizar: Streamlit lê
-                # session_state[key] como valor inicial. Funciona mesmo se
-                # `sel_contato_final_v2` já tinha valor de rerun anterior.
-                st.session_state["sel_contato_final_v2"] = _hit
+                _default_index = lista_usuarios.index(_hit)
+                # CRUCIAL: deletar o estado do widget pra `index=` ser honrado.
+                # Se a key já existe, Streamlit ignora `index=` e usa o valor
+                # cacheado — origem do bug "vai pra primeira/errada".
+                if "sel_contato_final_v2" in st.session_state:
+                    del st.session_state["sel_contato_final_v2"]
 
         contato = st.selectbox(
             "Conversar com:",
             lista_usuarios,
             format_func=_fmt_contato,
+            index=_default_index,
             key="sel_contato_final_v2",
         )
 
