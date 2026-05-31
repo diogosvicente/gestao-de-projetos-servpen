@@ -226,6 +226,42 @@ def _popover_mencionar(text_key, nomes_disponiveis, *, label="@ Mencionar",
                 st.rerun()
 
 
+def _pill_select(container, label, options, *, default=None,
+                 key=None, label_visibility="visible", help=None):
+    """Pill-button select que escolhe o melhor widget disponível em runtime.
+
+    - Streamlit ≥ 1.40 → `st.segmented_control` (UI agrupada, mais bonita)
+    - Streamlit ≥ 1.25 → `st.radio(horizontal=True)` (fallback estável)
+
+    Deixa o código portátil:
+      - 228.20 (Athlon II X2, sem AVX2): Streamlit 1.39 → radio
+      - 238.40 (Xeon Gold 5220, AVX-512): atualizar pra 1.40+ → segmented_control
+        automaticamente, sem mudar este arquivo.
+
+    Argumentos:
+        container: alvo do widget (st, ou uma coluna como tb1, ou st.sidebar).
+                   Permite usar dentro de st.columns sem precisar global.
+        label: texto do label (escondido se label_visibility="collapsed").
+        options: lista de strings.
+        default: opção pré-selecionada. Se None, primeira opção.
+        key, help, label_visibility: passados direto pro widget Streamlit.
+    """
+    if hasattr(st, 'segmented_control'):
+        return container.segmented_control(
+            label, options=options, default=default,
+            key=key, label_visibility=label_visibility, help=help,
+        )
+    # Fallback radio horizontal — converte `default` em `index`
+    try:
+        idx = list(options).index(default) if default in options else 0
+    except (ValueError, TypeError):
+        idx = 0
+    return container.radio(
+        label, options=options, index=idx, horizontal=True,
+        key=key, label_visibility=label_visibility, help=help,
+    )
+
+
 def _render_lista_kanban(df_kanban, df_d):
     """Visão 'Lista' do Kanban: tabela densa com sort + botão de detalhe por linha.
 
@@ -2318,14 +2354,12 @@ else:
         #   - Kanban: fluxo visual por status (atual). Bom pra movimentação.
         #   - Lista:  tabela densa com sort. Bom pra triagem rápida em volume.
         #   - Resumo: dashboard de cima (urgentes + atrasados + distribuição).
-        # `st.radio(horizontal=True)` em vez de `st.segmented_control` porque
-        # esse último, mesmo existindo em Streamlit 1.40+, deu AttributeError
-        # em 1.49.1 no servidor. radio funciona em qualquer versão >=1.25.
-        visao = st.radio(
-            "Visão",
+        # Helper escolhe segmented_control (Streamlit 1.40+) ou radio (≤1.39).
+        # Portável entre 228.20 (Athlon II → radio) e 238.40 (Xeon → segmented).
+        visao = _pill_select(
+            st, "Visão",
             options=["Kanban", "Lista", "Resumo"],
-            index=0,
-            horizontal=True,
+            default="Kanban",
             key="kanban_visao",
             label_visibility="collapsed",
         ) or "Kanban"
@@ -2418,12 +2452,11 @@ else:
 
             # ── TOOLBAR: densidade + collapse finalizados ────────────────
             tb1, tb2, _tb3 = st.columns([1.2, 1.2, 2])
-            # radio em vez de segmented_control (vide comentário no toggle Visão).
-            densidade = tb1.radio(
-                "Densidade",
+            # Helper portátil — segmented_control no Xeon, radio no Athlon.
+            densidade = _pill_select(
+                tb1, "Densidade",
                 options=["Compacto", "Normal", "Expandido"],
-                index=1,
-                horizontal=True,
+                default="Normal",
                 key="kanban_densidade",
                 label_visibility="collapsed",
                 help="Espaçamento dos cards. Compacto = mais cards visíveis.",

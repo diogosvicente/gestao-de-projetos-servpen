@@ -80,29 +80,26 @@ O 238.40 tem `AVX`, `AVX2` e `AVX-512` — pyarrow e wheels modernos do
 PyPI rodam sem SIGILL. Aproveite pra remover gambiarras do 228.20:
 
 ```bash
-# 1. Sobe pyarrow + Streamlit moderno
+# 1. Sobe Streamlit pra versão recente (puxa pyarrow junto, já roda OK no Xeon)
 sudo /var/www/html/gestao_de_projetos/venv/bin/pip install --upgrade \
-    'streamlit>=1.40,<1.50' 'pyarrow>=17'
+    'streamlit>=1.40,<1.50'
 
 # 2. Atualize requirements.txt do projeto:
-#    - streamlit==1.39.0 → streamlit>=1.40,<1.50
-#    + pyarrow>=17  (opcional explicitar)
+#    streamlit==1.39.0 → streamlit>=1.40,<1.50
 
-# 3. (Opcional, melhoria UX) Troque st.radio por st.segmented_control
-#    nos 2 lugares do Kanban (Visão + Densidade) em app.py.
-grep -n "st.radio\b" app.py
-# Edite manualmente. Padrão:
-#   st.radio(label, options=[...], index=0, horizontal=True, key=...)
-# Vira:
-#   st.segmented_control(label, options=[...], default=opções[0], key=...)
+# 3. NÃO precisa editar app.py:
+#    O helper `_pill_select` em app.py escolhe automaticamente o melhor
+#    widget — st.segmented_control quando disponível (≥1.40), senão
+#    st.radio horizontal. Subir a versão do Streamlit já troca a UI.
 
 # 4. O passo 7/13 do install.sh (remove pyarrow do venv) vira no-op
-#    no Xeon — pode deixar. Ou pode também limpar dele a parte de
-#    rm -rf pyarrow* se quiser deixar o script mais elegante.
+#    inofensivo no Xeon — pode deixar. Ou limpar dele o rm -rf
+#    pyarrow* pra deixar o script mais elegante.
 
 # 5. Restart e validação
 sudo systemctl restart gestao-de-projetos
 curl -sI http://127.0.0.1:8501/gestao-de-projetos/_stcore/health
+# Deve dar HTTP 200 e o Kanban mostra "segmented control" no lugar do radio.
 ```
 
 Recomendação: **NÃO** atualize Streamlit antes de testar tudo no
