@@ -4123,8 +4123,7 @@ else:
     # --- ABA 7: CHAT (TEMPO REAL via @st.fragment) ---
     # O fragmento abaixo re-roda apenas a si mesmo a cada 5s, sem rerodar a pagina inteira.
     # (Era 2s — afrouxado p/ 5s pra cortar carga de fundo com muitos usuarios online.)
-    # CSS injetado uma vez por sessão (no boot do fragmento dá pra cachear,
-    # mas pra simplicidade re-injeta — Streamlit deduplica HTML idêntico).
+    # CSS injetado uma vez por sessão (Streamlit deduplica HTML idêntico).
     _CHAT_CSS = """
     <style>
     /* Bubbles estilo WhatsApp */
@@ -4132,7 +4131,7 @@ else:
     .wa-row.mine { justify-content:flex-end; }
     .wa-row.theirs { justify-content:flex-start; }
     .wa-bub {
-        max-width: 72%;
+        max-width: 78%;
         padding: 6px 10px 4px;
         border-radius: 10px;
         font-size: 13.5px; line-height: 1.35;
@@ -4153,6 +4152,30 @@ else:
                         border-radius: 10px; }
     .wa-empty { color: #6b7280; text-align: center;
                 font-size: 13px; padding: 24px; }
+
+    /* COLAPSA gaps entre rows e dentro de st.columns no chat — o que
+       causava aquele monstrengo vertical entre minhas msgs era a altura
+       padrão das columns + popover esticando.
+       Escopo: container do chat (qualquer st.container(height=...) com
+       data-testid=stVerticalBlockBorderWrapper que tem rows).            */
+    [data-testid="stVerticalBlockBorderWrapper"]
+        [data-testid="stHorizontalBlock"] {
+        gap: 4px !important;
+        margin-bottom: 0 !important;
+    }
+    [data-testid="stVerticalBlockBorderWrapper"]
+        [data-testid="stHorizontalBlock"] > div {
+        padding-top: 0 !important;
+        padding-bottom: 0 !important;
+    }
+    /* Botão do popover compacto */
+    [data-testid="stVerticalBlockBorderWrapper"]
+        [data-testid="stPopover"] button {
+        min-height: 28px !important;
+        padding: 2px 6px !important;
+        font-size: 14px !important;
+        line-height: 1 !important;
+    }
     </style>
     """
 
@@ -4254,12 +4277,14 @@ else:
                 )
 
                 if sou_eu:
-                    # Layout: bolha (92%) + popover ⋯ (8%) alinhados à direita
-                    cm_main, cm_act = st.columns([0.92, 0.08])
+                    # Layout: bolha (95%) + popover ⋯ pequeno (5%).
+                    # SEM use_container_width no popover — assim ele fica
+                    # com altura natural de botão padrão (≈28px) em vez
+                    # de esticar pra altura da coluna.
+                    cm_main, cm_act = st.columns([0.95, 0.05])
                     cm_main.markdown(_bolha_html, unsafe_allow_html=True)
                     with cm_act:
-                        with st.popover("⋯", use_container_width=True,
-                                        help="Ações da mensagem"):
+                        with st.popover("⋯", help="Ações da mensagem"):
                             if st.button("✏️ Editar", key=f"ed_{_kfx}",
                                          use_container_width=True):
                                 st.session_state[f"edit_mode_{_msg_id}"] = True
@@ -4431,30 +4456,49 @@ else:
             _render_chat_messages(st.session_state.usuario, contato)
 
             # 3. Campo de Envio compacto (fora do fragmento; submete a pagina)
-            # Layout: text_area largo + botão "➤" único caractere na lateral.
-            # Em tela estreita (~280px de coluna), botão com label longo virava
-            # "▶ E n v i a r" empilhado vertical letra-a-letra. Solução: usar
-            # 1 char (➤) com tooltip + CSS pra esticar verticalmente.
+            # Layout: text_area baixo (uma linha) + botão "➤" do mesmo
+            # tamanho ao lado. CSS força form sem padding gordo e altura
+            # consistente entre input e botão (~68px).
             st.markdown(
                 """
                 <style>
-                /* Botão envia: 1 char grande e centralizado em qualquer tela */
-                div[data-testid="stFormSubmitButton"] button {
-                    font-size: 1.6rem !important;
+                /* Form do chat: borda fina, sem padding interno gordo */
+                div[data-testid="stForm"].chat-send-form,
+                form.chat-send-form {
+                    padding: 8px !important;
+                }
+                /* Botão Enviar: mesmo altura do textarea, fonte grande no
+                   ➤, centralizado vertical. */
+                .chat-send-form div[data-testid="stFormSubmitButton"] button {
+                    font-size: 1.5rem !important;
                     font-weight: 600 !important;
-                    min-height: 86px;
+                    height: 68px !important;
+                    padding: 0 !important;
                     line-height: 1 !important;
-                    padding: 4px !important;
+                    display: flex; align-items: center; justify-content: center;
+                }
+                /* Reduz padding interno do textarea (Streamlit default é
+                   gordo demais nesse contexto). */
+                .chat-send-form textarea {
+                    min-height: 68px !important;
+                    padding: 10px 12px !important;
                 }
                 </style>
                 """,
                 unsafe_allow_html=True,
             )
-            with st.form("f_chat_v3_final", clear_on_submit=True):
+            with st.form("f_chat_v3_final", clear_on_submit=True,
+                         border=False):
+                # Wrapper pra escopar o CSS via classe própria. Streamlit não
+                # deixa passar `className` na st.form — workaround é wrapping
+                # via st.markdown anchor.
+                st.markdown(
+                    "<div class='chat-send-form'>", unsafe_allow_html=True,
+                )
                 in_c1, in_c2 = st.columns([6, 1], gap="small")
                 msg_input = in_c1.text_area(
                     "Digite uma mensagem...",
-                    height=86,
+                    height=68,
                     label_visibility="collapsed",
                     placeholder="Digite uma mensagem...",
                 )
@@ -4463,6 +4507,7 @@ else:
                     use_container_width=True,
                     help="Enviar mensagem",
                 )
+                st.markdown("</div>", unsafe_allow_html=True)
                 if _enviar and msg_input.strip():
                     # Grava timestamp completo "DD/MM/YYYY HH:MM" pra suporte
                     # ao separador de dias no histórico.
