@@ -4469,53 +4469,108 @@ else:
                 else:
                     _df_sem = pd.DataFrame()
 
+                # Render dos 7 dias como HTML único — Streamlit não envelopa
+                # st.button dentro de markdown custom, então construímos a
+                # grade inteira em HTML estático (cards + chips) sem botões
+                # individuais. A edição vai pelo selectbox embaixo da grade.
                 NOMES_DIA = ["DOM","SEG","TER","QUA","QUI","SEX","SÁB"]
-                cols_sem = st.columns(7)
-                for idx, c_dia in enumerate(cols_sem):
+                _MAX_CHIPS_DIA = 3   # acima disso vira "+N"
+
+                # Mapa dia → eventos
+                _ev_por_dia: dict = {}
+                if not _df_sem.empty:
+                    for _i_d in range(7):
+                        _data_d = (_ini_sem + pd.Timedelta(days=_i_d)).date() \
+                                  if hasattr(_ini_sem, 'date') \
+                                  else _ini_sem + pd.Timedelta(days=_i_d)
+                        _ev_por_dia[_i_d] = [
+                            r for _, r in _df_sem.iterrows()
+                            if _toca_janela(r, _data_d, _data_d)
+                        ]
+
+                html_sem = "<style>" \
+                    ".srv-sem { display:grid; grid-template-columns:repeat(7,1fr); " \
+                    "  gap:6px; }" \
+                    ".srv-sem .dia { background:rgba(255,255,255,0.03); border:1px solid " \
+                    "  rgba(255,255,255,0.06); border-radius:8px; padding:6px; " \
+                    "  min-height:80px; }" \
+                    ".srv-sem .dia.hoje { background:rgba(59,130,246,0.10); " \
+                    "  border:2px solid #3b82f6; }" \
+                    ".srv-sem .lbl { font-size:.65rem; letter-spacing:1px; color:#93c5fd; " \
+                    "  text-align:center; font-weight:700; }" \
+                    ".srv-sem .num { font-size:1rem; text-align:center; font-weight:700; " \
+                    "  color:#e5e7eb; margin-bottom:4px; }" \
+                    ".srv-sem .num.hoje { color:#60a5fa; }" \
+                    ".srv-sem .chip { color:#fff; padding:2px 6px; border-radius:5px; " \
+                    "  font-size:.65rem; margin-bottom:2px; line-height:1.25; " \
+                    "  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }" \
+                    ".srv-sem .mais { font-size:.6rem; color:#94a3b8; text-align:center; " \
+                    "  margin-top:2px; }" \
+                    "</style><div class='srv-sem'>"
+
+                for idx in range(7):
                     _data_dia_s = (_ini_sem + pd.Timedelta(days=idx)).date() \
                                   if hasattr(_ini_sem, 'date') \
                                   else _ini_sem + pd.Timedelta(days=idx)
                     _eh_hoje_s = (_data_dia_s == _hoje_sem)
-                    _bg = "rgba(59,130,246,0.08)" if _eh_hoje_s else "rgba(255,255,255,0.03)"
-                    _border = "2px solid #3b82f6" if _eh_hoje_s \
-                              else "1px solid rgba(255,255,255,0.06)"
-                    _eventos_dia = []
-                    if not _df_sem.empty:
-                        _eventos_dia = [
-                            r for _, r in _df_sem.iterrows()
-                            if _toca_janela(r, _data_dia_s, _data_dia_s)
-                        ]
-                    with c_dia:
-                        st.markdown(
-                            f"<div style='background:{_bg};border:{_border};"
-                            f"border-radius:8px;padding:8px;min-height:160px;'>"
-                            f"<div style='font-size:.7rem;letter-spacing:1px;"
-                            f"color:#93c5fd;text-align:center;font-weight:700;'>"
-                            f"{NOMES_DIA[idx]}</div>"
-                            f"<div style='font-size:1.1rem;text-align:center;"
-                            f"color:{'#60a5fa' if _eh_hoje_s else '#e5e7eb'};"
-                            f"font-weight:700;margin-bottom:6px;'>"
-                            f"{_data_dia_s.day}</div>",
-                            unsafe_allow_html=True,
-                        )
-                        for _ev in _eventos_dia:
-                            _cor = TIPO_COR.get(str(_ev.get('tipo','')), '#475569')
-                            _ico = TIPO_ICONE.get(str(_ev.get('tipo','')), '📅')
-                            st.markdown(
-                                f"<div style='background:{_cor};color:#fff;"
-                                f"padding:3px 6px;border-radius:6px;"
-                                f"font-size:.7rem;margin-bottom:3px;"
-                                f"overflow:hidden;text-overflow:ellipsis;'>"
-                                f"{_ico} {str(_ev['titulo'])[:25]}</div>",
-                                unsafe_allow_html=True,
-                            )
-                            # Botão "🔍" curto pra caber em coluna estreita do grid 7
-                            if st.button("🔍", key=f"sem_op_{_ev['id']}_{idx}",
-                                         help="Abrir no formulário",
-                                         use_container_width=True):
-                                st.session_state['agenda_edit_id'] = int(_ev['id'])
-                                st.rerun()
-                        st.markdown("</div>", unsafe_allow_html=True)
+                    _cls_dia = "dia hoje" if _eh_hoje_s else "dia"
+                    _cls_num = "num hoje" if _eh_hoje_s else "num"
+
+                    html_sem += f"<div class='{_cls_dia}'>"
+                    html_sem += f"<div class='lbl'>{NOMES_DIA[idx]}</div>"
+                    html_sem += f"<div class='{_cls_num}'>{_data_dia_s.day}</div>"
+
+                    _eventos_dia_d = _ev_por_dia.get(idx, [])
+                    for _ev in _eventos_dia_d[:_MAX_CHIPS_DIA]:
+                        _cor = TIPO_COR.get(str(_ev.get('tipo','')), '#475569')
+                        _ico = TIPO_ICONE.get(str(_ev.get('tipo','')), '📅')
+                        _titulo_curto = str(_ev['titulo'])[:18]
+                        html_sem += (f"<div class='chip' style='background:{_cor}' "
+                                     f"title=\"{_ev['titulo']} ({_ev.get('responsaveis','')})\""
+                                     f">{_ico} {_titulo_curto}</div>")
+                    if len(_eventos_dia_d) > _MAX_CHIPS_DIA:
+                        _extras = len(_eventos_dia_d) - _MAX_CHIPS_DIA
+                        html_sem += f"<div class='mais'>+{_extras} mais</div>"
+                    html_sem += "</div>"
+
+                html_sem += "</div>"
+                st.markdown(html_sem, unsafe_allow_html=True)
+
+                # Editor da semana: selectbox + botão Abrir, fora da grade
+                _todos_ev_semana = []
+                for _i_d in range(7):
+                    _todos_ev_semana.extend(_ev_por_dia.get(_i_d, []))
+                # Dedup por id (eventos multi-dia aparecem em vários dias)
+                _vistos_sem = set()
+                _ev_unicos_sem = []
+                for _e in _todos_ev_semana:
+                    _eid = int(_e['id'])
+                    if _eid not in _vistos_sem:
+                        _vistos_sem.add(_eid)
+                        _ev_unicos_sem.append(_e)
+
+                if _ev_unicos_sem:
+                    st.markdown("---")
+                    _ed_c1, _ed_c2 = st.columns([4, 1])
+                    _opcoes_sem = {
+                        f"{TIPO_ICONE.get(str(e.get('tipo','')), '📅')} "
+                        f"{e['titulo']} "
+                        f"({e['_di'].strftime('%d/%m') if e['_di'] else '?'})":
+                        int(e['id'])
+                        for e in _ev_unicos_sem
+                    }
+                    _esc_sem = _ed_c1.selectbox(
+                        "Editar evento desta semana",
+                        options=list(_opcoes_sem.keys()),
+                        key="sem_editar_sel",
+                        label_visibility="collapsed",
+                        placeholder="Selecione um evento pra editar...",
+                    )
+                    if _ed_c2.button("📝 Abrir", key="sem_editar_btn",
+                                     use_container_width=True):
+                        if _esc_sem:
+                            st.session_state['agenda_edit_id'] = _opcoes_sem[_esc_sem]
+                            st.rerun()
 
             # ─────────── VISÃO LISTA ─────────────────────────────────
             elif visao_ag == "Lista":
