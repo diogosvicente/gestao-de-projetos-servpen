@@ -4123,7 +4123,40 @@ else:
     # --- ABA 7: CHAT (TEMPO REAL via @st.fragment) ---
     # O fragmento abaixo re-roda apenas a si mesmo a cada 5s, sem rerodar a pagina inteira.
     # (Era 2s — afrouxado p/ 5s pra cortar carga de fundo com muitos usuarios online.)
-    @st.fragment(run_every="5s")
+    # CSS injetado uma vez por sessão (no boot do fragmento dá pra cachear,
+    # mas pra simplicidade re-injeta — Streamlit deduplica HTML idêntico).
+    _CHAT_CSS = """
+    <style>
+    /* Bubbles estilo WhatsApp */
+    .wa-row { display:flex; margin: 2px 0; align-items:flex-end; }
+    .wa-row.mine { justify-content:flex-end; }
+    .wa-row.theirs { justify-content:flex-start; }
+    .wa-bub {
+        max-width: 72%;
+        padding: 6px 10px 4px;
+        border-radius: 10px;
+        font-size: 13.5px; line-height: 1.35;
+        word-wrap: break-word; overflow-wrap: anywhere;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+    }
+    .wa-bub.mine   { background: #005c4b; color: #e9edef;
+                     border-bottom-right-radius: 2px; }
+    .wa-bub.theirs { background: #202c33; color: #e9edef;
+                     border-bottom-left-radius: 2px; }
+    .wa-meta { font-size: 10px; opacity: .6; margin-top: 2px;
+               text-align: right; }
+    .wa-who  { font-size: 11px; font-weight: 600; color: #6ab1ff;
+               margin-bottom: 1px; }
+    .wa-date-sep { text-align: center; margin: 12px 0 6px; }
+    .wa-date-sep span { background: rgba(255,255,255,0.06);
+                        color: #94a3b8; font-size: 11px; padding: 2px 10px;
+                        border-radius: 10px; }
+    .wa-empty { color: #6b7280; text-align: center;
+                font-size: 13px; padding: 24px; }
+    </style>
+    """
+
+    @st.fragment(run_every="2s")
     def _render_chat_messages(usuario, contato_nome):
         try:
             df_m = pd.read_sql_query(
@@ -4136,54 +4169,103 @@ else:
             st.error(f"Erro ao carregar mensagens: {e}")
             df_m = pd.DataFrame()
 
-        chat_box = st.container(border=True, height=450)
+        st.markdown(_CHAT_CSS, unsafe_allow_html=True)
+
+        chat_box = st.container(border=True, height=520)
         with chat_box:
             if df_m.empty:
-                st.caption("Nenhuma mensagem por aqui ainda — manda um oi 👋")
+                st.markdown(
+                    "<div class='wa-empty'>"
+                    "Nenhuma mensagem por aqui ainda — manda um oi 👋"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+                return
+
+            # Render: agrupa por dia com separador "hoje / ontem / DD/MM"
+            _hoje_chat = datetime.now().date()
+            _ultimo_dia = None
 
             for _, m in df_m.iterrows():
                 sou_eu = m['remetente'] == usuario
-                suffix = f"{m['id']}_{m['remetente'][:3]}_{m['data'].replace(':','')}"
+                _msg_id = int(m['id'])
+
+                # Separador de dia
+                try:
+                    _dt_msg = pd.to_datetime(str(m['data']), errors='coerce')
+                    _dia = _dt_msg.date() if pd.notna(_dt_msg) else None
+                except Exception:
+                    _dia = None
+                if _dia and _dia != _ultimo_dia:
+                    if _dia == _hoje_chat:
+                        _lbl_dia = "Hoje"
+                    elif _dia == _hoje_chat - pd.Timedelta(days=1):
+                        _lbl_dia = "Ontem"
+                    else:
+                        _lbl_dia = _dia.strftime("%d/%m/%Y")
+                    st.markdown(
+                        f"<div class='wa-date-sep'>"
+                        f"<span>{_lbl_dia}</span></div>",
+                        unsafe_allow_html=True,
+                    )
+                    _ultimo_dia = _dia
+
+                # Está em modo edição?
+                _em_edit = st.session_state.get(f"edit_mode_{_msg_id}", False)
+
+                # Bolha + horário compactos
+                _horario = (_dt_msg.strftime("%H:%M")
+                            if _dia is not None and pd.notna(_dt_msg)
+                            else _tempo_relativo(m['data']))
+                _who_html = (f"<div class='wa-who'>{m['remetente']}</div>"
+                             if not sou_eu else "")
+                _classe = "mine" if sou_eu else "theirs"
+
+                _bolha_html = (
+                    f"<div class='wa-row {_classe}'>"
+                    f"<div class='wa-bub {_classe}'>"
+                    f"{_who_html}"
+                    f"{_safe_chat_html(m['mensagem'])}"
+                    f"<div class='wa-meta'>{_horario}</div>"
+                    f"</div></div>"
+                )
 
                 if sou_eu:
-                    c1, c2, c3, c4 = st.columns([0.06, 0.06, 0.18, 0.7])
-                    with c1:
-                        if st.button("✏️", key=f"ed_{suffix}", help="Editar"):
-                            st.session_state[f"edit_mode_{m['id']}"] = True
-                            st.rerun(scope="fragment")
-                    with c2:
-                        if st.button("🗑️", key=f"del_{suffix}", help="Apagar"):
-                            db.excluir_mensagem_chat(m['id'])
-                            st.rerun(scope="fragment")
-                    with c4:
-                        st.markdown(f"""
-                            <div style='text-align: right; margin-bottom: 8px;'>
-                                <div style='display: inline-block; background: #0056b3; padding: 8px 12px; border-radius: 15px 15px 0px 15px; color: white; font-size: 14px; box-shadow: 2px 2px 5px rgba(0,0,0,0.2); max-width: 75%; text-align: left;'>
-                                    <small style='opacity: 0.7; font-size: 10px;'>{_tempo_relativo(m['data'])}</small><br>
-                                    {_safe_chat_html(m['mensagem'])}
-                                </div>
-                            </div>
-                        """, unsafe_allow_html=True)
+                    # Layout: bolha (90%) + popover ⋯ (10%) alinhados à direita
+                    cm_main, cm_act = st.columns([0.92, 0.08])
+                    cm_main.markdown(_bolha_html, unsafe_allow_html=True)
+                    with cm_act:
+                        with st.popover("⋯", use_container_width=True,
+                                        help="Ações da mensagem"):
+                            if st.button("✏️ Editar", key=f"ed_{_msg_id}",
+                                         use_container_width=True):
+                                st.session_state[f"edit_mode_{_msg_id}"] = True
+                                st.rerun(scope="fragment")
+                            if st.button("🗑️ Apagar", key=f"del_{_msg_id}",
+                                         use_container_width=True):
+                                db.excluir_mensagem_chat(_msg_id)
+                                st.rerun(scope="fragment")
                 else:
-                    st.markdown(f"""
-                        <div style='text-align: left; margin-bottom: 15px;'>
-                            <div style='display: inline-block; background: #333; padding: 8px 12px; border-radius: 15px 15px 15px 0px; color: white; font-size: 14px; border: 1px solid #444; max-width: 75%;'>
-                                <small style='opacity: 0.7; font-size: 10px;'>{m['remetente']} • {_tempo_relativo(m['data'])}</small><br>
-                                {_safe_chat_html(m['mensagem'])}
-                            </div>
-                        </div>
-                    """, unsafe_allow_html=True)
+                    st.markdown(_bolha_html, unsafe_allow_html=True)
 
-                if sou_eu and st.session_state.get(f"edit_mode_{m['id']}"):
-                    with st.expander("📝 Editar Mensagem", expanded=True):
-                        novo_txt = st.text_input("Corrigir:", value=m['mensagem'], key=f"inp_{suffix}")
-                        ce1, ce2 = st.columns(2)
-                        if ce1.button("Salvar ✅", key=f"sv_{suffix}"):
-                            db.editar_mensagem_chat(m['id'], novo_txt)
-                            st.session_state[f"edit_mode_{m['id']}"] = False
+                # Editor inline (logo abaixo da mensagem)
+                if sou_eu and _em_edit:
+                    with st.container(border=True):
+                        _novo_txt = st.text_input(
+                            "Corrigir mensagem",
+                            value=str(m['mensagem']),
+                            key=f"inp_{_msg_id}",
+                            label_visibility="collapsed",
+                        )
+                        ec1, ec2 = st.columns(2)
+                        if ec1.button("✅ Salvar", key=f"sv_{_msg_id}",
+                                      use_container_width=True):
+                            db.editar_mensagem_chat(_msg_id, _novo_txt)
+                            st.session_state[f"edit_mode_{_msg_id}"] = False
                             st.rerun(scope="fragment")
-                        if ce2.button("Cancelar", key=f"cn_{suffix}"):
-                            st.session_state[f"edit_mode_{m['id']}"] = False
+                        if ec2.button("✖ Cancelar", key=f"cn_{_msg_id}",
+                                      use_container_width=True):
+                            st.session_state[f"edit_mode_{_msg_id}"] = False
                             st.rerun(scope="fragment")
 
     # === FRAGMENTO GLOBAL: TOAST DE NOVA MENSAGEM / MENÇÃO NO DIÁRIO ===
@@ -4236,20 +4318,35 @@ else:
             # 2. Render do paineil de mensagens (auto-refresh 2s via fragmento)
             _render_chat_messages(st.session_state.usuario, contato)
 
-            # 3. Campo de Envio (fora do fragmento; submete a pagina inteira)
-            st.write("---")
+            # 3. Campo de Envio compacto (fora do fragmento; submete a pagina)
+            # Layout WhatsApp: text_area largo + botão Enviar à direita.
             with st.form("f_chat_v3_final", clear_on_submit=True):
-                msg_input = st.text_area("Digite sua mensagem...", height=70)
-                if st.form_submit_button("Enviar 🚀", use_container_width=True):
-                    if msg_input:
-                        conn = db.conectar(); c = conn.cursor()
-                        agora = datetime.now().strftime("%H:%M")
-                        c.execute("INSERT INTO chat (remetente, destinatario, mensagem, data) VALUES (%s,%s,%s,%s)",
-                                 (st.session_state.usuario, contato, msg_input, agora))
-                        conn.commit(); conn.close()
-                        st.rerun()  # pagina inteira -> remetente ve a mensagem imediato
+                in_c1, in_c2 = st.columns([5, 1])
+                msg_input = in_c1.text_area(
+                    "Digite uma mensagem...",
+                    height=68,
+                    label_visibility="collapsed",
+                    placeholder="Digite uma mensagem...",
+                )
+                in_c2.write("")  # espaçador vertical
+                _enviar = in_c2.form_submit_button(
+                    "▶ Enviar", use_container_width=True,
+                )
+                if _enviar and msg_input.strip():
+                    # Grava timestamp completo "DD/MM/YYYY HH:MM" pra suporte
+                    # ao separador de dias no histórico.
+                    conn = db.conectar(); c = conn.cursor()
+                    _agora_iso = datetime.now().strftime("%d/%m/%Y %H:%M")
+                    c.execute(
+                        "INSERT INTO chat (remetente, destinatario, mensagem, data) "
+                        "VALUES (%s,%s,%s,%s)",
+                        (st.session_state.usuario, contato, msg_input.strip(),
+                         _agora_iso),
+                    )
+                    conn.commit(); conn.close()
+                    st.rerun()
         else:
-            st.info("Selecione um contato para iniciar a conversa.")
+            st.info("Selecione um contato pra iniciar a conversa.")
 
     # --- ABA 6: EQUIPE (GESTÃO DE ACESSOS, PERFIS E CARGOS) ---
     with t_equipe:
