@@ -2076,124 +2076,119 @@ else:
             if not df_evolucao.empty:
                 projetos_com_dados = df_evolucao['projeto'].unique().tolist()
 
-                # Valor atual (default: primeiros 6)
-                # Garante que não há itens obsoletos
-                _default_sel = st.session_state.get("evolucao_sel_projetos", projetos_com_dados[:6])
+                # Default: todos os projetos com dados (heatmap escala bem)
+                _default_sel = st.session_state.get(
+                    "evolucao_sel_projetos", projetos_com_dados
+                )
                 _default_sel = [p for p in _default_sel if p in projetos_com_dados]
+                if not _default_sel:
+                    _default_sel = projetos_com_dados
 
                 projetos_sel = st.multiselect(
-                    "Projetos exibidos no gráfico (máx. 6):",
+                    "Projetos exibidos no heatmap",
                     options=projetos_com_dados,
                     default=_default_sel,
-                    max_selections=6,
-                    key="evolucao_sel_projetos", # Mantém a chave para persistência
-                    help="Selecione até 6 projetos para visualizar a evolução técnica.",
+                    key="evolucao_sel_projetos",  # persistência entre runs
+                    help="O heatmap aceita N projetos; ordena os mais avançados "
+                         "no topo. Mais avançado = verde · Mais atrasado = vermelho.",
                 )
 
                 if not projetos_sel:
-                    st.info("Nenhum projeto selecionado. Por favor, escolha na lista.")
+                    _empty_state(
+                        "📊",
+                        "Nenhum projeto selecionado",
+                        "Use o multiselect acima pra escolher os projetos que "
+                        "quer comparar no heatmap.",
+                        cor_borda="#3b82f6",
+                    )
                 else:
+                    # ════════════════════════════════════════════════════════
+                    #  HEATMAP "PROJETO × DISCIPLINA"
+                    #  Substituiu o facet_col bar chart (que embolava em
+                    #  3 colunas × N linhas com labels sobrepostos). Um
+                    #  heatmap único mostra TODOS os projetos × disciplinas
+                    #  em uma matriz colorida, fácil de ler em volume.
+                    # ════════════════════════════════════════════════════════
                     df_graf = df_evolucao[
                         df_evolucao['projeto'].isin(projetos_sel)
                     ].copy()
 
-                    n_cols = min(3, len(projetos_sel))
-
-                    fig_disc = px.bar(
-                        df_graf,
-                        x="disciplina",
-                        y="percentual",
-                        color="disciplina",
-                        facet_col="projeto",
-                        facet_col_wrap=n_cols,
-                        text_auto=True,
-                        range_y=[0, 115],
-                        hover_data={
-                            "projetista": True,
-                            "projeto":    False,
-                            "disciplina": False,
-                        },
-                        labels={
-                            "disciplina": "Disciplina",
-                            "percentual": "Progresso (%)",
-                            "projetista": "Projetista",
-                        },
+                    # Pivot: linha=projeto, coluna=disciplina, valor=média(%)
+                    _pivot = df_graf.pivot_table(
+                        index='projeto', columns='disciplina',
+                        values='percentual', aggfunc='mean',
                     )
-                    fig_disc.update_traces(
-                        width=0.6,
-                        textfont_size=11,
-                        cliponaxis=False,
-                        textposition='outside',
-                    )
-                    fig_disc.update_xaxes(
-                        matches=None,
-                        showticklabels=True,
-                        tickangle=-30,
-                        title_text="",
-                    )
-                    fig_disc.update_yaxes(
-                        range=[0, 120],
-                        title_text="Progresso (%)",
-                        matches=None,
-                    )
+                    # Ordena projetos por progresso médio (mais completos no topo)
+                    _ordem_proj = _pivot.mean(axis=1).sort_values(ascending=True).index
+                    _pivot = _pivot.loc[_ordem_proj]
+                    # Disciplinas em ordem alfabética
+                    _pivot = _pivot.reindex(sorted(_pivot.columns), axis=1)
 
-                    n_linhas_facet = -(-len(projetos_sel) // n_cols)  # ceil
+                    # Mostra "—" pra NaN (disciplina não aplicável àquele projeto)
+                    _z = _pivot.values
+                    _text = [
+                        [f"{v:.0f}%" if pd.notna(v) else "—" for v in row]
+                        for row in _z
+                    ]
 
-                    # ── ESPAÇAMENTO CORRIGIDO ─────────────────────────
-                    # vertical_spacing controla o espaço entre linhas de facets.
-                    # O padrão do plotly é 0.07 (muito pequeno).
-                    # Usamos 0.18–0.22 para evitar sobreposição de labels.
-                    _v_spacing = 0.22 if n_linhas_facet > 1 else 0.07
-
-                    fig_disc.update_layout(
-                        height=max(340, n_linhas_facet * 300),
-                        showlegend=True,
-                        legend=dict(
-                            title=dict(text="<b>Disciplinas</b>"),
-                            orientation="v",
+                    import plotly.graph_objects as go
+                    fig_disc = go.Figure(data=go.Heatmap(
+                        z=_z,
+                        x=_pivot.columns.tolist(),
+                        y=_pivot.index.tolist(),
+                        text=_text,
+                        texttemplate="%{text}",
+                        textfont={"size": 11, "color": "#fff"},
+                        # Escala vermelho → laranja → verde
+                        colorscale=[
+                            [0.00, "#7f1d1d"],   # 0% bordô
+                            [0.25, "#b91c1c"],   # 25% vermelho
+                            [0.50, "#d97706"],   # 50% laranja
+                            [0.75, "#65a30d"],   # 75% verde-amarelado
+                            [1.00, "#16a34a"],   # 100% verde
+                        ],
+                        zmin=0, zmax=100,
+                        colorbar=dict(
+                            title=dict(text="Progresso (%)", side="right"),
+                            tickvals=[0, 25, 50, 75, 100],
+                            ticktext=["0%", "25%", "50%", "75%", "100%"],
+                            thickness=14, len=0.85,
                         ),
-                        # Margem inferior generosa para rótulos do eixo X
-                        margin=dict(t=80, b=90, l=50, r=20),
-                    )
-
-                    # Aplica vertical_spacing via update_layout do facet
-                    # (precisa ser feito via for_each_annotation para o título)
+                        hovertemplate=("<b>%{y}</b><br>"
+                                       "Disciplina: %{x}<br>"
+                                       "Progresso: %{z:.0f}%<extra></extra>"),
+                        xgap=2, ygap=2,
+                    ))
                     fig_disc.update_layout(
-                        **{f"yaxis{'' if i == 0 else i+1}_domain":
-                        None for i in range(len(projetos_sel))}
-                    )
-
-                    # Re-aplica espaçamento via make_subplots internamente:
-                    # a forma mais confiável é usar o parâmetro facet_row_spacing
-                    # (não existe direto no px.bar, mas podemos simular via
-                    # update_layout com patch de domains calculados manualmente)
-                    if n_linhas_facet > 1:
-                        # Recalcula domains com espaço de 18% entre linhas
-                        _gap    = 0.18
-                        _h_plot = (1.0 - _gap * (n_linhas_facet - 1)) / n_linhas_facet
-                        _domains = []
-                        for ln in range(n_linhas_facet - 1, -1, -1):
-                            _bot = ln * (_h_plot + _gap)
-                            _top = _bot + _h_plot
-                            _domains.append((_bot, _top))
-
-                        # Atribui domains aos eixos Y do facet
-                        for facet_i in range(len(projetos_sel)):
-                            linha = facet_i // n_cols
-                            yd    = _domains[linha]
-                            ax_key = 'yaxis' if facet_i == 0 else f'yaxis{facet_i+1}'
-                            fig_disc.update_layout(
-                                **{ax_key: dict(domain=list(yd))}
-                            )
-
-                    fig_disc.for_each_annotation(
-                        lambda a: a.update(
-                            text=f"<b>{a.text.split('=')[-1]}</b>",
-                            font=dict(size=11),
-                        )
+                        height=max(280, 36 * len(_pivot.index) + 120),
+                        margin=dict(t=20, b=60, l=10, r=10),
+                        xaxis=dict(side="bottom", tickangle=-30,
+                                   title=None, fixedrange=True),
+                        yaxis=dict(title=None, fixedrange=True,
+                                   autorange="reversed"),
                     )
                     _estiliza_plotly(fig_disc)
                     st.plotly_chart(fig_disc, use_container_width=True)
+
+                    # Sumário de leitura — 1 linha de stats por baixo
+                    _media_geral = float(_pivot.stack().mean()) \
+                                   if not _pivot.stack().empty else 0.0
+                    _top_proj = _pivot.mean(axis=1).idxmax() \
+                                if not _pivot.empty else "—"
+                    _top_pct  = float(_pivot.mean(axis=1).max()) \
+                                if not _pivot.empty else 0
+                    _gap_proj = _pivot.mean(axis=1).idxmin() \
+                                if not _pivot.empty else "—"
+                    _gap_pct  = float(_pivot.mean(axis=1).min()) \
+                                if not _pivot.empty else 0
+
+                    cR1, cR2, cR3 = st.columns(3)
+                    cR1.metric("📈 Progresso médio (todos)",
+                               f"{_media_geral:.0f}%")
+                    cR2.metric(f"🏆 Mais avançado", _top_proj,
+                               delta=f"{_top_pct:.0f}%", delta_color="off")
+                    cR3.metric(f"🐢 Mais atrasado", _gap_proj,
+                               delta=f"{_gap_pct:.0f}%", delta_color="off")
 
                     # Cards de resumo
                     st.markdown("**Progresso médio por projeto:**")
