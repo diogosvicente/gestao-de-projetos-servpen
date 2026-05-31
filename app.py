@@ -132,6 +132,54 @@ def _badge_status(status):
             f"padding:2px 10px; border-radius:12px; font-size:11px; font-weight:600; "
             f"letter-spacing:0.5px; text-transform:uppercase;'>{s}</span>")
 
+
+def _cor_tag(tag):
+    """Devolve par (bg, fg) determinístico pra uma tag — mesma tag = mesma cor.
+
+    Usa hash da string lowercased como índice numa paleta curada. Assim a
+    UI fica visualmente estável (não muda cor entre páginas) sem precisar
+    catálogo persistente.
+    """
+    import hashlib as _hl
+    paleta = [
+        ('#2b6cb0', '#ffffff'),  # azul
+        ('#2f855a', '#ffffff'),  # verde
+        ('#b7791f', '#ffffff'),  # amarelo escuro
+        ('#9c4221', '#ffffff'),  # laranja queimado
+        ('#702459', '#ffffff'),  # roxo
+        ('#2c5282', '#ffffff'),  # azul escuro
+        ('#276749', '#ffffff'),  # verde escuro
+        ('#b03a2e', '#ffffff'),  # vermelho
+        ('#553c9a', '#ffffff'),  # violeta
+        ('#0987a0', '#ffffff'),  # teal
+    ]
+    idx = int(_hl.md5(str(tag).strip().lower().encode()).hexdigest(), 16) % len(paleta)
+    return paleta[idx]
+
+
+def _render_tag_chips(tags_str, *, small=False):
+    """Renderiza chips coloridos a partir de string CSV de tags.
+
+    `small=True` reduz padding/fonte (pra chip no card do Kanban).
+    Retorna string HTML pronta pra `unsafe_allow_html=True`. Vazio se sem tags.
+    """
+    if not tags_str:
+        return ''
+    chips = []
+    pad = "1px 6px" if small else "2px 8px"
+    fz  = "10px"    if small else "11px"
+    mar = "2px 3px 0 0"
+    for t in db.parse_tags(tags_str):
+        bg, fg = _cor_tag(t)
+        # Escape HTML básico no nome da tag
+        safe = (t.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'))
+        chips.append(
+            f"<span style='display:inline-block;background:{bg};color:{fg};"
+            f"padding:{pad};border-radius:10px;font-size:{fz};font-weight:600;"
+            f"margin:{mar};letter-spacing:0.3px;'>{safe}</span>"
+        )
+    return ''.join(chips)
+
 def _gerar_ics(df_eventos):
     """Gera conteudo .ics (RFC 5545) a partir de um DataFrame de eventos da agenda.
        Colunas esperadas: titulo, tipo, data_inicio, data_fim, responsaveis, descricao."""
@@ -1913,13 +1961,24 @@ else:
     with t_kanban:
         st.header("📋 Controle de Fluxo")
 
-        # ── BUSCA ────────────────────────────────────────────────────
-        col_busca, col_total = st.columns([3, 1])
+        # ── BUSCA + FILTRO DE TAGS ───────────────────────────────────
+        col_busca, col_tags = st.columns([3, 2])
         busca_kanban = col_busca.text_input(
             "🔍 Buscar por nome, projetista ou cliente",
             placeholder="ex.: residencial silva, joão, prefeitura...",
             key="kanban_search",
         )
+        _todas_tags_kanban = db.listar_tags_existentes()
+        tags_filtro = col_tags.multiselect(
+            "🏷 Filtrar por tags",
+            options=_todas_tags_kanban,
+            default=[],
+            key="kanban_tags_filter",
+            help="Mostra apenas projetos que contêm TODAS as tags selecionadas. Vazio = não filtra.",
+            placeholder="(qualquer tag)" if _todas_tags_kanban else "Nenhuma tag cadastrada ainda",
+            disabled=not _todas_tags_kanban,
+        )
+
         if busca_kanban:
             termo = busca_kanban.lower().strip()
             mask = (
@@ -1930,6 +1989,18 @@ else:
             df_kanban = df_p[mask].copy()
         else:
             df_kanban = df_p.copy() if not df_p.empty else pd.DataFrame()
+
+        # Filtro de tags: projeto deve conter TODAS as tags selecionadas (AND).
+        if tags_filtro and not df_kanban.empty:
+            sel_lower = {t.lower() for t in tags_filtro}
+            def _tem_todas(s):
+                proj_tags = {t.lower() for t in db.parse_tags(s)}
+                return sel_lower.issubset(proj_tags)
+            # Defensivo: se a coluna ainda não existir (migration não rodou),
+            # apply em Series vazia retorna False pra tudo → df vazio.
+            _col_tags = df_kanban['tags'] if 'tags' in df_kanban.columns \
+                        else pd.Series([''] * len(df_kanban), index=df_kanban.index)
+            df_kanban = df_kanban[_col_tags.apply(_tem_todas)].copy()
 
         col_total.metric("Resultados", len(df_kanban) if not df_kanban.empty else 0)
 
@@ -2074,6 +2145,13 @@ else:
 
                     prazo_str = str(p.get('data_fim', '') or p.get('data_termino', '') or '—')
 
+                    # Chips de tags (small=True pra caber no card compacto)
+                    _tags_html = _render_tag_chips(p.get('tags'), small=True)
+                    _tags_wrap = (
+                        f'<div style="margin-top:6px;">{_tags_html}</div>'
+                        if _tags_html else ''
+                    )
+
                     card_html = (
                         f'<div class="{cfg["css_class"]}">'
                         f'{alerta_html}'
@@ -2083,6 +2161,7 @@ else:
                         f'<div style="font-size:.78rem;opacity:.9;">'
                         f'👤 {p["projetista"]}<br>'
                         f'📅 {prazo_str}</div>'
+                        f'{_tags_wrap}'
                         f'</div>'
                     )
                     st.markdown(card_html, unsafe_allow_html=True)
@@ -2213,10 +2292,25 @@ else:
  
                 lista_pri = ["Máxima", "Média", "Mínima"]
                 pri_atual  = str(dados.get('prioridade', 'Média')).strip()
-                ed_pr = st.selectbox("Prioridade", lista_pri,
+
+                ed_r4c1, ed_r4c2 = st.columns([1, 2])
+                ed_pr = ed_r4c1.selectbox("Prioridade", lista_pri,
                                      index=lista_pri.index(pri_atual)
                                      if pri_atual in lista_pri else 1)
- 
+
+                _tags_existentes_e = db.listar_tags_existentes()
+                _tags_atuais_csv = str(dados.get('tags') or '')
+                ed_tags = ed_r4c2.text_input(
+                    "🏷 Tags (separadas por vírgula)",
+                    value=_tags_atuais_csv,
+                    placeholder=", ".join(_tags_existentes_e[:3]) if _tags_existentes_e else "Crítico, Aprovado",
+                    help=(
+                        "Etiquetas livres pra agrupar projetos. "
+                        + (f"Já em uso: {', '.join(_tags_existentes_e)}."
+                           if _tags_existentes_e else "")
+                    ),
+                )
+
                 st.markdown("#### 📅 Datas")
                 dc1, dc2, dc3, dc4 = st.columns(4)
                 ed_drec = dc1.date_input("Data de Recebimento",
@@ -2276,8 +2370,12 @@ else:
                     ed_li, checklist_final, ed_esc, ed_pr,
                 )
                 db.atualizar_projeto_completo(id_ed, dados_finais)
+                # `atualizar_projeto_completo` tem assinatura fixa de 14 valores
+                # (compat). Tags vão num UPDATE separado pra não quebrar.
+                _tags_csv_save = db.serializar_tags(db.parse_tags(ed_tags)) or None
+                db.atualizar_campo_projeto(id_ed, "tags", _tags_csv_save)
                 db.log_aud(st.session_state.usuario, 'editar', 'projeto',
-                           id_ed, f"nome='{ed_nm}'")
+                           id_ed, f"nome='{ed_nm}' tags='{_tags_csv_save or ''}'")
                 del st.session_state.projeto_em_edicao
                 _invalidar_dados(); st.rerun()
 
@@ -2570,7 +2668,25 @@ else:
             f_li  = r3c2.text_input("Link da Pasta (Drive/Nuvem)")
 
             f_eq  = st.multiselect("Equipe Responsável *", df_u['nome'].tolist() if not df_u.empty else [])
-            f_pr  = st.selectbox("Prioridade", ["Máxima", "Média", "Mínima"], index=1)
+
+            r4c1, r4c2 = st.columns([1, 2])
+            f_pr  = r4c1.selectbox("Prioridade", ["Máxima", "Média", "Mínima"], index=1)
+            # Tags livres separadas por vírgula. Mostra as já existentes como hint.
+            _tags_existentes = db.listar_tags_existentes()
+            _placeholder_tags = (
+                ", ".join(_tags_existentes[:3]) if _tags_existentes
+                else "Crítico, Aguardando Cliente, Aprovado"
+            )
+            f_tags = r4c2.text_input(
+                "🏷 Tags (separadas por vírgula)",
+                value="",
+                placeholder=_placeholder_tags,
+                help=(
+                    "Etiquetas livres pra agrupar projetos além do status. "
+                    "Ex.: setor, fase, urgência, cliente. "
+                    + (f"Já em uso: {', '.join(_tags_existentes)}." if _tags_existentes else "")
+                ),
+            )
 
             st.markdown("#### 📅 Datas")
             dc1, dc2, dc3, dc4 = st.columns(4)
@@ -2665,6 +2781,7 @@ else:
     
             if f_nm and f_eq:
                 checklist_final = ", ".join(f_chk) + (" | " + f_dem if f_dem.strip() else "")
+                _tags_csv = db.serializar_tags(db.parse_tags(f_tags)) or None
                 dados_sql = (
                     ", ".join(f_eq),   # projetista
                     f_nm,              # projeto
@@ -2682,6 +2799,7 @@ else:
                     checklist_final,   # demandas
                     f_esc,             # solicitacao
                     f_pr,              # prioridade
+                    _tags_csv,         # tags (string CSV ou None)
                 )
                 novo_id = db.salvar_projeto(dados_sql)
                 if novo_id:

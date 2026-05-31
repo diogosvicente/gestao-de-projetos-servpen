@@ -651,6 +651,11 @@ def criar_tabelas():
             ("usuarios",              "email",              "TEXT"),
             ("usuarios",              "avatar_path",        "TEXT"),
             ("projetos",              "prioridade",         "TEXT"),
+            # Tags livres separadas por vírgula. Ex.: "Crítico,Aguardando Cliente".
+            # Schema TEXT (não tabela normalizada) é OK na escala atual (dezenas
+            # de projetos). Pra ler como lista: split(',') + strip(). Pra filtrar
+            # pesquisa SQL: WHERE tags LIKE '%,Crítico,%' (com comma-padding).
+            ("projetos",              "tags",               "TEXT"),
             ("diario",                "resposta_gestor",    "TEXT"),
             ("diario",                "anexo",              "TEXT"),
             ("diario",                "resolvido",          "INTEGER DEFAULT 0"),
@@ -688,20 +693,83 @@ def criar_tabela_mencoes():           criar_tabelas()
 def criar_tabela_diario_leituras():   criar_tabelas()
 
 
+# ─── TAGS DE PROJETO ──────────────────────────────────────
+# Tags vivem na coluna `projetos.tags` como CSV (string separada por vírgula).
+# Aqui só helpers utilitários — quem grava/atualiza é o app.py via
+# `atualizar_campo_projeto` ou no INSERT/UPDATE direto.
+
+def parse_tags(s):
+    """Converte string de tags ('a,b ,c') em lista limpa (['a','b','c']).
+    Resiliente: lida com None, vírgulas extras, espaços, duplicatas."""
+    if not s:
+        return []
+    visto = set()
+    out = []
+    for t in str(s).split(','):
+        t = t.strip()
+        if not t:
+            continue
+        key = t.lower()
+        if key in visto:
+            continue
+        visto.add(key)
+        out.append(t)
+    return out
+
+
+def serializar_tags(tags_iter):
+    """Inverso de parse_tags: lista → CSV pra gravar no banco."""
+    return ",".join(parse_tags(",".join(tags_iter or [])))
+
+
+def listar_tags_existentes():
+    """Retorna lista única de TODAS as tags atualmente em uso em projetos.
+    Útil pra alimentar autocomplete/dropdown na UI."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("SELECT tags FROM projetos WHERE tags IS NOT NULL AND tags <> ''")
+        rows = c.fetchall()
+    finally:
+        conn.close()
+    visto = set()
+    todas = []
+    for (s,) in rows:
+        for t in parse_tags(s):
+            key = t.lower()
+            if key not in visto:
+                visto.add(key)
+                todas.append(t)
+    todas.sort(key=str.lower)
+    return todas
+
+
 # ─── PROJETOS ─────────────────────────────────────────────
 def salvar_projeto(dados):
     """Insere um novo projeto e retorna o id (via RETURNING).
-    `dados` é tupla com 16 valores: projetista, projeto, endereco, solicitante,
-    contato, numero_sei, data_recebimento, previsao_execucao, data_inicio,
-    data_termino, data_fim, status, link_projeto, demandas, solicitacao, prioridade."""
+
+    `dados` aceita 16 ou 17 valores:
+      16: projetista, projeto, endereco, solicitante, contato, numero_sei,
+          data_recebimento, previsao_execucao, data_inicio, data_termino,
+          data_fim, status, link_projeto, demandas, solicitacao, prioridade.
+      17: os 16 acima + `tags` (string CSV de tags, ou None).
+
+    Manter o overload pra não quebrar callers existentes (compatibilidade
+    com versões antigas do app.py que ainda passam 16).
+    """
+    if len(dados) == 16:
+        dados = (*dados, None)  # tags = NULL
+    elif len(dados) != 17:
+        raise ValueError(f"salvar_projeto: esperava 16 ou 17 valores, veio {len(dados)}")
+
     conn = conectar(); c = conn.cursor()
     try:
         c.execute('''INSERT INTO projetos
                      (projetista, projeto, endereco, solicitante, contato,
                       numero_sei, data_recebimento, previsao_execucao,
                       data_inicio, data_termino, data_fim,
-                      status, link_projeto, demandas, solicitacao, prioridade)
-                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                      status, link_projeto, demandas, solicitacao, prioridade,
+                      tags)
+                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                      RETURNING id''', dados)
         novo_id = c.fetchone()[0]
         conn.commit()

@@ -93,7 +93,7 @@ maduro (psycopg3), defaults sensatos.
 | 🟢 | **Calendário visual da Agenda** | Hoje é só lista com expanders. Visualização mensal seria muito mais útil | Médio |
 | 🟢 | **Inline edit em campos do projeto** | Hoje precisa abrir form gigante pra mudar 1 prioridade | Médio |
 | 🟢 | **Bulk actions** | Selecionar 5 projetos e mudar status de todos. Hoje 1 a 1 | Médio |
-| 🟢 | **Tags/labels nos projetos** | Status é binário. Tags livres ("Crítico", "Aguardando Cliente", "Aprovado") agrupam melhor | Médio |
+| ✅ | ~~**Tags/labels nos projetos**~~ Implementado em maio/2026: coluna `tags` CSV, input nos forms novo+editar, chips coloridos no Kanban (cor determinística por hash), filtro AND no topo do Kanban | ✅ Feito |
 | 🟢 | **Empty states com CTA** | Aba vazia hoje mostra "Nenhum dado". Devia mostrar "Cadastre seu primeiro projeto" com botão | Baixo |
 | 🟢 | **Atalhos de teclado** | Esc fecha modal, Ctrl+S salva form, etc. | Baixo |
 
