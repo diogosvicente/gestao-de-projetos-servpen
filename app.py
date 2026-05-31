@@ -2253,48 +2253,118 @@ else:
                         _estiliza_plotly(fig_disc)
                         st.plotly_chart(fig_disc, use_container_width=True)
 
-                    # ── BARRAS AGRUPADAS (1 gráfico só, sem facet) ────
+                    # ── BARRAS POR PROJETO (subplots arrumados) ───────
                     elif _modo_viz == "Barras":
-                        # Usa o df flat (não pivot): 1 barra por (projeto, disciplina)
-                        fig_disc = px.bar(
-                            df_graf,
-                            x="projeto",
-                            y="percentual",
-                            color="disciplina",
-                            barmode="group",
-                            text_auto=".0f",
-                            range_y=[0, 110],
-                            labels={
-                                "projeto":    "Projeto",
-                                "disciplina": "Disciplina",
-                                "percentual": "Progresso (%)",
-                            },
-                            hover_data={"projetista": True},
-                            category_orders={
-                                "projeto": list(_pivot.index)[::-1],
-                                "disciplina": sorted(df_graf['disciplina'].unique()),
-                            },
+                        # Filtra projetos sem dados (todos zeros ou NaN) pra
+                        # não desperdiçar subplots vazios.
+                        _proj_com_dados = (
+                            df_graf.groupby('projeto')['percentual']
+                            .sum().pipe(lambda s: s[s > 0]).index.tolist()
                         )
-                        fig_disc.update_traces(
-                            textposition="outside",
-                            textfont_size=10,
-                            cliponaxis=False,
-                        )
-                        fig_disc.update_layout(
-                            height=max(420, len(projetos_sel) * 35 + 220),
-                            margin=dict(t=20, b=120, l=40, r=10),
-                            xaxis=dict(tickangle=-25, title=None),
-                            yaxis=dict(title="Progresso (%)"),
-                            legend=dict(
-                                title=dict(text="<b>Disciplina</b>"),
-                                orientation="h",
-                                yanchor="top", y=-0.25,
-                                xanchor="center", x=0.5,
-                            ),
-                            bargap=0.20, bargroupgap=0.05,
-                        )
-                        _estiliza_plotly(fig_disc)
-                        st.plotly_chart(fig_disc, use_container_width=True)
+                        if not _proj_com_dados:
+                            _empty_state(
+                                "📉",
+                                "Sem progresso registrado",
+                                "Os projetos selecionados ainda não têm "
+                                "percentual de progresso lançado em nenhuma "
+                                "disciplina.",
+                                cor_borda="#d97706",
+                            )
+                        else:
+                            df_graf_v = df_graf[
+                                df_graf['projeto'].isin(_proj_com_dados)
+                            ].copy()
+
+                            # Layout: 2 cols se até 4 projetos, senão 3 cols.
+                            # Menos subplots por linha = mais respiro,
+                            # menos chance de label do projeto colidir com
+                            # eixo X do próximo.
+                            n_cols_f = 2 if len(_proj_com_dados) <= 4 else 3
+                            n_linhas_f = -(-len(_proj_com_dados) // n_cols_f)
+
+                            fig_disc = px.bar(
+                                df_graf_v,
+                                x="disciplina",
+                                y="percentual",
+                                color="disciplina",
+                                facet_col="projeto",
+                                facet_col_wrap=n_cols_f,
+                                facet_row_spacing=0.18,
+                                facet_col_spacing=0.05,
+                                text_auto=".0f",
+                                range_y=[0, 110],
+                                labels={
+                                    "disciplina": "",
+                                    "percentual": "Progresso (%)",
+                                },
+                                hover_data={"projetista": True,
+                                            "projeto": False},
+                                category_orders={
+                                    "projeto": _proj_com_dados,
+                                    "disciplina": sorted(
+                                        df_graf_v['disciplina'].unique()
+                                    ),
+                                },
+                            )
+                            fig_disc.update_traces(
+                                textposition="outside",
+                                textfont_size=10,
+                                cliponaxis=False,
+                            )
+                            # Eixos X: tick angle, sem matches pra cada
+                            # subplot mostrar suas disciplinas.
+                            fig_disc.update_xaxes(
+                                matches=None,
+                                showticklabels=True,
+                                tickangle=-30,
+                                title_text="",
+                                tickfont_size=10,
+                            )
+                            # Eixos Y: só primeira coluna mostra label
+                            # "Progresso (%)". As outras herdam range mas
+                            # sem ticks/label duplicados.
+                            fig_disc.update_yaxes(
+                                matches=None,
+                                range=[0, 115],
+                                showticklabels=False,
+                                title_text="",
+                            )
+                            # Re-mostra ticks só nos eixos Y da coluna esquerda
+                            for facet_i in range(len(_proj_com_dados)):
+                                _coluna_atual = facet_i % n_cols_f
+                                if _coluna_atual == 0:
+                                    _ax_key = ('yaxis' if facet_i == 0
+                                               else f'yaxis{facet_i+1}')
+                                    fig_disc.update_layout(
+                                        **{_ax_key: dict(
+                                            showticklabels=True,
+                                            title_text="Progresso (%)",
+                                            title_font_size=10,
+                                        )}
+                                    )
+
+                            # Título de cada subplot = só o nome do projeto
+                            # (sem "projeto=" e em bold, em fonte menor).
+                            fig_disc.for_each_annotation(
+                                lambda a: a.update(
+                                    text=f"<b>{a.text.split('=')[-1]}</b>",
+                                    font=dict(size=11, color="#cbd5e1"),
+                                )
+                            )
+                            fig_disc.update_layout(
+                                height=max(360, n_linhas_f * 330 + 100),
+                                margin=dict(t=40, b=110, l=50, r=10),
+                                legend=dict(
+                                    title=dict(text="<b>Disciplina</b>"),
+                                    orientation="h",
+                                    yanchor="top", y=-0.12 / n_linhas_f,
+                                    xanchor="center", x=0.5,
+                                    font=dict(size=10),
+                                ),
+                                bargap=0.25,
+                            )
+                            _estiliza_plotly(fig_disc)
+                            st.plotly_chart(fig_disc, use_container_width=True)
 
                     # ── TABELA (pivot HTML compacto) ──────────────────
                     else:  # Tabela
