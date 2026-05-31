@@ -2465,50 +2465,71 @@ else:
  
             _et_list = st.session_state[_key_et]
  
+            # Proporções das colunas: ord (0.5 pra caber "Ord."), nome (2.5),
+            # duração (1.2), offset (1.5), ação (0.7 pra "🗑 Remover")
+            _COLS_ET = [0.5, 2.5, 1.2, 1.5, 0.7]
+
             with st.form(f"form_etapas_{id_ed}"):
-                h0, h1, h2, h3, h4 = st.columns([0.3, 2.5, 1.2, 1.5, 0.5])
-                h0.markdown("<small style='color:#94a3b8'>Ord.</small>",
-                            unsafe_allow_html=True)
-                h1.markdown("<small style='color:#94a3b8'>Nome da Etapa</small>",
-                            unsafe_allow_html=True)
-                h2.markdown("<small style='color:#94a3b8'>Duração (dias)</small>",
-                            unsafe_allow_html=True)
-                h3.markdown("<small style='color:#94a3b8'>Início (dias após início do projeto)</small>",
-                            unsafe_allow_html=True)
-                h4.markdown("<small style='color:#94a3b8'>—</small>",
-                            unsafe_allow_html=True)
- 
                 novas_etapas = []
                 _del_et = None
- 
-                for i, et in enumerate(_et_list):
-                    c0, c1, c2, c3, c4 = st.columns([0.3, 2.5, 1.2, 1.5, 0.5])
-                    c0.markdown(
-                        f"<div style='padding-top:28px;text-align:center;"
-                        f"color:#64748b;font-weight:700;'>{i+1}</div>",
+
+                if not _et_list:
+                    # Empty state — sem header solto e sem linhas vazias
+                    st.markdown(
+                        "<div style='border:1px dashed rgba(255,255,255,0.12);"
+                        "border-radius:8px;padding:18px;text-align:center;"
+                        "color:#6b7280;font-size:13px;'>"
+                        "Nenhuma etapa cadastrada ainda.<br>"
+                        "<small>Clique em <b>+ Adicionar Etapa</b> abaixo pra começar.</small>"
+                        "</div>",
                         unsafe_allow_html=True,
                     )
-                    n = c1.text_input("Nome", value=str(et.get('nome', '')),
-                                      label_visibility="collapsed",
-                                      key=f"etn_{id_ed}_{i}")
-                    d = c2.number_input("Dur", value=int(et.get('duracao_dias', 1)),
-                                         min_value=1, label_visibility="collapsed",
-                                         key=f"etd_{id_ed}_{i}")
-                    o = c3.number_input("Off", value=int(et.get('dias_offset', 0)),
-                                         min_value=0, label_visibility="collapsed",
-                                         key=f"eto_{id_ed}_{i}")
-                    if c4.form_submit_button(f"🗑 #{i+1}"):
-                        _del_et = i
-                    novas_etapas.append({
-                        'nome': n, 'duracao_dias': d,
-                        'dias_offset': o, 'ordem': i,
-                    })
- 
+                else:
+                    # Header só aparece quando há etapas
+                    h0, h1, h2, h3, h4 = st.columns(_COLS_ET)
+                    h0.markdown("<small style='color:#94a3b8'>Ord.</small>",
+                                unsafe_allow_html=True)
+                    h1.markdown("<small style='color:#94a3b8'>Nome da Etapa</small>",
+                                unsafe_allow_html=True)
+                    h2.markdown("<small style='color:#94a3b8'>Duração (dias)</small>",
+                                unsafe_allow_html=True)
+                    h3.markdown("<small style='color:#94a3b8'>Início (dias após início do projeto)</small>",
+                                unsafe_allow_html=True)
+                    h4.markdown("<small style='color:#94a3b8'>Ação</small>",
+                                unsafe_allow_html=True)
+
+                    for i, et in enumerate(_et_list):
+                        c0, c1, c2, c3, c4 = st.columns(_COLS_ET)
+                        c0.markdown(
+                            f"<div style='padding-top:28px;text-align:center;"
+                            f"color:#64748b;font-weight:700;'>{i+1}</div>",
+                            unsafe_allow_html=True,
+                        )
+                        n = c1.text_input("Nome", value=str(et.get('nome', '')),
+                                          label_visibility="collapsed",
+                                          key=f"etn_{id_ed}_{i}")
+                        d = c2.number_input("Dur", value=int(et.get('duracao_dias', 1)),
+                                             min_value=1, label_visibility="collapsed",
+                                             key=f"etd_{id_ed}_{i}")
+                        o = c3.number_input("Off", value=int(et.get('dias_offset', 0)),
+                                             min_value=0, label_visibility="collapsed",
+                                             key=f"eto_{id_ed}_{i}")
+                        if c4.form_submit_button(f"🗑 #{i+1}",
+                                                 use_container_width=True):
+                            _del_et = i
+                        novas_etapas.append({
+                            'nome': n, 'duracao_dias': d,
+                            'dias_offset': o, 'ordem': i,
+                        })
+
                 btn_add, btn_salvar_et = st.columns(2)
                 _add_et = btn_add.form_submit_button("➕ Adicionar Etapa",
                                                       use_container_width=True)
                 _salv_et = btn_salvar_et.form_submit_button("💾 Salvar Etapas",
-                                                             use_container_width=True)
+                                                             use_container_width=True,
+                                                             disabled=not _et_list,
+                                                             help="Disponível quando há etapas pra salvar"
+                                                                  if not _et_list else None)
  
             if _del_et is not None:
                 st.session_state[_key_et].pop(_del_et)
