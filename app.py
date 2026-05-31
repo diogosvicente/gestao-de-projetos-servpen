@@ -2020,7 +2020,7 @@ else:
         st.header("📋 Controle de Fluxo")
 
         # ── BUSCA + FILTRO DE TAGS ───────────────────────────────────
-        col_busca, col_tags = st.columns([3, 2])
+        col_busca, col_tags, col_total = st.columns([3, 2, 1])
         busca_kanban = col_busca.text_input(
             "🔍 Buscar por nome, projetista ou cliente",
             placeholder="ex.: residencial silva, joão, prefeitura...",
