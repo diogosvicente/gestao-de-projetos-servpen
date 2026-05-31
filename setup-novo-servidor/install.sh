@@ -77,12 +77,19 @@ systemctl enable --now postgresql
 if [ -f "${DB_ENV_FILE}" ]; then
     # shellcheck disable=SC1090
     . "${DB_ENV_FILE}"
-    DB_PASSWORD="${DB_PASSWORD:-${DB_PASSWORD:-}}"
     echo "     db.env já existe — reutilizando credenciais"
 fi
 if [ -z "${DB_PASSWORD:-}" ]; then
-    DB_PASSWORD="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32)"
+    # openssl rand: 16 bytes hex = 32 chars [0-9a-f]. Sem pipe, sem SIGPIPE.
+    # (`tr ... | head -c N` aborta o script via set -e + pipefail quando head
+    # fecha o pipe — head termina antes do tr e gera SIGPIPE no tr.)
+    DB_PASSWORD="$(openssl rand -hex 16)"
     echo "     senha do Postgres gerada automaticamente"
+fi
+# Sanity: se chegou aqui vazio é bug. Para com mensagem em vez de silenciosamente.
+if [ -z "${DB_PASSWORD:-}" ]; then
+    echo "ERRO: DB_PASSWORD ficou vazia após geração. Abortando." >&2
+    exit 3
 fi
 
 # Cria role idempotente
