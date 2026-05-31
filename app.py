@@ -226,6 +226,208 @@ def _popover_mencionar(text_key, nomes_disponiveis, *, label="@ Mencionar",
                 st.rerun()
 
 
+def _render_lista_kanban(df_kanban, df_d):
+    """Visão 'Lista' do Kanban: tabela densa com sort + botão de detalhe por linha.
+
+    Pensada pra triagem rápida quando há muitos projetos. Mostra mais
+    informação por linha do que um card Kanban, com possibilidade de
+    ordenar e abrir cada um com 1 clique.
+    """
+    if df_kanban.empty:
+        st.info("Nenhum projeto pra mostrar com o filtro atual.")
+        return
+
+    # Ordenação
+    _opcoes_sort = {
+        "Prioridade ↓ → Status":      ['_ord_pri', 'status'],
+        "Nome (A-Z)":                 ['projeto'],
+        "Projetista (A-Z)":           ['projetista'],
+        "Prazo (mais próximo)":       ['_prazo_dt'],
+        "Status":                     ['status', 'projeto'],
+    }
+    _sort_label = st.selectbox(
+        "Ordenar por", list(_opcoes_sort.keys()),
+        key="kanban_lista_sort", label_visibility="collapsed",
+    )
+    df_l = df_kanban.copy()
+    _ord_pri_map = {"Máxima": 0, "Média": 1, "Mínima": 2}
+    df_l['_ord_pri'] = df_l.get('prioridade', '').map(
+        lambda x: _ord_pri_map.get(str(x).strip(), 3)
+    )
+    df_l['_prazo_dt'] = pd.to_datetime(
+        df_l.get('data_termino').fillna(df_l.get('data_fim', '')),
+        errors='coerce',
+    )
+    df_l = df_l.sort_values(_opcoes_sort[_sort_label])
+
+    # Cabeçalho da tabela
+    hdr = st.columns([0.6, 1.5, 3, 2, 1.5, 1.2, 2, 0.6])
+    for col_obj, txt in zip(
+        hdr,
+        ["#", "Status", "Projeto", "Projetista", "Prazo", "Prioridade", "Tags", ""],
+    ):
+        col_obj.markdown(
+            f"<small style='color:#94a3b8;text-transform:uppercase;"
+            f"letter-spacing:.5px;font-weight:600;'>{txt}</small>",
+            unsafe_allow_html=True,
+        )
+
+    # Container com altura limitada pra lista grande
+    with st.container(height=720, border=False):
+        for _, row in df_l.iterrows():
+            cols = st.columns([0.6, 1.5, 3, 2, 1.5, 1.2, 2, 0.6])
+            pid = int(row['id'])
+
+            cols[0].markdown(
+                f"<div style='padding-top:8px;color:#64748b;"
+                f"font-size:11px;'>#{pid}</div>",
+                unsafe_allow_html=True,
+            )
+            cols[1].markdown(
+                f"<div style='padding-top:6px;'>{_badge_status(row.get('status'))}</div>",
+                unsafe_allow_html=True,
+            )
+            cols[2].markdown(
+                f"<div style='padding-top:8px;font-weight:600;'>"
+                f"{row.get('projeto', '—')}</div>",
+                unsafe_allow_html=True,
+            )
+            cols[3].markdown(
+                f"<div style='padding-top:8px;font-size:12px;opacity:.85;'>"
+                f"👤 {row.get('projetista', '—')}</div>",
+                unsafe_allow_html=True,
+            )
+            _prazo = row.get('data_termino') or row.get('data_fim') or '—'
+            cols[4].markdown(
+                f"<div style='padding-top:8px;font-size:12px;'>📅 {_prazo}</div>",
+                unsafe_allow_html=True,
+            )
+            _pri = str(row.get('prioridade', '')).strip()
+            _pri_html = {
+                "Máxima": "<span class='kc-pri-max'>▲ MÁX</span>",
+                "Média":  "<span class='kc-pri-med'>◆ MÉD</span>",
+                "Mínima": "<span class='kc-pri-min'>▼ MÍN</span>",
+            }.get(_pri, "")
+            cols[5].markdown(
+                f"<div style='padding-top:8px;'>{_pri_html}</div>",
+                unsafe_allow_html=True,
+            )
+            cols[6].markdown(
+                f"<div style='padding-top:6px;'>{_render_tag_chips(row.get('tags'), small=True)}</div>",
+                unsafe_allow_html=True,
+            )
+            if cols[7].button("🔍", key=f"lista_ver_{pid}",
+                              help="Abrir detalhes / editar"):
+                st.session_state.projeto_em_edicao = pid
+                st.rerun()
+
+
+def _render_resumo_kanban(df_kanban, df_d):
+    """Visão 'Resumo' do Kanban: visão executiva com top urgentes + atrasados +
+    distribuição. Pensada como 'dashboard de cima' pra reuniões/decisão."""
+    if df_kanban.empty:
+        st.info("Nenhum projeto pra mostrar com o filtro atual.")
+        return
+
+    hoje = datetime.now().date()
+    df_r = df_kanban.copy()
+    df_r['_prazo_dt'] = pd.to_datetime(
+        df_r.get('data_termino').fillna(df_r.get('data_fim', '')),
+        errors='coerce',
+    )
+
+    # ── Coluna esquerda: TOP URGENTES (Máxima Em Espera + Atrasados Ativos)
+    # ── Coluna direita: distribuição por status (chart bar)
+    col_esq, col_dir = st.columns([3, 2])
+
+    with col_esq:
+        st.markdown("### 🔥 Atenção imediata")
+
+        _maxima = df_r[(df_r['status'] == 'Em Espera')
+                       & (df_r['prioridade'].astype(str).str.strip() == 'Máxima')]
+        _atrasados = df_r[(df_r['status'] == 'Ativo')
+                          & (df_r['_prazo_dt'].notna())
+                          & (df_r['_prazo_dt'].dt.date < hoje)]
+
+        if _maxima.empty and _atrasados.empty:
+            st.success("✅ Nenhum projeto urgente no momento — tudo sob controle.")
+        else:
+            if not _maxima.empty:
+                st.markdown(f"**▲ Máxima na fila ({len(_maxima)}):**")
+                for _, r in _maxima.head(10).iterrows():
+                    pid = int(r['id'])
+                    c1, c2 = st.columns([5, 1])
+                    c1.markdown(
+                        f"• **{r['projeto']}** — 👤 {r['projetista']} "
+                        f"· 📅 {r.get('data_termino') or r.get('data_fim') or '—'}"
+                    )
+                    if c2.button("🔍", key=f"resumo_max_{pid}",
+                                 help="Abrir projeto"):
+                        st.session_state.projeto_em_edicao = pid
+                        st.rerun()
+
+            if not _atrasados.empty:
+                st.markdown(f"**🔴 Atrasados ({len(_atrasados)}):**")
+                for _, r in _atrasados.head(10).iterrows():
+                    pid = int(r['id'])
+                    _dt = r['_prazo_dt'].date() if pd.notna(r['_prazo_dt']) else None
+                    _dias_atraso = (hoje - _dt).days if _dt else 0
+                    c1, c2 = st.columns([5, 1])
+                    c1.markdown(
+                        f"• **{r['projeto']}** — 👤 {r['projetista']} "
+                        f"· 📅 {_dt.strftime('%d/%m/%Y') if _dt else '—'} "
+                        f"<span style='color:#ef4444;font-weight:600;'>"
+                        f"(−{_dias_atraso}d)</span>",
+                        unsafe_allow_html=True,
+                    )
+                    if c2.button("🔍", key=f"resumo_atr_{pid}",
+                                 help="Abrir projeto"):
+                        st.session_state.projeto_em_edicao = pid
+                        st.rerun()
+
+    with col_dir:
+        st.markdown("### 📊 Distribuição")
+        _dist = (df_r.groupby('status').size()
+                     .reset_index(name='qtd')
+                     .sort_values('qtd', ascending=True))
+        if not _dist.empty:
+            try:
+                fig = px.bar(_dist, x='qtd', y='status', orientation='h',
+                             text='qtd', color='status',
+                             color_discrete_map={
+                                 'Em Espera':  '#7c3aed',
+                                 'Ativo':      '#00d4ff',
+                                 '🛑 Parado':  '#ff9f43',
+                                 'Cancelado':  '#ff4d4d',
+                                 'Concluído':  '#4dff4d',
+                             })
+                fig.update_traces(textposition='outside')
+                fig.update_layout(
+                    showlegend=False, height=280,
+                    margin=dict(l=0, r=30, t=10, b=10),
+                    xaxis_title=None, yaxis_title=None,
+                )
+                _estiliza_plotly(fig) if '_estiliza_plotly' in globals() else None
+                st.plotly_chart(fig, use_container_width=True)
+            except Exception as e:
+                st.info(f"Distribuição: {dict(zip(_dist['status'], _dist['qtd']))}")
+
+        # Distribuição por tag (top 5)
+        _tag_count = {}
+        for _, row in df_r.iterrows():
+            for t in db.parse_tags(row.get('tags')):
+                _tag_count[t] = _tag_count.get(t, 0) + 1
+        if _tag_count:
+            st.markdown("**🏷 Top tags em uso:**")
+            _top_tags = sorted(_tag_count.items(), key=lambda x: -x[1])[:5]
+            for tag, qtd in _top_tags:
+                st.markdown(
+                    f"• {_render_tag_chips(tag, small=True)} — "
+                    f"<small>{qtd} projeto(s)</small>",
+                    unsafe_allow_html=True,
+                )
+
+
 def _gerar_ics(df_eventos):
     """Gera conteudo .ics (RFC 5545) a partir de um DataFrame de eventos da agenda.
        Colunas esperadas: titulo, tipo, data_inicio, data_fim, responsaveis, descricao."""
@@ -2027,7 +2229,7 @@ else:
         st.header("📋 Controle de Fluxo")
 
         # ── BUSCA + FILTRO DE TAGS ───────────────────────────────────
-        col_busca, col_tags, col_total = st.columns([3, 2, 1])
+        col_busca, col_tags = st.columns([3, 2])
         busca_kanban = col_busca.text_input(
             "🔍 Buscar por nome, projetista ou cliente",
             placeholder="ex.: residencial silva, joão, prefeitura...",
@@ -2067,201 +2269,311 @@ else:
                         else pd.Series([''] * len(df_kanban), index=df_kanban.index)
             df_kanban = df_kanban[_col_tags.apply(_tem_todas)].copy()
 
-        col_total.metric("Resultados", len(df_kanban) if not df_kanban.empty else 0)
+        # ── 4 CARDS DE MÉTRICAS (visão executiva sobre o filtro atual) ──
+        # As métricas refletem o que está filtrado (busca + tags), não o
+        # banco inteiro. Atrasados = status Ativo + data_termino/data_fim < hoje.
+        _df_metricas = df_kanban if not df_kanban.empty else \
+                       pd.DataFrame(columns=df_p.columns)
+        _hoje_metricas = datetime.now().date()
 
-        # ════════════════════════════════════════════════════════════
-        #  MAPA DE CONFIGURAÇÃO DAS COLUNAS
-        #  status_db  = valor real no banco de dados
-        #  label_ui   = nome exibido na interface
-        # ════════════════════════════════════════════════════════════
-        ORDEM_PRIORIDADE = {"Máxima": 0, "Média": 1, "Mínima": 2, "": 3}
+        def _eh_atrasado(row):
+            if row.get('status') != 'Ativo':
+                return False
+            dt_str = row.get('data_termino') or row.get('data_fim')
+            if not dt_str:
+                return False
+            try:
+                return pd.to_datetime(str(dt_str)).date() < _hoje_metricas
+            except Exception:
+                return False
 
-        CONFIG_COLUNAS = [
-            {"status_db": "Em Espera",  "label_ui": "⏳ Em Espera",
-             "card_cls": "kc-espera",   "ordenar_por_prioridade": True},
-            {"status_db": "Ativo",      "label_ui": "🚀 Em Execução",
-             "card_cls": "kc-ativo",    "ordenar_por_prioridade": False},
-            {"status_db": "🛑 Parado",  "label_ui": "🛑 Parados",
-             "card_cls": "kc-parado",   "ordenar_por_prioridade": False},
-            {"status_db": "Cancelado",  "label_ui": "❌ Cancelados",
-             "card_cls": "kc-cancel",   "ordenar_por_prioridade": False},
-            {"status_db": "Concluído",  "label_ui": "✅ Concluídos",
-             "card_cls": "kc-conc",     "ordenar_por_prioridade": False},
-        ]
+        _qtd_andamento = int((_df_metricas['status'] == 'Ativo').sum()) \
+                         if not _df_metricas.empty else 0
+        _qtd_espera = int((_df_metricas['status'] == 'Em Espera').sum()) \
+                      if not _df_metricas.empty else 0
+        _qtd_atrasados = int(_df_metricas.apply(_eh_atrasado, axis=1).sum()) \
+                         if not _df_metricas.empty else 0
+        _qtd_prio_max_espera = int(
+            ((_df_metricas['status'] == 'Em Espera')
+             & (_df_metricas['prioridade'].astype(str).str.strip() == 'Máxima')
+            ).sum()
+        ) if not _df_metricas.empty else 0
 
-        # CSS uniforme para os cards do Kanban — compactos, mesma estrutura
-        # pras 5 colunas, só varia background/border (via classe específica).
-        st.markdown("""
-        <style>
-        .kc {
-            padding: 8px 10px;
-            border-radius: 8px;
-            border-left: 4px solid var(--kc-border, #888);
-            margin-bottom: 6px;
-            font-size: 12px;
-            line-height: 1.35;
-            color: #fff;
-            background: var(--kc-bg, #444);
-            overflow: hidden;
-        }
-        .kc-espera { --kc-bg:#3b1f6e; --kc-border:#7c3aed; }
-        .kc-ativo  { --kc-bg:#0d3d75; --kc-border:#00d4ff; }
-        .kc-parado { --kc-bg:#7c3a0a; --kc-border:#ff9f43; }
-        .kc-cancel { --kc-bg:#5c1414; --kc-border:#ff4d4d; }
-        .kc-conc   { --kc-bg:#143d14; --kc-border:#4dff4d; }
-        .kc .row1 { display:flex; gap:4px; flex-wrap:wrap; align-items:center;
-                    margin-bottom: 3px; min-height: 14px; }
-        .kc .nome { font-weight:700; font-size:12.5px; margin:2px 0;
-                    word-break: break-word; }
-        .kc .meta { font-size:10.5px; opacity:.85; margin-top:2px;
-                    word-break: break-word; }
-        .kc .tags { margin-top:4px; line-height:1.6; }
-        .kc-pri-max  { background:#ef4444; color:#fff; font-size:9px;
-                       font-weight:700; padding:1px 6px; border-radius:5px;
-                       letter-spacing:.3px; }
-        .kc-pri-med  { background:#f59e0b; color:#fff; font-size:9px;
-                       font-weight:700; padding:1px 6px; border-radius:5px;
-                       letter-spacing:.3px; }
-        .kc-pri-min  { background:#10b981; color:#fff; font-size:9px;
-                       font-weight:700; padding:1px 6px; border-radius:5px;
-                       letter-spacing:.3px; }
-        .kc-alerta   { background:#ff4d4d; color:#fff; font-size:9px;
-                       font-weight:700; padding:1px 6px; border-radius:5px;
-                       letter-spacing:.3px; }
-        /* Header das colunas: compacto */
-        .kc-col-header { font-size: 13px; font-weight:700; margin: 0 0 6px;
-                         padding: 4px 2px; border-bottom: 1px solid rgba(255,255,255,.08); }
-        </style>
-        """, unsafe_allow_html=True)
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("🚀 Em Andamento", _qtd_andamento,
+                  help="Projetos com status Ativo no filtro atual.")
+        m2.metric("⏳ Em Espera", _qtd_espera,
+                  help="Projetos aguardando triagem no filtro atual.")
+        m3.metric("🔴 Atrasados", _qtd_atrasados,
+                  delta=f"de {_qtd_andamento}" if _qtd_andamento else None,
+                  delta_color="off",
+                  help="Ativos cuja data de término já passou.")
+        m4.metric("▲ Máxima na fila", _qtd_prio_max_espera,
+                  help="Em Espera com prioridade Máxima (precisa de triagem).")
 
-        # ── 5 COLUNAS DO KANBAN ──────────────────────────────────────
-        col_espera, col_exec, col_parado, col_cancel, col_conc = st.columns(5)
-        colunas_ui = [col_espera, col_exec, col_parado, col_cancel, col_conc]
+        st.divider()
 
-        for cfg, coluna in zip(CONFIG_COLUNAS, colunas_ui):
-            with coluna:
-                if not df_kanban.empty:
-                    items = df_kanban[df_kanban['status'] == cfg['status_db']].copy()
-                else:
-                    items = pd.DataFrame()
+        # ── TOGGLE DE VISÃO: Kanban / Lista / Resumo ─────────────────
+        # 3 modos, cada um pra um cenário diferente:
+        #   - Kanban: fluxo visual por status (atual). Bom pra movimentação.
+        #   - Lista:  tabela densa com sort. Bom pra triagem rápida em volume.
+        #   - Resumo: dashboard de cima (urgentes + atrasados + distribuição).
+        visao = st.segmented_control(
+            "Visão",
+            options=["Kanban", "Lista", "Resumo"],
+            default="Kanban",
+            key="kanban_visao",
+            label_visibility="collapsed",
+        ) or "Kanban"
 
-                # Ordenação por prioridade na coluna Em Espera
-                if cfg['ordenar_por_prioridade'] and not items.empty:
-                    items['_ord_pri'] = items['prioridade'].map(
-                        lambda x: ORDEM_PRIORIDADE.get(str(x).strip(), 3)
-                    )
-                    items = items.sort_values('_ord_pri')
+        if visao == "Lista":
+            _render_lista_kanban(df_kanban, df_d)
+        elif visao == "Resumo":
+            _render_resumo_kanban(df_kanban, df_d)
+        else:
+            # ════════════════════════════════════════════════════════════
+            #  KANBAN TRADICIONAL (default)
+            #  MAPA DE CONFIGURAÇÃO DAS COLUNAS
+            #  status_db  = valor real no banco de dados
+            #  label_ui   = nome exibido na interface
+            # ════════════════════════════════════════════════════════════
+            ORDEM_PRIORIDADE = {"Máxima": 0, "Média": 1, "Mínima": 2, "": 3}
 
-                st.markdown(
-                    f"<div class='kc-col-header'>{cfg['label_ui']} "
-                    f"<span style='opacity:.6;font-weight:500;'>({len(items)})</span></div>",
-                    unsafe_allow_html=True,
-                )
+            CONFIG_COLUNAS = [
+                {"status_db": "Em Espera",  "label_ui": "⏳ Em Espera",
+                 "card_cls": "kc-espera",   "ordenar_por_prioridade": True},
+                {"status_db": "Ativo",      "label_ui": "🚀 Em Execução",
+                 "card_cls": "kc-ativo",    "ordenar_por_prioridade": False},
+                {"status_db": "🛑 Parado",  "label_ui": "🛑 Parados",
+                 "card_cls": "kc-parado",   "ordenar_por_prioridade": False},
+                {"status_db": "Cancelado",  "label_ui": "❌ Cancelados",
+                 "card_cls": "kc-cancel",   "ordenar_por_prioridade": False},
+                {"status_db": "Concluído",  "label_ui": "✅ Concluídos",
+                 "card_cls": "kc-conc",     "ordenar_por_prioridade": False},
+            ]
 
-                if items.empty:
+            # CSS uniforme para os cards do Kanban — compactos, mesma estrutura
+            # pras 5 colunas, só varia background/border (via classe específica).
+            # Densidade controlada por classe `.kc-d-{c|n|e}` (compacto/normal/expandido).
+            st.markdown("""
+            <style>
+            .kc {
+                border-radius: 8px;
+                border-left: 4px solid var(--kc-border, #888);
+                color: #fff;
+                background: var(--kc-bg, #444);
+                overflow: hidden;
+            }
+            /* DENSIDADES — controlam padding/font conforme escolha do usuário */
+            .kc.kc-d-c { padding: 6px 8px; font-size: 11px;   line-height: 1.3;
+                         margin-bottom: 5px; }
+            .kc.kc-d-n { padding: 9px 11px; font-size: 12.5px; line-height: 1.4;
+                         margin-bottom: 7px; }
+            .kc.kc-d-e { padding: 12px 14px; font-size: 13.5px; line-height: 1.5;
+                         margin-bottom: 10px; }
+            .kc.kc-d-c .nome { font-size:11.5px; }
+            .kc.kc-d-n .nome { font-size:13px; }
+            .kc.kc-d-e .nome { font-size:14.5px; }
+            .kc.kc-d-c .meta { font-size:10px; }
+            .kc.kc-d-n .meta { font-size:11.5px; }
+            .kc.kc-d-e .meta { font-size:12.5px; }
+
+            .kc-espera { --kc-bg:#3b1f6e; --kc-border:#7c3aed; }
+            .kc-ativo  { --kc-bg:#0d3d75; --kc-border:#00d4ff; }
+            .kc-parado { --kc-bg:#7c3a0a; --kc-border:#ff9f43; }
+            .kc-cancel { --kc-bg:#5c1414; --kc-border:#ff4d4d; }
+            .kc-conc   { --kc-bg:#143d14; --kc-border:#4dff4d; }
+            .kc .row1 { display:flex; gap:4px; flex-wrap:wrap; align-items:center;
+                        margin-bottom: 3px; min-height: 14px; }
+            .kc .nome { font-weight:700; margin:2px 0; word-break: break-word; }
+            .kc .meta { opacity:.85; margin-top:2px; word-break: break-word; }
+            .kc .tags { margin-top:4px; line-height:1.6; }
+            .kc-pri-max  { background:#ef4444; color:#fff; font-size:9px;
+                           font-weight:700; padding:1px 6px; border-radius:5px;
+                           letter-spacing:.3px; }
+            .kc-pri-med  { background:#f59e0b; color:#fff; font-size:9px;
+                           font-weight:700; padding:1px 6px; border-radius:5px;
+                           letter-spacing:.3px; }
+            .kc-pri-min  { background:#10b981; color:#fff; font-size:9px;
+                           font-weight:700; padding:1px 6px; border-radius:5px;
+                           letter-spacing:.3px; }
+            .kc-alerta   { background:#ff4d4d; color:#fff; font-size:9px;
+                           font-weight:700; padding:1px 6px; border-radius:5px;
+                           letter-spacing:.3px; }
+            /* Header da coluna: STICKY no topo da coluna, sempre visível ao rolar */
+            .kc-col-header {
+                position: sticky; top: 0;
+                background: var(--background-color, #0e1117);
+                z-index: 5;
+                font-size: 13px; font-weight:700; margin: 0 0 6px;
+                padding: 6px 4px;
+                border-bottom: 1px solid rgba(255,255,255,.08);
+            }
+            </style>
+            """, unsafe_allow_html=True)
+
+            # ── TOOLBAR: densidade + collapse finalizados ────────────────
+            tb1, tb2, _tb3 = st.columns([1.2, 1.2, 2])
+            densidade = tb1.segmented_control(
+                "Densidade",
+                options=["Compacto", "Normal", "Expandido"],
+                default="Normal",
+                key="kanban_densidade",
+                label_visibility="collapsed",
+                help="Espaçamento dos cards. Compacto = mais cards visíveis.",
+            )
+            _density_cls_map = {"Compacto": "kc-d-c", "Normal": "kc-d-n",
+                                "Expandido": "kc-d-e"}
+            _density_cls = _density_cls_map.get(densidade or "Normal", "kc-d-n")
+
+            mostrar_finalizados = tb2.toggle(
+                "Mostrar finalizados",
+                value=False,
+                key="kanban_show_done",
+                help="Inclui colunas 🚫 Cancelados e ✅ Concluídos no quadro.",
+            )
+
+            # ── COLUNAS DO KANBAN (3 ou 5, dependendo do toggle) ─────────
+            COLUNAS_FINAIS = {"Cancelado", "Concluído"}
+            configs_visiveis = [
+                c for c in CONFIG_COLUNAS
+                if mostrar_finalizados or c["status_db"] not in COLUNAS_FINAIS
+            ]
+            colunas_ui = st.columns(len(configs_visiveis))
+
+            # Altura do container scrollable. 75vh = não exige rolar a página
+            # principal, cada coluna rola sozinha.
+            ALTURA_COL = 700
+
+            for cfg, coluna in zip(configs_visiveis, colunas_ui):
+                with coluna:
+                    if not df_kanban.empty:
+                        items = df_kanban[df_kanban['status'] == cfg['status_db']].copy()
+                    else:
+                        items = pd.DataFrame()
+
+                    # Ordenação por prioridade na coluna Em Espera
+                    if cfg['ordenar_por_prioridade'] and not items.empty:
+                        items['_ord_pri'] = items['prioridade'].map(
+                            lambda x: ORDEM_PRIORIDADE.get(str(x).strip(), 3)
+                        )
+                        items = items.sort_values('_ord_pri')
+
+                    # Header da coluna FORA do container scrollable: sempre visível
+                    # mesmo quando os cards da coluna estão rolados pra baixo.
                     st.markdown(
-                        "<div style='color:#6b7280;font-size:11px;"
-                        "border:1px dashed rgba(255,255,255,0.1);"
-                        "border-radius:6px;padding:8px;text-align:center;'>"
-                        "Nenhum projeto</div>",
+                        f"<div class='kc-col-header'>{cfg['label_ui']} "
+                        f"<span style='opacity:.6;font-weight:500;'>({len(items)})</span></div>",
                         unsafe_allow_html=True,
                     )
 
-                for _, p in items.iterrows():
-                    # Alerta de pendências abertas (só badge compacto na row1)
-                    pend_abertas  = df_d[(df_d['projeto_id'] == p['id']) & (df_d['resolvido'] == 0)] \
-                                    if not df_d.empty else pd.DataFrame()
-                    texto_diario  = " ".join(pend_abertas['executado'].astype(str)) \
-                                    if not pend_abertas.empty else ""
-                    tem_trava     = any(x in texto_diario for x in ["Impedimento","Dúvida","🛑","❓"])
-                    badge_alerta  = "<span class='kc-alerta'>⚠ TRAVA</span>" if tem_trava else ""
+                    # Container com altura limitada → cada coluna rola sozinha,
+                    # a página principal não sobe nem desce.
+                    with st.container(height=ALTURA_COL, border=False):
+                        if items.empty:
+                            st.markdown(
+                                "<div style='color:#6b7280;font-size:11px;"
+                                "border:1px dashed rgba(255,255,255,0.1);"
+                                "border-radius:6px;padding:8px;text-align:center;'>"
+                                "Nenhum projeto</div>",
+                                unsafe_allow_html=True,
+                            )
 
-                    # Prioridade compacta
-                    pri = str(p.get('prioridade', '')).strip()
-                    if pri == 'Máxima':
-                        badge_pri = "<span class='kc-pri-max'>▲ MÁX</span>"
-                    elif pri == 'Média':
-                        badge_pri = "<span class='kc-pri-med'>◆ MÉD</span>"
-                    elif pri == 'Mínima':
-                        badge_pri = "<span class='kc-pri-min'>▼ MÍN</span>"
-                    else:
-                        badge_pri = ""
+                        for _, p in items.iterrows():
+                            # Alerta de pendências abertas (só badge compacto na row1)
+                            pend_abertas  = df_d[(df_d['projeto_id'] == p['id']) & (df_d['resolvido'] == 0)] \
+                                            if not df_d.empty else pd.DataFrame()
+                            texto_diario  = " ".join(pend_abertas['executado'].astype(str)) \
+                                            if not pend_abertas.empty else ""
+                            tem_trava     = any(x in texto_diario for x in ["Impedimento","Dúvida","🛑","❓"])
+                            badge_alerta  = "<span class='kc-alerta'>⚠ TRAVA</span>" if tem_trava else ""
 
-                    prazo_str = str(p.get('data_fim', '') or p.get('data_termino', '') or '—')
+                            # Prioridade compacta
+                            pri = str(p.get('prioridade', '')).strip()
+                            if pri == 'Máxima':
+                                badge_pri = "<span class='kc-pri-max'>▲ MÁX</span>"
+                            elif pri == 'Média':
+                                badge_pri = "<span class='kc-pri-med'>◆ MÉD</span>"
+                            elif pri == 'Mínima':
+                                badge_pri = "<span class='kc-pri-min'>▼ MÍN</span>"
+                            else:
+                                badge_pri = ""
 
-                    # Chips de tags (small=True pra caber no card compacto)
-                    _tags_html = _render_tag_chips(p.get('tags'), small=True)
-                    _tags_wrap = f'<div class="tags">{_tags_html}</div>' if _tags_html else ''
+                            prazo_str = str(p.get('data_fim', '') or p.get('data_termino', '') or '—')
 
-                    card_html = (
-                        f'<div class="kc {cfg["card_cls"]}">'
-                        f'<div class="row1">{badge_alerta}{badge_pri}</div>'
-                        f'<div class="nome">{p["projeto"]}</div>'
-                        f'<div class="meta">👤 {p["projetista"]} · 📅 {prazo_str}</div>'
-                        f'{_tags_wrap}'
-                        f'</div>'
-                    )
-                    st.markdown(card_html, unsafe_allow_html=True)
+                            # Chips de tags (small=True pra caber no card compacto)
+                            _tags_html = _render_tag_chips(p.get('tags'), small=True)
+                            _tags_wrap = f'<div class="tags">{_tags_html}</div>' if _tags_html else ''
 
-                    # ── Ações em popover único (3 botões grandes viravam ruído) ──
-                    status_db = cfg['status_db']
-                    with st.popover("⚙️", use_container_width=True,
-                                    help="Ações e detalhes"):
-                        if st.button("🔍 Abrir detalhes / editar",
-                                     key=f"ver_{p['id']}",
-                                     use_container_width=True):
-                            st.session_state.projeto_em_edicao = p['id']
-                            st.rerun()
+                            card_html = (
+                                f'<div class="kc {cfg["card_cls"]} {_density_cls}">'
+                                f'<div class="row1">{badge_alerta}{badge_pri}</div>'
+                                f'<div class="nome">{p["projeto"]}</div>'
+                                f'<div class="meta">👤 {p["projetista"]} · 📅 {prazo_str}</div>'
+                                f'{_tags_wrap}'
+                                f'</div>'
+                            )
+                            st.markdown(card_html, unsafe_allow_html=True)
 
-                        if _pode_editar():
-                            st.divider()
-                            if status_db == "Em Espera":
-                                if st.button("▶️ Mover para Em Execução",
-                                             key=f"ativ_{p['id']}",
+                            # ── Ações em popover único (3 botões grandes viravam ruído) ──
+                            status_db = cfg['status_db']
+                            with st.popover("⚙️", use_container_width=True,
+                                            help="Ações e detalhes"):
+                                if st.button("🔍 Abrir detalhes / editar",
+                                             key=f"ver_{p['id']}",
                                              use_container_width=True):
-                                    db.atualizar_campo_projeto(p['id'], "status", "Ativo")
-                                    db.log_aud(st.session_state.usuario, 'status',
-                                               'projeto', p['id'], "Em Espera → Ativo")
-                                    _invalidar_dados(); st.rerun()
-                                if st.button("❌ Cancelar projeto",
-                                             key=f"canc_esp_{p['id']}",
-                                             use_container_width=True):
-                                    db.atualizar_campo_projeto(p['id'], "status", "Cancelado")
-                                    _invalidar_dados(); st.rerun()
-                            elif status_db == "Ativo":
-                                if st.button("⏸️ Pausar projeto",
-                                             key=f"p_{p['id']}",
-                                             use_container_width=True):
-                                    db.atualizar_campo_projeto(p['id'], "status", "🛑 Parado")
-                                    _invalidar_dados(); st.rerun()
-                                if st.button("✅ Concluir projeto",
-                                             key=f"f_{p['id']}",
-                                             use_container_width=True):
-                                    db.atualizar_campo_projeto(p['id'], "status", "Concluído")
-                                    _invalidar_dados(); st.rerun()
-                            elif status_db == "🛑 Parado":
-                                if st.button("▶️ Retomar → Em Execução",
-                                             key=f"r_{p['id']}",
-                                             use_container_width=True):
-                                    db.atualizar_campo_projeto(p['id'], "status", "Ativo")
-                                    _invalidar_dados(); st.rerun()
-                                if st.button("❌ Cancelar",
-                                             key=f"c_{p['id']}",
-                                             use_container_width=True):
-                                    db.atualizar_campo_projeto(p['id'], "status", "Cancelado")
-                                    _invalidar_dados(); st.rerun()
-                            elif status_db == "Cancelado":
-                                if st.button("🔓 Reativar → Em Espera",
-                                             key=f"re_{p['id']}",
-                                             use_container_width=True):
-                                    db.atualizar_campo_projeto(p['id'], "status", "Em Espera")
-                                    _invalidar_dados(); st.rerun()
-                            elif status_db == "Concluído":
-                                if st.button("🔓 Reabrir → Em Execução",
-                                             key=f"reabrir_{p['id']}",
-                                             use_container_width=True):
-                                    db.atualizar_campo_projeto(p['id'], "status", "Ativo")
-                                    _invalidar_dados(); st.rerun()
+                                    st.session_state.projeto_em_edicao = p['id']
+                                    st.rerun()
+
+                                if _pode_editar():
+                                    st.divider()
+                                    if status_db == "Em Espera":
+                                        if st.button("▶️ Mover para Em Execução",
+                                                     key=f"ativ_{p['id']}",
+                                                     use_container_width=True):
+                                            db.atualizar_campo_projeto(p['id'], "status", "Ativo")
+                                            db.log_aud(st.session_state.usuario, 'status',
+                                                       'projeto', p['id'], "Em Espera → Ativo")
+                                            _invalidar_dados(); st.rerun()
+                                        if st.button("❌ Cancelar projeto",
+                                                     key=f"canc_esp_{p['id']}",
+                                                     use_container_width=True):
+                                            db.atualizar_campo_projeto(p['id'], "status", "Cancelado")
+                                            _invalidar_dados(); st.rerun()
+                                    elif status_db == "Ativo":
+                                        if st.button("⏸️ Pausar projeto",
+                                                     key=f"p_{p['id']}",
+                                                     use_container_width=True):
+                                            db.atualizar_campo_projeto(p['id'], "status", "🛑 Parado")
+                                            _invalidar_dados(); st.rerun()
+                                        if st.button("✅ Concluir projeto",
+                                                     key=f"f_{p['id']}",
+                                                     use_container_width=True):
+                                            db.atualizar_campo_projeto(p['id'], "status", "Concluído")
+                                            _invalidar_dados(); st.rerun()
+                                    elif status_db == "🛑 Parado":
+                                        if st.button("▶️ Retomar → Em Execução",
+                                                     key=f"r_{p['id']}",
+                                                     use_container_width=True):
+                                            db.atualizar_campo_projeto(p['id'], "status", "Ativo")
+                                            _invalidar_dados(); st.rerun()
+                                        if st.button("❌ Cancelar",
+                                                     key=f"c_{p['id']}",
+                                                     use_container_width=True):
+                                            db.atualizar_campo_projeto(p['id'], "status", "Cancelado")
+                                            _invalidar_dados(); st.rerun()
+                                    elif status_db == "Cancelado":
+                                        if st.button("🔓 Reativar → Em Espera",
+                                                     key=f"re_{p['id']}",
+                                                     use_container_width=True):
+                                            db.atualizar_campo_projeto(p['id'], "status", "Em Espera")
+                                            _invalidar_dados(); st.rerun()
+                                    elif status_db == "Concluído":
+                                        if st.button("🔓 Reabrir → Em Execução",
+                                                     key=f"reabrir_{p['id']}",
+                                                     use_container_width=True):
+                                            db.atualizar_campo_projeto(p['id'], "status", "Ativo")
+                                            _invalidar_dados(); st.rerun()
 
         # --- CENTRAL DE EDIÇÃO (COM TODO O DETALHAMENTO VOLTADO) ---
         if 'projeto_em_edicao' in st.session_state:
