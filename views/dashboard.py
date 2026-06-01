@@ -27,6 +27,7 @@ from core.helpers import (
     _pill_select,
     _section_header,
 )
+from core.ui_feedback import carregando, erro_humano
 
 
 usuario = st.session_state.usuario
@@ -747,8 +748,14 @@ try:
                         unsafe_allow_html=True,
                     )
                     st.progress(float(_media) / 100.0)
-except Exception as e:
-    st.error(f"Erro ao carregar evolução técnica: {e}")
+except Exception as exc:
+    erro_humano(
+        "Carregar evolução técnica", exc,
+        sugestao=(
+            "A seção será reaberta no próximo refresh. Se persistir, pode "
+            "haver dado inconsistente em `progresso_disciplinas`."
+        ),
+    )
 
 # 5. CARDS COLORIDOS
 if perfil == "Gestor":
@@ -825,11 +832,12 @@ c_r1, c_r2, c_r3 = st.columns(3)
 # Excel
 with c_r1:
     try:
-        dados_ex = relatorios.gerar_excel(
-            df_p_limpo,
-            df_etapas=_df_etapas_rel if not _df_etapas_rel.empty else None,
-            df_progresso=_df_prog_rel if not _df_prog_rel.empty else None,
-        )
+        with carregando("Preparando planilha Excel..."):
+            dados_ex = relatorios.gerar_excel(
+                df_p_limpo,
+                df_etapas=_df_etapas_rel if not _df_etapas_rel.empty else None,
+                df_progresso=_df_prog_rel if not _df_prog_rel.empty else None,
+            )
         st.download_button(
             label="📊 Baixar Excel Completo",
             data=dados_ex,
@@ -838,17 +846,24 @@ with c_r1:
             use_container_width=True,
             help="Abas: Projetos · Etapas · Progresso Técnico",
         )
-    except Exception as e:
-        st.error(f"Erro Excel: {e}")
+    except Exception as exc:
+        erro_humano(
+            "Geração do Excel", exc,
+            sugestao=(
+                "Tente recarregar a página. Se persistir, pode haver dado "
+                "inválido em algum projeto — avise o administrador."
+            ),
+        )
 
 # PDF completo
 with c_r2:
     try:
-        dados_pdf = relatorios.gerar_pdf(
-            df_p_limpo,
-            df_etapas=_df_etapas_rel if not _df_etapas_rel.empty else None,
-            df_progresso=_df_prog_rel if not _df_prog_rel.empty else None,
-        )
+        with carregando("Preparando PDF completo..."):
+            dados_pdf = relatorios.gerar_pdf(
+                df_p_limpo,
+                df_etapas=_df_etapas_rel if not _df_etapas_rel.empty else None,
+                df_progresso=_df_prog_rel if not _df_prog_rel.empty else None,
+            )
         if dados_pdf:
             st.download_button(
                 label="📄 Baixar PDF Completo",
@@ -862,16 +877,20 @@ with c_r2:
             )
         else:
             st.warning("Dados insuficientes para PDF.")
-    except Exception as e:
-        st.error(f"Erro PDF: {e}")
+    except Exception as exc:
+        erro_humano(
+            "Geração do PDF completo", exc,
+            sugestao="Tente recarregar a página em alguns segundos.",
+        )
 
 # PDF Gantt
 with c_r3:
     try:
         if not _df_etapas_rel.empty:
-            dados_gantt = relatorios.gerar_pdf_gantt(
-                df_p_limpo, _df_etapas_rel,
-            )
+            with carregando("Preparando Gantt PDF..."):
+                dados_gantt = relatorios.gerar_pdf_gantt(
+                    df_p_limpo, _df_etapas_rel,
+                )
             st.download_button(
                 label="📅 Baixar Gantt PDF",
                 data=dados_gantt,
@@ -886,5 +905,11 @@ with c_r3:
             st.info(
                 "Cadastre etapas nos projetos para gerar o Gantt PDF."
             )
-    except Exception as e:
-        st.error(f"Erro Gantt: {e}")
+    except Exception as exc:
+        erro_humano(
+            "Geração do Gantt PDF", exc,
+            sugestao=(
+                "Confira se os projetos têm datas de início válidas "
+                "(Kanban → ⚙️ Detalhes do projeto)."
+            ),
+        )

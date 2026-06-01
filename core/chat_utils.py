@@ -15,6 +15,7 @@ import streamlit.components.v1 as _components
 import database as db
 
 from core.helpers import _safe_chat_html, _tempo_relativo
+from core.ui_feedback import erro_humano
 
 
 # CSS injetado uma vez por sessão (Streamlit deduplica HTML idêntico).
@@ -88,8 +89,15 @@ def _render_chat_messages(usuario, contato_nome):
             db.get_engine(),
             params=(usuario, contato_nome, contato_nome, usuario),
         )
-    except Exception as e:
-        st.error(f"Erro ao carregar mensagens: {e}")
+    except Exception as exc:
+        erro_humano(
+            "Carregar mensagens do chat", exc,
+            sugestao=(
+                "A lista de mensagens vai recarregar automaticamente "
+                "em 2 segundos. Pode continuar enviando — suas mensagens "
+                "vão pro banco normalmente."
+            ),
+        )
         df_m = pd.DataFrame()
 
     st.markdown(_CHAT_CSS, unsafe_allow_html=True)

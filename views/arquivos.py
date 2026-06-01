@@ -11,6 +11,7 @@ import streamlit as st
 import database as db
 
 from core.data import _load_df_p
+from core.ui_feedback import erro_humano
 
 
 usuario = st.session_state.usuario
@@ -69,31 +70,66 @@ with st.expander("⬆️ Anexar Novo Arquivo", expanded=False):
             if not arquivos_novos:
                 st.warning("Selecione ao menos um arquivo antes de enviar.")
             else:
+                # Progress bar com feedback por arquivo. Mais útil que
+                # um spinner único quando o user manda 5+ arquivos: ele
+                # vê EXATAMENTE no que travou se travar.
                 ok = 0
-                for arq in arquivos_novos:
-                    pasta, path_final = db.caminho_seguro_para_anexo(
-                        proj_alvo_id, arq.name,
+                falhas: list[tuple[str, Exception]] = []
+                _total = len(arquivos_novos)
+                _prog = st.progress(0.0, text="Iniciando upload...")
+                for i, arq in enumerate(arquivos_novos):
+                    _prog.progress(
+                        (i + 0.1) / _total,
+                        text=(
+                            f"Enviando **{arq.name}** "
+                            f"({i+1}/{_total})..."
+                        ),
                     )
-                    os.makedirs(pasta, exist_ok=True)
-                    with open(path_final, "wb") as f:
-                        f.write(arq.getbuffer())
-                    db.salvar_arquivo(
-                        projeto_id=proj_alvo_id,
-                        nome_original=arq.name,
-                        path_arquivo=path_final,
-                        descricao=desc_upload,
-                        autor=usuario,
-                        tamanho_bytes=arq.size,
-                        mime_type=arq.type or "",
+                    try:
+                        pasta, path_final = db.caminho_seguro_para_anexo(
+                            proj_alvo_id, arq.name,
+                        )
+                        os.makedirs(pasta, exist_ok=True)
+                        with open(path_final, "wb") as f:
+                            f.write(arq.getbuffer())
+                        db.salvar_arquivo(
+                            projeto_id=proj_alvo_id,
+                            nome_original=arq.name,
+                            path_arquivo=path_final,
+                            descricao=desc_upload,
+                            autor=usuario,
+                            tamanho_bytes=arq.size,
+                            mime_type=arq.type or "",
+                        )
+                        db.log_aud(usuario, "upload", "arquivo",
+                                   proj_alvo_id,
+                                   f"nome='{arq.name}', {arq.size}B")
+                        ok += 1
+                    except Exception as exc:
+                        falhas.append((arq.name, exc))
+                    _prog.progress(
+                        (i + 1) / _total,
+                        text=f"Concluído {i+1}/{_total}",
                     )
-                    db.log_aud(usuario, "upload", "arquivo", proj_alvo_id,
-                               f"nome='{arq.name}', {arq.size}B")
-                    ok += 1
-                st.success(
-                    f"✅ {ok} arquivo(s) enviado(s) e vinculado(s) ao "
-                    f"projeto **{_id_para_nome[proj_alvo_id]}**"
-                )
-                st.rerun()
+                _prog.empty()
+
+                if ok:
+                    st.success(
+                        f"✅ {ok} arquivo(s) enviado(s) e vinculado(s) ao "
+                        f"projeto **{_id_para_nome[proj_alvo_id]}**"
+                    )
+                for nome_arq, exc in falhas:
+                    erro_humano(
+                        f"Upload do arquivo '{nome_arq}'", exc,
+                        sugestao=(
+                            "Confira se o arquivo cabe em 100 MB e se "
+                            "você tem permissão na pasta do projeto. Os "
+                            "outros arquivos do lote foram enviados "
+                            "normalmente."
+                        ),
+                    )
+                if ok and not falhas:
+                    st.rerun()
 
 st.divider()
 

@@ -28,6 +28,7 @@ from core.mencoes import (
     _processar_mencoes_diario,
     _render_mencoes_html,
 )
+from core.ui_feedback import carregando, erro_humano
 
 
 usuario = st.session_state.usuario
@@ -367,8 +368,14 @@ with st.expander("⏱ Horas registradas", expanded=False):
             _df_h["data"], format="%d/%m/%Y %H:%M", errors="coerce",
         )
         _df_h = _df_h.dropna(subset=["dt"])
-    except Exception as e:
-        st.warning(f"Não foi possível carregar horas: {e}")
+    except Exception as exc:
+        erro_humano(
+            "Carregar histórico de horas", exc,
+            sugestao=(
+                "Os totais de horas voltarão na próxima vez que você abrir "
+                "o Diário. O resto da página continua funcionando normalmente."
+            ),
+        )
         _df_h = pd.DataFrame(
             columns=["projeto_id", "projeto", "autor", "horas", "dt"]
         )
@@ -473,54 +480,69 @@ if _pode_editar():
         if st.button("💾 Salvar Registro", use_container_width=True,
                      key="diario_salvar"):
             if r_rel and p_sel != "-":
-                path = ""
-                if r_arq:
-                    if not os.path.exists("anexos"):
-                        os.makedirs("anexos")
-                    path = os.path.join(
-                        "anexos",
-                        f"{datetime.now().strftime('%Y%m%d%H%M')}_{r_arq.name}",
+                try:
+                    with carregando(
+                        "Salvando anexo..." if r_arq else "Salvando relato..."
+                    ):
+                        path = ""
+                        if r_arq:
+                            if not os.path.exists("anexos"):
+                                os.makedirs("anexos")
+                            path = os.path.join(
+                                "anexos",
+                                f"{datetime.now().strftime('%Y%m%d%H%M')}_"
+                                f"{r_arq.name}",
+                            )
+                            with open(path, "wb") as f:
+                                f.write(r_arq.getbuffer())
+
+                        info_p = df_p[df_p["projeto"] == p_sel].iloc[0]
+                        pid = info_p["id"]
+
+                        texto_final_banco = f"[{tipo_relato}] {r_rel}"
+
+                        with db.conectar() as conn:
+                            c = conn.cursor()
+                            c.execute(
+                                """INSERT INTO diario
+                                (projeto_id, data, executado, autor,
+                                 disciplina, horas, anexo, resolvido)
+                                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                                RETURNING id""",
+                                (int(pid),
+                                 datetime.now().strftime("%d/%m/%Y %H:%M"),
+                                 texto_final_banco,
+                                 usuario, r_disc,
+                                 float(r_horas or 0),
+                                 path, 0),
+                            )
+                            _novo_relato_id = c.fetchone()[0]
+                            conn.commit()
+
+                        # Processa @"Nome" do texto: concede acesso +
+                        # notifica + audita
+                        _processar_mencoes_diario(
+                            texto=r_rel, projeto_id=int(pid),
+                            autor=usuario, relato_id=_novo_relato_id,
+                            contexto="relato",
+                            lista_usuarios=(
+                                df_u["nome"].tolist() if not df_u.empty
+                                else []
+                            ),
+                        )
+
+                    st.success("Registro salvo!")
+                    _invalidar_dados()
+                    st.rerun()
+                except Exception as exc:
+                    erro_humano(
+                        "Salvar relato no diário", exc,
+                        sugestao=(
+                            "Tente novamente. Se você anexou arquivo, "
+                            "confira se ele cabe em 100 MB e não está "
+                            "corrompido."
+                        ),
                     )
-                    with open(path, "wb") as f:
-                        f.write(r_arq.getbuffer())
-
-                info_p = df_p[df_p["projeto"] == p_sel].iloc[0]
-                pid = info_p["id"]
-
-                texto_final_banco = f"[{tipo_relato}] {r_rel}"
-
-                with db.conectar() as conn:
-                    c = conn.cursor()
-                    c.execute(
-                        """INSERT INTO diario
-                        (projeto_id, data, executado, autor, disciplina,
-                         horas, anexo, resolvido)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-                        RETURNING id""",
-                        (int(pid),
-                         datetime.now().strftime("%d/%m/%Y %H:%M"),
-                         texto_final_banco,
-                         usuario,
-                         r_disc,
-                         float(r_horas or 0),
-                         path, 0),
-                    )
-                    _novo_relato_id = c.fetchone()[0]
-                    conn.commit()
-
-                # Processa @"Nome" do texto: concede acesso + notifica + audita
-                _processar_mencoes_diario(
-                    texto=r_rel, projeto_id=int(pid),
-                    autor=usuario, relato_id=_novo_relato_id,
-                    contexto="relato",
-                    lista_usuarios=(
-                        df_u["nome"].tolist() if not df_u.empty else []
-                    ),
-                )
-
-                st.success("Registro salvo!")
-                _invalidar_dados()
-                st.rerun()
             else:
                 st.warning("Selecione um projeto e escreva o relato.")
 
@@ -548,14 +570,23 @@ if _col_rp2.button("📄 Gerar PDF", key="btn_gerar_rel_diario",
                 else pd.DataFrame()
             )
             try:
-                _pdf_diario = relatorios.gerar_pdf_diario(
-                    _proj_info.iloc[0].to_dict(), _d_diario,
-                )
+                with carregando(
+                    f"Gerando PDF do diário de '{_proj_rel_sel}'..."
+                ):
+                    _pdf_diario = relatorios.gerar_pdf_diario(
+                        _proj_info.iloc[0].to_dict(), _d_diario,
+                    )
                 st.session_state["_pdf_diario_bytes"] = _pdf_diario
                 st.session_state["_pdf_diario_nome"] = _proj_rel_sel
                 st.rerun()
-            except Exception as _e:
-                st.error(f"Erro ao gerar PDF: {_e}")
+            except Exception as exc:
+                erro_humano(
+                    f"Geração do PDF do diário de '{_proj_rel_sel}'", exc,
+                    sugestao=(
+                        "Tente de novo em alguns segundos. Se persistir, "
+                        "confira se há relatos com caracteres incomuns."
+                    ),
+                )
     else:
         st.warning("Selecione um projeto antes de gerar.")
 

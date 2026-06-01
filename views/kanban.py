@@ -24,6 +24,7 @@ from core.helpers import (
     _pode_editar,
     _render_tag_chips,
 )
+from core.ui_feedback import carregando, erro_humano
 
 
 usuario = st.session_state.usuario
@@ -124,49 +125,88 @@ def _render_lista_kanban(df_kanban, df_d):
                 if not _vai_status and not _vai_tag:
                     st.warning("Nada selecionado pra mudar.")
                 else:
+                    _ids_lista = sorted(sel_ids)
+                    _total_bulk = len(_ids_lista)
                     _n = 0
-                    for _pid in sorted(sel_ids):
-                        if _vai_status:
-                            db.atualizar_campo_projeto(
-                                _pid, "status", _novo_status
-                            )
-                        if _vai_tag:
-                            # Adiciona tag sem perder as existentes
-                            _conn_t = db.conectar()
-                            _c_t = _conn_t.cursor()
-                            try:
-                                _c_t.execute(
-                                    "SELECT tags FROM projetos WHERE id = %s",
-                                    (int(_pid),),
+                    _falhas: list[tuple[int, Exception]] = []
+                    # Progress bar pra dar feedback quando o user
+                    # seleciona 20+ projetos (sem isso, parece travado).
+                    _prog = st.progress(
+                        0.0,
+                        text=(
+                            f"Aplicando ação em {_total_bulk} projeto(s)..."
+                        ),
+                    )
+                    for i, _pid in enumerate(_ids_lista):
+                        try:
+                            if _vai_status:
+                                db.atualizar_campo_projeto(
+                                    _pid, "status", _novo_status
                                 )
-                                _r_t = _c_t.fetchone()
-                                _atuais = db.parse_tags(
-                                    _r_t[0] if _r_t else None
-                                )
-                                if _tag_add not in _atuais:
-                                    _atuais.append(_tag_add)
-                                _novo_csv = (
-                                    db.serializar_tags(_atuais) or None
-                                )
-                                _c_t.execute(
-                                    "UPDATE projetos SET tags = %s "
-                                    "WHERE id = %s",
-                                    (_novo_csv, int(_pid)),
-                                )
-                                _conn_t.commit()
-                            finally:
-                                _conn_t.close()
-                        _n += 1
+                            if _vai_tag:
+                                # Adiciona tag sem perder as existentes
+                                _conn_t = db.conectar()
+                                _c_t = _conn_t.cursor()
+                                try:
+                                    _c_t.execute(
+                                        "SELECT tags FROM projetos "
+                                        "WHERE id = %s",
+                                        (int(_pid),),
+                                    )
+                                    _r_t = _c_t.fetchone()
+                                    _atuais = db.parse_tags(
+                                        _r_t[0] if _r_t else None
+                                    )
+                                    if _tag_add not in _atuais:
+                                        _atuais.append(_tag_add)
+                                    _novo_csv = (
+                                        db.serializar_tags(_atuais) or None
+                                    )
+                                    _c_t.execute(
+                                        "UPDATE projetos SET tags = %s "
+                                        "WHERE id = %s",
+                                        (_novo_csv, int(_pid)),
+                                    )
+                                    _conn_t.commit()
+                                finally:
+                                    _conn_t.close()
+                            _n += 1
+                        except Exception as exc:
+                            _falhas.append((_pid, exc))
+                        _prog.progress(
+                            (i + 1) / _total_bulk,
+                            text=(
+                                f"Aplicando ação... {i+1}/{_total_bulk}"
+                            ),
+                        )
+                    _prog.empty()
+
                     db.log_aud(
                         usuario, "bulk_acao", "projeto", None,
                         f"{_n} projetos · "
                         f"status={_novo_status if _vai_status else '—'}"
-                        f" · tag={_tag_add if _vai_tag else '—'}",
+                        f" · tag={_tag_add if _vai_tag else '—'}"
+                        + (
+                            f" · {len(_falhas)} FALHA(S)"
+                            if _falhas else ""
+                        ),
                     )
                     st.session_state["kanban_bulk_sel"] = set()
                     _invalidar_dados()
-                    st.success(f"✅ {_n} projeto(s) atualizado(s).")
-                    st.rerun()
+                    if _n:
+                        st.success(f"✅ {_n} projeto(s) atualizado(s).")
+                    for _pid_f, _exc in _falhas:
+                        erro_humano(
+                            f"Bulk action no projeto #{_pid_f}", _exc,
+                            sugestao=(
+                                "Os outros projetos do lote foram "
+                                "atualizados normalmente. Tente esse "
+                                "projeto individualmente pra ver o erro "
+                                "específico."
+                            ),
+                        )
+                    if not _falhas:
+                        st.rerun()
 
             if _limpar:
                 st.session_state["kanban_bulk_sel"] = set()

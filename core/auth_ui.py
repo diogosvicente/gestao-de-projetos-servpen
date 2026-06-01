@@ -18,6 +18,7 @@ import auth
 import database as db
 
 from core.data import _invalidar_dados
+from core.ui_feedback import carregando, erro_humano
 
 
 # ─── AVATAR ──────────────────────────────────────────────────────────
@@ -130,9 +131,16 @@ def _dialog_meu_perfil():
     _avatar_path = None
     if novo_avatar is not None:
         try:
-            _avatar_path = _processar_avatar(novo_avatar, nome)
-        except Exception as _e:
-            st.error(f"Falha ao processar a imagem: {_e}")
+            with carregando("Processando avatar..."):
+                _avatar_path = _processar_avatar(novo_avatar, nome)
+        except Exception as exc:
+            erro_humano(
+                "Processar imagem do avatar", exc,
+                sugestao=(
+                    "Tente uma imagem PNG ou JPG menor que 5 MB. Imagens "
+                    "muito grandes ou em formato exótico podem dar erro."
+                ),
+            )
             return
 
     # 2) E-mail / avatar (cargo é read-only aqui — não atualizamos)
