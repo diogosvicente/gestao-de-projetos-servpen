@@ -17,5 +17,21 @@ xlsxwriter==3.2.0
 openpyxl==3.1.5
 psycopg[binary]>=3.1,<4
 Pillow>=10.0
+# passlib 1.7.4 + bcrypt 4.x = bug fatal.
+#
+# Em produção apareceu como `ValueError: password cannot be longer than 72
+# bytes` ao trocar senha/resposta secreta. O traceback termina em
+# `passlib/handlers/bcrypt.py:380 detect_wrap_bug` — uma função que o
+# passlib roda na PRIMEIRA INICIALIZAÇÃO do backend bcrypt pra detectar
+# um bug histórico (versões antigas faziam wrap de byte 256). Esse teste
+# usa uma senha INTERNA de >72 bytes; bcrypt 3.x truncava silenciosamente
+# e o teste passava; bcrypt 4.x LANÇA `ValueError`, derrubando o passlib
+# inteiro — qualquer chamada a `_bcrypt.hash(...)` no app explode com o
+# erro, mesmo que a senha do user tenha 8 caracteres.
+#
+# Fix: forçar bcrypt 3.x até passlib publicar 1.7.5 (ou migrarmos pra
+# `bcrypt` direto sem passlib). NÃO REMOVER a linha abaixo sem testar
+# troca de senha em prod.
 passlib[bcrypt]>=1.7.4
+bcrypt<4
 SQLAlchemy>=2.0,<3
