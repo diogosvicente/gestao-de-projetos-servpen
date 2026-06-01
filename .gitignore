@@ -78,7 +78,9 @@ logs/
 # A versão .example fica versionada; a versão real NUNCA.
 db.env
 *.env
+*.env.local
 !*.env.example
+!*.env.local.example
 
 # ─── SO ──────────────────────────────────────────────────
 .DS_Store

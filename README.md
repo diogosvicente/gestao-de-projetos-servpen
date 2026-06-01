@@ -86,7 +86,8 @@ auth.py                 ← validação de login + rate limit
 relatorios.py           ← geração de PDF/Excel
 setup-novo-servidor/    ← arquivos de infra (install.sh, vhost, systemd)
 docker-compose.yml      ← Postgres dev local
-db.env.local            ← creds dev (gitignored)
+db.env.local            ← creds dev (gitignored; criado a partir do .example)
+db.env.local.example    ← template versionado das creds dev
 ```
 
 ## Docs detalhadas

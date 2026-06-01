@@ -26,6 +26,15 @@ done
 [ -n "${PYTHON}" ] || { echo "ERRO: nenhum python3 encontrado." >&2; exit 1; }
 echo "→ Python: $(${PYTHON} --version) (${PYTHON})"
 
+# ── 0) Cria db.env.local a partir do template se ainda não existe ──
+if [ -f db.env.local ]; then
+    echo "✓ db.env.local já existe"
+elif [ -f db.env.local.example ]; then
+    cp db.env.local.example db.env.local
+    echo "→ db.env.local criado a partir do template"
+    echo "  (edite se precisar mudar credenciais; gitignored)"
+fi
+
 # ── 2) Cria venv se ainda não existe (ou recria se quebrado) ────────
 # Detecta venv quebrado: pasta existe mas sem o pip executável. Acontece
 # quando o `python3-venv` não estava instalado na 1ª tentativa — venv
