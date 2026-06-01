@@ -76,7 +76,7 @@ maduro (psycopg3), defaults sensatos.
 | # | Item | Por que | Esforço |
 |---|---|---|---|
 | 🔴 | **Trocar o servidor** | CPU de 2009 sem AVX é o ceiling de tudo. Sozinho rende mais que qualquer software-change | Baixo (custo de hardware) |
-| 🟠 | **Modularizar `app.py`** (~3.500 linhas hoje) usando `st.navigation` + `st.Page` | Hoje o arquivo inteiro re-executa a cada clique. Quebrando em `pages/dashboard.py`, `pages/diario.py`, etc., **só a aba ativa roda**. Corte de ~60% de trabalho por interação | Médio |
+| ✅ | ~~**Modularizar `app.py`**~~ Concluído em maio/2026. App quebrado em `core/` (6 módulos compartilhados) + `views/` (10 páginas). Entry point caiu de **6130 → 618 linhas**. `st.tabs` substituído por `st.navigation` + `st.Page`. Sidebar global hospeda `_global_notif` (toast continua disparando em qualquer página) e badges de pendências. Apenas a página ativa roda a cada interação → ~60% menos work por clique. | ✅ Feito |
 | ✅ | ~~**`@st.cache_resource` pra conexão SQLite**~~ Substituído por **engine SQLAlchemy + pool** (maio/2026) | — | `db.get_engine()` com `lru_cache` retorna engine SQLAlchemy compartilhado; `pd.read_sql_query(..., db.get_engine())` em vez de conn psycopg crua → resolve warning pandas + reuso de conexão via pool. | ✅ Feito |
 | 🟢 | **Static assets via Apache** (em vez de Streamlit servir tudo) | Apache é mais rápido pra static. Streamlit fica só pro dinâmico | Baixo |
 
@@ -105,7 +105,7 @@ maduro (psycopg3), defaults sensatos.
 |---|---|---|---|
 | 🔴 | **Git versionando o código** | Single point of failure absoluto. Já visto na conversa real | ✅ Feito |
 | 🔴 | **Backup automático diário** do Postgres (timer systemd) | Hoje só backup quando `install.sh` roda. Se corromper hoje, recupera de quando? | ✅ Feito |
-| 🟠 | **Modularizar `app.py`** em `pages/` | 3.500 linhas num arquivo só. Insustentável a longo prazo | Médio |
+| ✅ | ~~**Modularizar `app.py`** em `views/`~~ Feito em maio/2026. Ver seção **3. Performance** acima. | ✅ Feito |
 | 🟠 | **Testes automatizados** (pelo menos smoke tests) | Zero coverage. Quebra calado ao mexer em qualquer coisa | Médio |
 | ✅ | ~~**Logs estruturados**~~ Implementado em maio/2026 | `logging.basicConfig` no boot do `app.py` com timestamp+nível+módulo. `LOG_LEVEL` env var controla verbosidade (default INFO; DEBUG pra investigar). | ✅ Feito |
 | 🟠 | **Monitoramento** (uptime, error rate) | Quando o serviço cai, ninguém sabe até alguém reclamar | Baixo (UptimeRobot grátis serve) |
