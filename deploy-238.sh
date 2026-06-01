@@ -104,11 +104,13 @@ if [ -n "${LAST_SHA}" ]; then
     echo "${B}Commits desde o último deploy:${N}"
     git log --oneline "${LAST_SHA}..HEAD" | sed 's/^/    /'
     echo
-    echo "${B}Arquivos alterados:${N}"
-    git diff --stat "${LAST_SHA}" HEAD | tail -20 | sed 's/^/    /'
+    echo "${B}Arquivos a publicar:${N}"
+    git diff --name-status "${LAST_SHA}" HEAD | sed 's/^/    /'
 else
     echo "${B}Vai enviar tudo do repo (primeiro deploy):${N}"
-    git ls-files | wc -l | xargs printf "    %s arquivo(s) rastreados pelo git\n"
+    git ls-files | sed 's/^/    /'
+    echo
+    git ls-files | wc -l | xargs printf "    Total: %s arquivo(s) rastreados pelo git\n"
 fi
 echo
 
