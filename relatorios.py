@@ -899,50 +899,17 @@ def gerar_pdf_diario(projeto_row, df_diario):
             t_corpo,
         ]))
 
-        # Orientação / comentários do relato.
-        #
-        # Desde maio/2026, comentários vivem em `diario_comentarios` (1 linha
-        # por interação). Antes ficavam concatenados em `resposta_gestor`.
-        # Pra render do PDF, lemos PRIMEIRO da nova tabela; se vier vazio,
-        # caímos no `resposta_gestor` (legado) — assim PDFs continuam
-        # cobrindo relatos antigos não migrados.
-        linhas_resp: list[str] = []
-        try:
-            import database as _db_mod  # import lazy pra evitar ciclo
-            _coms = _db_mod.listar_comentarios_diario(int(reg.get('id', 0)))
-            for _c in _coms:
-                _ts_str = ''
-                try:
-                    _ts_str = _c['criado_em'].strftime('%d/%m/%Y %H:%M')
-                except Exception:
-                    pass
-                _perfil_str = (
-                    f" ({_c['perfil_autor']})" if _c.get('perfil_autor')
-                    else ''
-                )
-                _editado_marker = (
-                    ' (editado)' if _c.get('editado_em') else ''
-                )
-                # 1 comentário por linha de PDF
-                linhas_resp.append(
-                    f"[{_ts_str}] {_c['autor']}{_perfil_str}"
-                    f"{_editado_marker}: {_c['texto']}"
-                )
-        except Exception:
-            # Sem db disponível ou erro — cai no legado
-            pass
+        # Orientação / resposta do gestor
+        resp = str(reg.get('resposta_gestor', '') or '')
+        if resp.strip() and resp not in ('None', 'nan'):
+            # quebra a resposta em linhas
+            linhas_resp = [l.strip() for l in resp.split('\n') if l.strip()]
 
-        if not linhas_resp:
-            # Fallback: legado em `resposta_gestor`
-            resp = str(reg.get('resposta_gestor', '') or '')
-            if resp.strip() and resp not in ('None', 'nan'):
-                linhas_resp = [
-                    l.strip() for l in resp.split('\n') if l.strip()
-                ]
+            if not linhas_resp:
+                linhas_resp = ['—']
 
-        if linhas_resp:
             # primeira linha com o título
-            paragrafos = [Paragraph(f'<b>💡 Orientação / Interações:</b> {linhas_resp[0]}', st_diario_orient)]
+            paragrafos = [Paragraph(f'<b>💡 Orientação do Gestor:</b> {linhas_resp[0]}', st_diario_orient)]
             # demais linhas, cada uma em um parágrafo separado
             for linha in linhas_resp[1:]:
                 paragrafos.append(Paragraph(linha, st_diario_orient))

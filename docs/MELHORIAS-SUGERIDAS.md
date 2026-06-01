@@ -120,7 +120,7 @@ maduro (psycopg3), defaults sensatos.
 
 | # | Item | Por que | Esforço |
 |---|---|---|---|
-| ✅ | ~~**Comentários encadeados no diário**~~ Implementado em maio/2026: nova tabela `diario_comentarios` (1 linha por interação) com `id`, `relato_id` FK, `autor`, `perfil_autor`, `texto`, `criado_em`, `editado_em`, `parent_id` (suporta thread em árvore no futuro). Migração one-shot parseia `resposta_gestor` (texto concatenado `[DD/MM/YYYY HH:MM] Nome (Perfil): texto`) e popula a nova tabela; legado fica como backup. UI: cada comentário em card próprio com botões editar (só autor) / excluir (autor ou Gestor) + marca "(editado)". Busca + detector de menção `@` cobrem comentários novos E legacy. PDF do diário também. | ✅ Feito |
+| 🟢 | **Comentários encadeados no diário** | Hoje é tudo concatenado num `resposta_gestor` separado por `\n` — feio e sem edição/exclusão individual. Tentativa em maio/2026 reverteu por feedback de UX (cards individuais ficaram visualmente quebrados). | Médio (nova tabela `comentarios_diario`) |
 | ✅ | ~~**Time tracking**~~ Implementado em maio/2026: input `⏱ Horas` no form, chip no card de cada relato, expander "Horas registradas" agregando minhas/equipe × hoje/semana/mês + top 5 projetos do mês + breakdown por projetista | ✅ Feito |
 | ✅ | ~~**Templates de projeto**~~ Implementado em maio/2026: botão **📋 Clonar projeto** no painel de edição. Copia dados básicos (projetista, endereço, contato, demandas, prioridade, tags, link, escopo) + estrutura de etapas. Não copia diário, arquivos nem progresso. Novo projeto entra em "Em Espera" e abre direto na edição pra ajustar. | ✅ Feito |
 | 🟢 | **Histórico de versões** dos relatos | Hoje editar relato sobrescreve sem rastro. Útil pra auditoria | Médio (nova tabela ou versionar via JSON) |

@@ -150,10 +150,6 @@ db.criar_tabela_auditoria()
 db.criar_tabela_mencoes()
 db.criar_tabela_diario_leituras()
 db.migrar_status_em_espera()
-# Migra `diario.resposta_gestor` (texto concatenado) pra linhas em
-# `diario_comentarios`. Idempotente: pula relatos já migrados. Boot
-# subsequente custa só 1 SELECT.
-db.migrar_resposta_gestor_para_comentarios()
 
 if not os.path.exists("anexos"):
     os.makedirs("anexos")

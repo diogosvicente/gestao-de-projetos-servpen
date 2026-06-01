@@ -59,38 +59,11 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
 
     if busca and busca.strip():
         t = busca.lower()
-        # Pré-busca: relato_ids que têm COMENTÁRIO casando com o termo.
-        # Cobre conteúdo migrado pra diario_comentarios — sem isso, busca
-        # só acharia o que estiver em resposta_gestor (legado) ou nos
-        # campos do próprio relato (executado/autor/disciplina).
-        _ids_match_com = set()
-        if not df_proj_d.empty:
-            _ids_lista = df_proj_d["id"].astype(int).tolist()
-            try:
-                _conn_b = db.conectar()
-                _c_b = _conn_b.cursor()
-                try:
-                    _c_b.execute(
-                        "SELECT DISTINCT relato_id "
-                        "FROM diario_comentarios "
-                        "WHERE relato_id = ANY(%s) "
-                        "AND LOWER(texto) LIKE %s",
-                        (_ids_lista, f"%{t}%"),
-                    )
-                    _ids_match_com = {int(r[0]) for r in _c_b.fetchall()}
-                finally:
-                    _conn_b.close()
-            except Exception:
-                # Sem busca em comentários é OK — pior caso o user busca
-                # uma palavra que só aparece num comentário e não acha.
-                pass
-
         df_proj_d = df_proj_d[
             df_proj_d["executado"].astype(str).str.lower().str.contains(t, na=False)
             | df_proj_d["autor"].astype(str).str.lower().str.contains(t, na=False)
             | df_proj_d["disciplina"].astype(str).str.lower().str.contains(t, na=False)
             | df_proj_d["resposta_gestor"].astype(str).str.lower().str.contains(t, na=False)
-            | df_proj_d["id"].astype(int).isin(_ids_match_com)
         ]
     if so_pendentes:
         df_proj_d = df_proj_d[df_proj_d["resolvido"] == 0]
@@ -117,21 +90,11 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
         texto_exibicao = _render_mencoes_html(
             texto_exibicao, usuarios_para_render, eu_mesmo=autor_logado,
         )
-        _anexo = d.get("anexo")
-
-        # ── COMENTÁRIOS ESTRUTURADOS ──────────────────────────
-        # A partir de maio/2026, respostas viraram linhas em
-        # `diario_comentarios` (1 linha = 1 comentário). Antes, eram
-        # texto concatenado em `diario.resposta_gestor`. A migração
-        # `migrar_resposta_gestor_para_comentarios()` rodou no boot e
-        # parseou o legado. Se ainda houver `resposta_gestor` mas SEM
-        # comentários estruturados (parse falhou ou bug), mostramos como
-        # bloco legacy somente leitura.
-        _comentarios = db.listar_comentarios_diario(int(d["id"]))
-        _resposta_legada = str(d.get("resposta_gestor") or "").strip()
-        _tem_legado_sem_migrar = bool(
-            _resposta_legada and not _comentarios
+        resposta_limpa_html = _render_mencoes_html(
+            str(d.get("resposta_gestor") or "").replace("\n", "<br>"),
+            usuarios_para_render, eu_mesmo=autor_logado,
         )
+        _anexo = d.get("anexo")
 
         _wrap_pre = (
             '<div style="border:2px solid #f59e0b;border-radius:12px;'
@@ -164,10 +127,6 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
             f'</span>'
         )
 
-        # Card principal: cabeçalho colorido + texto do relato.
-        # ATENÇÃO: comentários NÃO ficam mais dentro deste card (antes eram
-        # injetados via "💡 ORIENTAÇÃO / INTERAÇÕES"). Agora aparecem como
-        # cards separados abaixo — permite editar/excluir individual.
         st.markdown(f"""
             {_wrap_pre}
             <div style="background-color:{cor_topo};color:white; padding:12px 15px;border-radius:10px 10px 0 0;margin-top:10px;">
@@ -181,200 +140,12 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
             </div>
             <div style="background:#1E1E1E;color:#EEE;padding:14px 15px;border:1px solid {cor_topo};border-top:none;border-radius:0 0 10px 10px;font-size:13px;line-height:1.6;margin-bottom:4px;">
             {texto_exibicao}
+            {f'''<div style="background:rgba(255,255,255,0.05);padding:10px;margin-top:10px;border-left:3px solid {cor_topo};border-radius:4px;">
+                <b style="color:{cor_topo}">💡 ORIENTAÇÃO / INTERAÇÕES:</b><br>{resposta_limpa_html}
+                </div>''' if d.get('resposta_gestor') else ''}
             </div>
             {_wrap_post}
         """, unsafe_allow_html=True)
-
-        # ── LISTA DE COMENTÁRIOS (cada um seu card) ─────────────
-        # Renderiza ABAIXO do card principal. Cada comentário tem botões
-        # próprios de Editar/Excluir (Editar: só o autor; Excluir: autor
-        # ou Gestor). O texto suporta @"Nome" igual ao relato principal.
-        if _comentarios:
-            st.markdown(
-                f"<div style='margin:6px 0 4px 8px;font-size:11px;"
-                f"color:{cor_topo};font-weight:600;letter-spacing:0.5px;'>"
-                f"💬 {len(_comentarios)} "
-                f"interaç{'ão' if len(_comentarios)==1 else 'ões'}"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-            for _com in _comentarios:
-                _com_id = int(_com["id"])
-                _kfx_com = f"{d['id']}_{_com_id}"
-                _eh_meu_com = (_com["autor"] == autor_logado)
-                _pode_editar_com = _eh_meu_com
-                _pode_excluir_com = (
-                    _eh_meu_com or perfil == "Gestor"
-                )
-                _em_edicao = st.session_state.get(
-                    f"edit_com_{_com_id}", False
-                )
-
-                _texto_com_html = _render_mencoes_html(
-                    str(_com["texto"]).replace("\n", "<br>"),
-                    usuarios_para_render,
-                    eu_mesmo=autor_logado,
-                )
-
-                # Marca "(editado)" se editado_em IS NOT NULL — mesmo padrão
-                # do chat. Hover mostra timestamp da edição.
-                _edit_marker_com = ""
-                if _com.get("editado_em"):
-                    try:
-                        _ed_str = _com["editado_em"].strftime(
-                            "%d/%m/%Y %H:%M"
-                        )
-                    except Exception:
-                        _ed_str = str(_com["editado_em"])
-                    _edit_marker_com = (
-                        f" <span style='opacity:.55;font-style:italic;'"
-                        f" title='Editado em {_ed_str}'>(editado)</span>"
-                    )
-
-                _perfil_chip = ""
-                if _com.get("perfil_autor"):
-                    _perfil_chip = (
-                        f"<span style='background:rgba(255,255,255,0.10);"
-                        f"padding:1px 6px;border-radius:6px;font-size:10px;"
-                        f"font-weight:600;margin-left:6px;'>"
-                        f"{_com['perfil_autor']}</span>"
-                    )
-
-                try:
-                    _ts_com_str = _com["criado_em"].strftime(
-                        "%d/%m/%Y %H:%M"
-                    )
-                except Exception:
-                    _ts_com_str = str(_com.get("criado_em") or "")
-                _ts_relativo = _tempo_relativo(_com.get("criado_em"))
-
-                with st.container(border=True):
-                    # Cabeçalho do comentário (autor + ts + ações)
-                    _hc1, _hc2 = st.columns([0.78, 0.22])
-                    _hc1.markdown(
-                        f"<div style='font-size:13px;'>"
-                        f"<b>👤 {_com['autor']}</b>{_perfil_chip}"
-                        f"{_edit_marker_com}"
-                        f"<span style='opacity:.6;font-size:11px;"
-                        f"margin-left:8px;' title='{_ts_com_str}'>"
-                        f"· {_ts_relativo}</span>"
-                        f"</div>",
-                        unsafe_allow_html=True,
-                    )
-                    # Botões de ação compactos: editar e excluir
-                    if _pode_editar_com or _pode_excluir_com:
-                        with _hc2:
-                            _ac1, _ac2 = st.columns(2)
-                            if _pode_editar_com:
-                                if _ac1.button(
-                                    "✏️", key=f"edcom_{_kfx_com}",
-                                    help="Editar comentário",
-                                    use_container_width=True,
-                                ):
-                                    st.session_state[
-                                        f"edit_com_{_com_id}"
-                                    ] = not _em_edicao
-                                    st.rerun(scope="fragment")
-                            if _pode_excluir_com:
-                                with _ac2.popover(
-                                    "🗑️",
-                                    help="Excluir comentário",
-                                    use_container_width=True,
-                                ):
-                                    st.markdown(
-                                        f"**Excluir este comentário?**"
-                                    )
-                                    st.caption(
-                                        "Esta ação não pode ser "
-                                        "desfeita."
-                                    )
-                                    if st.button(
-                                        "✅ Sim, excluir",
-                                        key=f"yes_delcom_{_kfx_com}",
-                                        type="primary",
-                                        use_container_width=True,
-                                    ):
-                                        db.excluir_comentario_diario(
-                                            _com_id
-                                        )
-                                        db.log_aud(
-                                            autor_logado,
-                                            "excluir_comentario",
-                                            "diario", int(d["id"]),
-                                            f"comentario_id={_com_id} "
-                                            f"autor='{_com['autor']}'",
-                                        )
-                                        st.toast("Comentário removido.")
-                                        st.rerun(scope="fragment")
-
-                    # Conteúdo: texto OU editor inline
-                    if _em_edicao and _pode_editar_com:
-                        _novo_txt = st.text_area(
-                            "Editar comentário",
-                            value=str(_com["texto"]),
-                            key=f"edit_area_{_com_id}",
-                            label_visibility="collapsed",
-                        )
-                        _bc_sv, _bc_cn = st.columns(2)
-                        if _bc_sv.button(
-                            "✅ Salvar",
-                            key=f"sv_com_{_kfx_com}",
-                            use_container_width=True,
-                        ):
-                            if _novo_txt.strip():
-                                db.editar_comentario_diario(
-                                    _com_id, _novo_txt.strip()
-                                )
-                                db.log_aud(
-                                    autor_logado, "editar_comentario",
-                                    "diario", int(d["id"]),
-                                    f"comentario_id={_com_id}",
-                                )
-                                st.session_state[
-                                    f"edit_com_{_com_id}"
-                                ] = False
-                                st.rerun(scope="fragment")
-                            else:
-                                st.warning("Texto não pode ficar vazio.")
-                        if _bc_cn.button(
-                            "✖ Cancelar",
-                            key=f"cn_com_{_kfx_com}",
-                            use_container_width=True,
-                        ):
-                            st.session_state[
-                                f"edit_com_{_com_id}"
-                            ] = False
-                            st.rerun(scope="fragment")
-                    else:
-                        st.markdown(
-                            f"<div style='font-size:13px;line-height:1.5;"
-                            f"margin-top:4px;'>{_texto_com_html}</div>",
-                            unsafe_allow_html=True,
-                        )
-
-        # ── BLOCO LEGADO (resposta_gestor não migrada) ──────────
-        # Se o relato tem `resposta_gestor` populado mas NÃO temos
-        # comentários estruturados, mostra o histórico antigo como bloco
-        # único somente leitura. Indica visualmente que é legacy.
-        if _tem_legado_sem_migrar:
-            _resposta_legada_html = _render_mencoes_html(
-                _resposta_legada.replace("\n", "<br>"),
-                usuarios_para_render, eu_mesmo=autor_logado,
-            )
-            st.markdown(
-                f'<div style="background:rgba(255,255,255,0.04);'
-                f'padding:10px;margin-top:6px;border-left:3px solid '
-                f'{cor_topo};border-radius:6px;font-size:12.5px;'
-                f'line-height:1.5;">'
-                f'<div style="font-size:10px;opacity:.65;'
-                f'text-transform:uppercase;letter-spacing:.5px;'
-                f'margin-bottom:6px;">'
-                f'📜 Histórico (formato antigo, somente leitura)'
-                f'</div>'
-                f'{_resposta_legada_html}'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
 
         # ── Barra de comandos dos cards ───────────────────────
         bc1, bc2, bc3, bc4 = st.columns([0.15, 0.15, 0.35, 0.35])
@@ -456,41 +227,34 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
             if st.button("📤 Enviar", key=f"env_{d['id']}",
                          use_container_width=True):
                 if nova_orient.strip():
-                    # Marcação "Ref: @X" inline no início (mantém UX
-                    # legado — multiselect "Envolver" sinaliza visualmente
-                    # quem foi referenciado mesmo sem usar @"Nome" no texto).
-                    # Não dispara fluxo de menção; pra concessão de acesso
-                    # via @"Nome" o user deve escrever inline.
+                    data_hora = datetime.now().strftime("%d/%m/%Y %H:%M")
                     marcacao = ""
                     if pessoas_selecionadas:
-                        marcacao = "(Ref: " + ", ".join(
+                        marcacao = " (Ref: " + ", ".join(
                             [f"@{p}" for p in pessoas_selecionadas]
-                        ) + ") "
-                    texto_final_comentario = (
-                        f"{marcacao}{nova_orient.strip()}"
+                        ) + ")"
+                    linha_comentario = (
+                        f"[{data_hora}] {autor_logado}{marcacao} "
+                        f"({perfil}): {nova_orient.strip()}"
+                    )
+                    historico_banco = str(d.get("resposta_gestor") or "").strip()
+                    texto_final = (
+                        f"{historico_banco}\n{linha_comentario}"
+                        if historico_banco else linha_comentario
                     )
 
-                    # Insere como nova LINHA em diario_comentarios.
-                    # Substitui a antiga concatenação no resposta_gestor.
-                    _novo_com_id = db.adicionar_comentario_diario(
-                        relato_id=int(d["id"]),
-                        autor=autor_logado,
-                        perfil_autor=perfil,
-                        texto=texto_final_comentario,
-                    )
-                    db.log_aud(
-                        autor_logado, "comentar", "diario",
-                        int(d["id"]),
-                        f"comentario_id={_novo_com_id}",
-                    )
+                    with db.conectar() as conn:
+                        _c = conn.cursor()
+                        _c.execute(
+                            "UPDATE diario SET resposta_gestor=%s WHERE id=%s",
+                            (texto_final, d["id"]),
+                        )
+                        conn.commit()
 
-                    # Processa @"Nome" do texto: concede acesso + notifica
-                    # + audita. Igual ao antes — só muda o `contexto`.
                     _processar_mencoes_diario(
-                        texto=nova_orient,
-                        projeto_id=int(d["projeto_id"]),
+                        texto=nova_orient, projeto_id=int(d["projeto_id"]),
                         autor=autor_logado, relato_id=int(d["id"]),
-                        contexto="comentario",
+                        contexto="resposta_gestor",
                         lista_usuarios=usuarios_para_render,
                     )
                     st.session_state[f"editor_{d['id']}"] = False
@@ -875,39 +639,14 @@ else:
             df_proj_d = df_d[df_d["projeto_id"] == proj_id].copy()
             df_proj_d = df_proj_d.sort_values("id", ascending=False)
 
-            # Busca olha relato + resposta_gestor (legado) + comentários
-            # estruturados (novo). Sem o lookup em diario_comentarios, busca
-            # ignoraria conteúdo migrado/inserido após maio/2026.
+            # Busca também olha 'resposta_gestor' (onde ficam as interações)
             if _busca_diario.strip():
                 t = _busca_diario.lower()
-                _ids_match_com_ext = set()
-                if not df_proj_d.empty:
-                    _ids_pl = df_proj_d["id"].astype(int).tolist()
-                    try:
-                        _conn_be = db.conectar()
-                        _c_be = _conn_be.cursor()
-                        try:
-                            _c_be.execute(
-                                "SELECT DISTINCT relato_id "
-                                "FROM diario_comentarios "
-                                "WHERE relato_id = ANY(%s) "
-                                "AND LOWER(texto) LIKE %s",
-                                (_ids_pl, f"%{t}%"),
-                            )
-                            _ids_match_com_ext = {
-                                int(r[0]) for r in _c_be.fetchall()
-                            }
-                        finally:
-                            _conn_be.close()
-                    except Exception:
-                        pass
-
                 df_proj_d = df_proj_d[
                     df_proj_d["executado"].astype(str).str.lower().str.contains(t, na=False)
                     | df_proj_d["autor"].astype(str).str.lower().str.contains(t, na=False)
                     | df_proj_d["disciplina"].astype(str).str.lower().str.contains(t, na=False)
                     | df_proj_d["resposta_gestor"].astype(str).str.lower().str.contains(t, na=False)
-                    | df_proj_d["id"].astype(int).isin(_ids_match_com_ext)
                 ]
             if _so_pendentes:
                 df_proj_d = df_proj_d[df_proj_d["resolvido"] == 0]
@@ -936,34 +675,13 @@ else:
 
             # Inteligência visual: abre a pasta do projeto automaticamente se:
             #  1) tiver relato não lido, OU
-            #  2) tiver menção @ pendente (resposta_gestor LEGADO ou em
-            #     comentário ESTRUTURADO no novo schema), OU
+            #  2) tiver menção @ pendente (sistema antigo, no resposta_gestor), OU
             #  3) user clicou "Ver" numa menção no painel persistente
             usuario_mencionado = f"@{usuario}".lower()
-            tem_mencao_legado = (
+            tem_mencao_ativa = (
                 df_proj_d["resposta_gestor"].astype(str).str.lower()
                 .str.contains(usuario_mencionado, na=False).any()
             )
-            # Mesmo lookup, agora em comentários estruturados.
-            tem_mencao_novo = False
-            try:
-                _conn_m = db.conectar()
-                _c_m = _conn_m.cursor()
-                try:
-                    _c_m.execute(
-                        "SELECT 1 FROM diario_comentarios dc "
-                        "JOIN diario d ON d.id = dc.relato_id "
-                        "WHERE d.projeto_id = %s "
-                        "AND LOWER(dc.texto) LIKE %s "
-                        "LIMIT 1",
-                        (int(proj_id), f"%{usuario_mencionado}%"),
-                    )
-                    tem_mencao_novo = _c_m.fetchone() is not None
-                finally:
-                    _conn_m.close()
-            except Exception:
-                tem_mencao_novo = False
-            tem_mencao_ativa = tem_mencao_legado or tem_mencao_novo
             _forcou_abrir = (
                 st.session_state.get("_diario_abrir_proj") == proj_id
             )
