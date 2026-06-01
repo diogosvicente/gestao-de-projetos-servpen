@@ -113,6 +113,11 @@ if not st.session_state.get("autenticado", False):
         st.session_state.autenticado = True
         st.session_state.usuario = _sess[0]
         st.session_state.perfil = _sess[1]
+        # Re-escreve o token na URL pra garantir que sobreviva a navegações
+        # de st.page_link (que zeram querystring em alguns casos). Sem isso,
+        # clicar num link de página OU no toast de chat fazia o user perder
+        # o ?t= e cair pra tela de login.
+        st.query_params["t"] = _tok
 
 # ── ANTI-FANTASMA DO TOAST DE CHAT ─────────────────────────────────────
 # Bug histórico: clicar em "📨 Ver mensagem" no toast fazia page-reload

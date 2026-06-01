@@ -79,15 +79,19 @@ def _chat_toast_html(remetente: str, qtd: int):
                         '  display:flex; justify-content:space-between;',
                         '  align-items:center; gap:8px; }}',
                         '.wa-toast-actions {{ display:flex; gap:6px; margin-top:6px; }}',
-                        '.wa-toast-actions button {{ flex:1; padding:5px 10px;',
+                        // Aplica a `button` E `a` — o botão "Ver mensagem" é um
+                        // <a target="_top">, mas precisa ter a mesma aparência
+                        // dos botões (caso contrário herda azul padrão de link
+                        // do browser, ficando azul-sobre-azul ilegível).
+                        '.wa-toast-actions button, .wa-toast-actions a {{ flex:1; padding:5px 10px;',
                         '  border-radius:6px; border:1px solid rgba(255,255,255,.15);',
-                        '  background:rgba(255,255,255,.07); color:#e9edef;',
-                        '  font-size:12px; font-weight:500; cursor:pointer;',
-                        '  transition:background .15s; }}',
-                        '.wa-toast-actions button:hover {{ background:rgba(255,255,255,.15); }}',
-                        '.wa-toast-actions button.primary {{ background:#3b82f6;',
-                        '  border-color:#3b82f6; }}',
-                        '.wa-toast-actions button.primary:hover {{ background:#2563eb; }}',
+                        '  background:rgba(255,255,255,.07); color:#ffffff;',
+                        '  font-size:12px; font-weight:600; cursor:pointer;',
+                        '  text-decoration:none; transition:background .15s; }}',
+                        '.wa-toast-actions button:hover, .wa-toast-actions a:hover {{ background:rgba(255,255,255,.15); color:#ffffff; }}',
+                        '.wa-toast-actions button.primary, .wa-toast-actions a.primary {{ background:#2563eb;',
+                        '  border-color:#2563eb; color:#ffffff; }}',
+                        '.wa-toast-actions button.primary:hover, .wa-toast-actions a.primary:hover {{ background:#1d4ed8; color:#ffffff; }}',
                         '.wa-toast-close {{ background:transparent; border:0;',
                         '  color:#94a3b8; cursor:pointer; font-size:14px; padding:0 4px; }}',
                         '@keyframes wa-slide-in {{',
