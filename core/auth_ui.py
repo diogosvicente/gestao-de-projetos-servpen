@@ -318,6 +318,20 @@ def tela_login():
     """
     st.markdown(_CSS_LOGIN, unsafe_allow_html=True)
 
+    # ── BANNER TEMPORÁRIO DE TESTE DE DEPLOY ───────────────────
+    # TODO: remover após validar o pipeline de deploy.
+    st.markdown(
+        """
+        <div style="background:#f59e0b;color:#1f2937;padding:10px 14px;
+                    border-radius:8px;margin-bottom:18px;text-align:center;
+                    font-weight:600;font-size:.9rem;
+                    box-shadow:0 4px 12px rgba(245,158,11,0.4);">
+            🚀 DEPLOY DE TESTE — versão nova ativa
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     # Form: Enter em qualquer input submete o formulário
     with st.form("login_form", clear_on_submit=False, border=False):
         u = st.text_input("Usuário", placeholder="Nome completo, como cadastrado")
