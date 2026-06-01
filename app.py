@@ -479,6 +479,21 @@ if _eh_tema_claro():
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# 7.5. TRADUÇÃO pt-BR DAS MENSAGENS NATIVAS DO STREAMLIT
+# ═══════════════════════════════════════════════════════════════════════
+# Streamlit hardcoda várias strings em inglês ("Press Ctrl+Enter to submit
+# form", "Browse files", etc.) que não podem ser controladas por parâmetro
+# do widget. Esta chamada injeta um MutationObserver que troca essas strings
+# pelo equivalente pt-BR conforme o DOM é renderizado.
+#
+# Vai ANTES da tela de login (afeta o form de login também) e ANTES do
+# st.navigation (afeta todas as views).
+from core.i18n import aplicar_traducoes_pt_br  # noqa: E402
+
+aplicar_traducoes_pt_br()
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # 8. TELA DE LOGIN (se não autenticado)
 # ═══════════════════════════════════════════════════════════════════════
 if not st.session_state.autenticado:
