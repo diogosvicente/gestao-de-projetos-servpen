@@ -282,17 +282,26 @@ with col_cal:
         primeiro_dia, total_dias = _cal.monthrange(ano_atual, mes_atual)
         hoje = datetime.now().date()
 
+        # IMPORTANTE: `table-layout: fixed` força colunas de largura igual
+        # (1/7 cada). Sem isso, a tabela usa auto-layout e pills com
+        # `display:block; nowrap` esticam a coluna pra caber o texto —
+        # resultado: pill "Visita Técnica - Sondagem" estourava a coluna
+        # SÁB e invadia a coluna do formulário "Novo Compromisso" à direita.
+        # `overflow:hidden` no td é defesa extra: clipa qualquer filho que
+        # tente sair (ex: pill com max-width quebrado em browser antigo).
         html_cal = """
         <style>
-        .srv-cal { width:100%; border-collapse:separate; border-spacing:3px;
+        .srv-cal { width:100%; table-layout:fixed;
+                   border-collapse:separate; border-spacing:3px;
                    font-family:'Segoe UI',sans-serif; }
         .srv-cal th { background:#1e3a5f; color:#93c5fd; font-size:.75rem;
                       font-weight:600; letter-spacing:1px;
-                      padding:8px 4px; border-radius:4px; text-align:center; }
+                      padding:8px 4px; border-radius:4px; text-align:center;
+                      width:14.28%; }
         .srv-cal td { vertical-align:top; background:rgba(255,255,255,0.03);
                       border:1px solid rgba(255,255,255,0.06);
                       border-radius:6px; padding:4px; min-height:72px;
-                      width:14.28%; }
+                      width:14.28%; overflow:hidden; }
         .srv-cal td.hoje { border:2px solid #3b82f6 !important;
                            background:rgba(59,130,246,0.08); }
         .srv-cal td.vazio { background:transparent; border:none; }
@@ -302,7 +311,8 @@ with col_cal:
         .ev-pill { font-size:.65rem; font-weight:600; color:#fff;
                    padding:1px 5px; border-radius:10px; margin-bottom:2px;
                    white-space:nowrap; overflow:hidden;
-                   text-overflow:ellipsis; display:block; }
+                   text-overflow:ellipsis; display:block;
+                   max-width:100%; box-sizing:border-box; }
         </style>
         <table class="srv-cal"><thead><tr>
         <th>DOM</th><th>SEG</th><th>TER</th><th>QUA</th>
