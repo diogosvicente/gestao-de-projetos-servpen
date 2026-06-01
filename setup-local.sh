@@ -5,8 +5,8 @@
 # sem problema, mas usa cache do pip.
 #
 # Pré-requisitos:
-#   - python3.12 (ou compatível) + python3.12-venv
-#     Instalar: sudo apt-get install -y python3.12 python3.12-venv
+#   - python3.13 recomendado (ou Python compatível da distribuição) + módulo venv
+#     Instalar: sudo apt-get install -y python3 python3-venv
 #   - docker (pra rodar Postgres local depois)
 #
 # Depois desse setup, use ./run-local.sh pra subir o app.
@@ -17,7 +17,7 @@ cd "$(dirname "$0")"
 
 # ── 1) Acha um Python compatível ────────────────────────────────────
 PYTHON=""
-for cand in python3.12 python3.11 python3.10 python3; do
+for cand in python3.13 python3.12 python3.11 python3; do
     if command -v "$cand" >/dev/null 2>&1; then
         PYTHON="$cand"
         break
@@ -25,6 +25,7 @@ for cand in python3.12 python3.11 python3.10 python3; do
 done
 [ -n "${PYTHON}" ] || { echo "ERRO: nenhum python3 encontrado." >&2; exit 1; }
 echo "→ Python: $(${PYTHON} --version) (${PYTHON})"
+PYTHON_VENV_PACKAGE="${PYTHON}-venv"
 
 # ── 0) Cria db.env.local a partir do template se ainda não existe ──
 if [ -f db.env.local ]; then
@@ -47,11 +48,11 @@ fi
 if [ ! -d venv ]; then
     echo "→ Criando venv..."
     if ! "${PYTHON}" -m venv --upgrade-deps venv; then
-        cat <<'HELP' >&2
+        cat >&2 <<HELP
 
 ERRO ao criar venv. No Ubuntu/Debian, instala o pacote:
 
-    sudo apt-get install -y python3.12-venv
+    sudo apt-get install -y ${PYTHON_VENV_PACKAGE}
 
 E roda este script de novo.
 HELP

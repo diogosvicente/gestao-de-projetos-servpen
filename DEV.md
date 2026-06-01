@@ -4,9 +4,9 @@ Guia rápido pra rodar o sistema no seu PC e publicar no servidor 238.40.
 
 ## Pré-requisitos (uma vez)
 
-- **Python 3.12** (ou compatível) com `python3-venv`:
+- **Python 3.13 recomendado** (ou a versão compatível da distribuição) com `python3-venv`:
   ```bash
-  sudo apt-get install -y python3.12 python3.12-venv
+  sudo apt-get install -y python3 python3-venv
   ```
 - **Docker** (pra Postgres local):
   ```bash

@@ -9,8 +9,8 @@ Dev em **WSL Ubuntu** (Windows) ou Linux nativo. Tudo abaixo roda
 dentro do shell do WSL — não no PowerShell.
 
 ```bash
-# Python:
-sudo apt-get install -y python3.12 python3.12-venv
+# Python 3.13 recomendado (ou a versão compatível da distribuição):
+sudo apt-get install -y python3 python3-venv
 
 # Docker Engine + Docker Compose v2 (plugin moderno):
 curl -fsSL https://get.docker.com | sudo sh
