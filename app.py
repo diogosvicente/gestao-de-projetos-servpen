@@ -479,20 +479,6 @@ if _eh_tema_claro():
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 7.5. TRADUÇÃO pt-BR DAS MENSAGENS NATIVAS DO STREAMLIT
-# ═══════════════════════════════════════════════════════════════════════
-# Streamlit hardcoda várias strings em inglês ("Press Ctrl+Enter to submit
-# form", "Browse files", etc.). A primeira tentativa usava MutationObserver
-# com `characterData: true + subtree: true` sobre `document.body`, que ficou
-# pesado demais em DOM grande do Streamlit (travava a main thread após o
-# login). Reescrito com `setInterval` curtinho + `querySelectorAll` cirúrgico
-# nos elementos específicos onde essas strings aparecem.
-from core.i18n import aplicar_traducoes_pt_br  # noqa: E402
-
-aplicar_traducoes_pt_br()
-
-
-# ═══════════════════════════════════════════════════════════════════════
 # 8. TELA DE LOGIN (se não autenticado)
 # ═══════════════════════════════════════════════════════════════════════
 if not st.session_state.autenticado:
