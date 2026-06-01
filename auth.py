@@ -3,7 +3,7 @@ import logging
 import streamlit as st
 import database as db
 
-
+# mude aqui
 log = logging.getLogger(__name__)
 
 
