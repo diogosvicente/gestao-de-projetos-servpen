@@ -494,8 +494,48 @@ from core.auth_ui import _avatar_circular_html, _dialog_meu_perfil
 from core.helpers import _pode_editar, _pode_gestor
 from core.notif import _global_notif
 
+# Define as pages ANTES do sidebar pra poder renderizar os links manuais
+# na ordem que queremos (avatar → Meu Perfil → menu → Sair → tema → badges).
+# Reflete EXATAMENTE a lista que vai pro st.navigation lá embaixo.
+#
+# Convenção: lowercase ASCII com underscore (sem acentos, sem hífen). O
+# JavaScript do toast detecta "qual é o slug atual" comparando o último
+# segmento do pathname com essa lista (ver core/notif.py:KNOWN_SLUGS).
+_pages_gerais = [
+    st.Page("views/dashboard.py", title="Dashboard", icon="📊",
+            default=True),
+    st.Page("views/kanban.py", title="Kanban", icon="📋",
+            url_path="kanban"),
+    st.Page("views/novo_projeto.py", title="Novo Projeto", icon="➕",
+            url_path="novo_projeto"),
+    st.Page("views/diario.py", title="Diário", icon="📝",
+            url_path="diario"),
+    st.Page("views/arquivos.py", title="Arquivos", icon="📁",
+            url_path="arquivos"),
+    st.Page("views/equipe.py", title="Equipe", icon="👥",
+            url_path="equipe"),
+    st.Page("views/chat.py", title="Chat", icon="💬",
+            url_path="chat"),
+    st.Page("views/agenda.py", title="Agenda", icon="📅",
+            url_path="agenda"),
+]
+_pages_gestor = [
+    st.Page("views/auditoria.py", title="Auditoria", icon="🛡️",
+            url_path="auditoria"),
+    st.Page("views/acessos.py", title="Acessos", icon="🔑",
+            url_path="acessos"),
+]
+pages = (
+    _pages_gerais + _pages_gestor if _pode_gestor() else _pages_gerais
+)
+
+
 with st.sidebar:
-    # Avatar circular + identificação no topo
+    # ── BLOCO DE PERFIL (avatar → nome → cargo → botão Meu Perfil) ──
+    # Renderizado ANTES do menu de navegação pra ficar destacado no topo
+    # da sidebar (versão anterior tinha o st.navigation default ficando
+    # acima — agora usamos position="hidden" no navigation e listamos
+    # os links manualmente abaixo).
     _me_side = db.obter_usuario(st.session_state.usuario) or {}
     st.markdown(
         _avatar_circular_html(_me_side.get("avatar_path"), size=88),
@@ -514,6 +554,18 @@ with st.sidebar:
                  key="btn_meu_perfil"):
         _dialog_meu_perfil()
 
+    st.divider()
+
+    # ── MENU DE NAVEGAÇÃO MANUAL ─────────────────────────────────
+    # st.navigation(position="hidden") desabilita o widget automático;
+    # listamos as páginas como page_links pra controlar ordem (perfil
+    # fica acima). Cada page_link respeita o `icon=` definido no st.Page.
+    for _pg in pages:
+        st.page_link(_pg, use_container_width=True)
+
+    st.divider()
+
+    # ── BOTÃO SAIR + TEMA ───────────────────────────────────────
     if st.button("🔴 Sair do Sistema", use_container_width=True,
                  key="btn_sair"):
         db.log_aud(st.session_state.usuario, "logout", "sessao", None, "")
@@ -602,50 +654,11 @@ with st.sidebar:
 # a cada interação do usuário — esse é o ganho principal vs st.tabs
 # (que rodava as 10 abas a cada clique). Streamlit 1.36+ obrigatório.
 
-#
-# IMPORTANTE — `url_path` explícito em todas as páginas (exceto a default).
-# Sem isso, o Streamlit infere o slug do filename. Funcionaria, mas seria
-# implícito. Aqui fixamos pra:
-#   1) URL estável mesmo se renomear o arquivo
-#   2) Toast de "📨 Ver mensagem" no chat poder navegar pra `<base>/chat`
-#      direto (ver core/notif.py — o JS precisa do slug "chat").
-#   3) `core/notif.py:KNOWN_SLUGS` reflete EXATAMENTE essa lista. Se mudar
-#      um url_path aqui, atualize lá também.
-#
-# Convenção: lowercase ASCII com underscore (sem acentos, sem hífen). O
-# JavaScript do toast detecta "qual é o slug atual" comparando o último
-# segmento do pathname com essa lista.
-_pages_gerais = [
-    st.Page("views/dashboard.py", title="Dashboard", icon="📊",
-            default=True),  # default → URL = base do app (sem slug)
-    st.Page("views/kanban.py", title="Kanban", icon="📋",
-            url_path="kanban"),
-    st.Page("views/novo_projeto.py", title="Novo Projeto", icon="➕",
-            url_path="novo_projeto"),
-    st.Page("views/diario.py", title="Diário", icon="📝",
-            url_path="diario"),
-    st.Page("views/arquivos.py", title="Arquivos", icon="📁",
-            url_path="arquivos"),
-    st.Page("views/equipe.py", title="Equipe", icon="👥",
-            url_path="equipe"),
-    st.Page("views/chat.py", title="Chat", icon="💬",
-            url_path="chat"),
-    st.Page("views/agenda.py", title="Agenda", icon="📅",
-            url_path="agenda"),
-]
-_pages_gestor = [
-    st.Page("views/auditoria.py", title="Auditoria", icon="🛡️",
-            url_path="auditoria"),
-    st.Page("views/acessos.py", title="Acessos", icon="🔑",
-            url_path="acessos"),
-]
-
-# Gestor vê todas; Projetista/Visualizador ficam sem Auditoria/Acessos.
-pages = (
-    _pages_gerais + _pages_gestor if _pode_gestor() else _pages_gerais
-)
-
-pg = st.navigation(pages)
+# `position="hidden"`: desliga o menu lateral automático do Streamlit.
+# A navegação visível é renderizada manualmente como st.page_link na
+# sidebar (acima), o que permite controlar a ORDEM (perfil → menu →
+# sair → tema). O st.navigation aqui só faz o ROUTING.
+pg = st.navigation(pages, position="hidden")
 pg.run()
 
 

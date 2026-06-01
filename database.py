@@ -697,6 +697,9 @@ def criar_tabelas():
             # Marca quando a mensagem foi editada — UI mostra "(editado)"
             # do lado do horário, no estilo WhatsApp/Telegram.
             ("chat",                  "editado_em",         "TIMESTAMP"),
+            # Soft-delete estilo WhatsApp: quando NÃO-NULL, a UI mostra
+            # "🚫 Esta mensagem foi excluída" em texto cinza-itálico.
+            ("chat",                  "excluida_em",        "TIMESTAMP"),
             ("agenda",                "local",              "TEXT"),
             ("mencoes_notificacoes",  "dispensado_em",      "TIMESTAMP"),
         ]
@@ -1025,9 +1028,24 @@ def excluir_registro_diario(id_relato):
 
 # ─── CHAT ─────────────────────────────────────────────────
 def excluir_mensagem_chat(id_msg):
+    """Soft-delete estilo WhatsApp.
+
+    Em vez de DELETE, marca `excluida_em = CURRENT_TIMESTAMP` e zera o
+    texto. O render do chat detecta `excluida_em IS NOT NULL` e mostra
+    "🚫 Esta mensagem foi excluída" no lugar do texto original.
+
+    Vantagens vs DELETE:
+      - O destinatário vê que a mensagem existiu (transparência).
+      - Mantém auditoria — quem mandou e quando, mesmo sem o texto.
+      - Mensagens adjacentes não "deslizam" na timeline.
+    """
     conn = conectar(); c = conn.cursor()
     try:
-        c.execute("DELETE FROM chat WHERE id = %s", (id_msg,))
+        c.execute(
+            "UPDATE chat SET mensagem = '', excluida_em = CURRENT_TIMESTAMP "
+            "WHERE id = %s",
+            (id_msg,),
+        )
         conn.commit()
     finally:
         conn.close()

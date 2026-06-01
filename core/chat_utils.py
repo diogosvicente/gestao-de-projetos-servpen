@@ -181,6 +181,15 @@ def _render_chat_messages(usuario, contato_nome):
             # Está em modo edição?
             _em_edit = st.session_state.get(f"edit_mode_{_msg_id}", False)
 
+            # Detecta soft-delete (excluida_em IS NOT NULL).
+            # Quando a mensagem foi "apagada" via excluir_mensagem_chat,
+            # mostramos placeholder estilo WhatsApp em vez do texto.
+            _excl_raw = m.get("excluida_em") if "excluida_em" in m else None
+            _foi_excluida = (
+                _excl_raw is not None
+                and not (isinstance(_excl_raw, float) and pd.isna(_excl_raw))
+            )
+
             # Bolha + horário compactos
             _horario = (
                 _dt_msg.strftime("%H:%M")
@@ -195,9 +204,10 @@ def _render_chat_messages(usuario, contato_nome):
 
             # Marca "(editado)" se a mensagem foi modificada — estilo WhatsApp.
             # Coluna editado_em populada por editar_mensagem_chat.
+            # NÃO mostra (editado) se a mensagem já foi excluída.
             _edit_marker = ""
             _ed_raw = m.get("editado_em") if "editado_em" in m else None
-            if _ed_raw is not None and not (
+            if (not _foi_excluida) and _ed_raw is not None and not (
                 isinstance(_ed_raw, float) and pd.isna(_ed_raw)
             ):
                 try:
@@ -213,20 +223,32 @@ def _render_chat_messages(usuario, contato_nome):
                 except Exception:
                     pass
 
+            # Conteúdo: texto normal OU placeholder de excluída
+            if _foi_excluida:
+                _conteudo_html = (
+                    "<span style='opacity:.6;font-style:italic;"
+                    "display:inline-flex;align-items:center;gap:5px;'>"
+                    "🚫 Esta mensagem foi excluída</span>"
+                )
+            else:
+                _conteudo_html = _safe_chat_html(m["mensagem"])
+
             _bolha_html = (
                 f"<div class='wa-row {_classe}'>"
                 f"<div class='wa-bub {_classe}'>"
                 f"{_who_html}"
-                f"{_safe_chat_html(m['mensagem'])}"
+                f"{_conteudo_html}"
                 f"<div class='wa-meta'>{_edit_marker}{_horario}</div>"
                 f"</div></div>"
             )
 
-            if sou_eu:
+            if sou_eu and not _foi_excluida:
                 # Layout: bolha (95%) + popover ⋯ pequeno (5%).
                 # SEM use_container_width no popover — assim ele fica com
                 # altura natural (≈28px) em vez de esticar pra altura da
                 # coluna.
+                # Não mostra popover se a msg já foi excluída — nada
+                # adicional a fazer com ela.
                 cm_main, cm_act = st.columns([0.95, 0.05])
                 cm_main.markdown(_bolha_html, unsafe_allow_html=True)
                 with cm_act:
@@ -243,7 +265,7 @@ def _render_chat_messages(usuario, contato_nome):
                 st.markdown(_bolha_html, unsafe_allow_html=True)
 
             # Editor inline (logo abaixo da mensagem)
-            if sou_eu and _em_edit:
+            if sou_eu and _em_edit and not _foi_excluida:
                 with st.container(border=True):
                     _novo_txt = st.text_input(
                         "Corrigir mensagem",

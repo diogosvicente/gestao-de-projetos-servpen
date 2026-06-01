@@ -596,16 +596,18 @@ with col_cal:
                         else f"{_di.strftime('%d/%m')}–{_df_.strftime('%d/%m')}"
                     )
                     c_ev1, c_ev2 = st.columns([5, 1], gap="small")
-                    c_ev1.markdown(
-                        f"<div style='border-left:3px solid {_cor};"
-                        f"padding:2px 0 2px 8px;margin:0;line-height:1.35;'>"
+                    # HTML montado em UMA LINHA pra evitar que o markdown do
+                    # Streamlit interprete 4+ espaços de indentação como
+                    # bloco de código <pre> (faria a tag <span> vazar como
+                    # texto literal: "<span style='...'>... </span>" visível).
+                    _ev_html = (
+                        f"<div style=\"border-left:3px solid {_cor};padding:2px 0 2px 8px;margin:0;line-height:1.35;\">"
                         f"<b>{_ico} {_ev['titulo']}</b> "
-                        f"<span style='color:#94a3b8;font-size:.78rem;'>"
-                        f"· {_quando} "
-                        f"<span style='opacity:.7;'>({_periodo})</span>"
-                        f"</span></div>",
-                        unsafe_allow_html=True,
+                        f"<span style=\"color:#94a3b8;font-size:.78rem;\">· {_quando} "
+                        f"<span style=\"opacity:.7;\">({_periodo})</span>"
+                        f"</span></div>"
                     )
+                    c_ev1.markdown(_ev_html, unsafe_allow_html=True)
                     if c_ev2.button("🔍", key=f"res_ab_{_ev['id']}",
                                     help="Abrir no formulário",
                                     use_container_width=True):
