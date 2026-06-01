@@ -156,20 +156,19 @@ if [ "${USE_GIT_DIFF}" = "1" ]; then
         $(printf ":(exclude)%s " "${PRESERVAR[@]}"))"
     DIFF_SOURCE="git diff ${LAST_SHA:0:7}..HEAD"
 else
-    # Primeiro deploy — usa rsync dry-run pra listar
-    info "Listando arquivos via rsync dry-run..."
-    RSYNC_EXCLUDES=()
-    for p in "${PRESERVAR[@]}"; do
-        RSYNC_EXCLUDES+=("--exclude=${p}")
-    done
-    DRY_OUTPUT="$(rsync -avzn --itemize-changes \
-        "${RSYNC_EXCLUDES[@]}" \
-        ./ "${REMOTE_USER}@${REMOTE_HOST}:${APP_DIR}/" \
-        2>/dev/null | grep -E '^[<>cf*]' || true)"
-    # Converte output do rsync pro mesmo formato do git (added removed file).
-    # rsync não dá +/- de linhas, então usa "?" como placeholder.
-    NUMSTAT="$(echo "${DRY_OUTPUT}" | awk '{print "?\t?\t" $NF}')"
-    DIFF_SOURCE="rsync --dry-run"
+    # Primeiro deploy — lista ARQUIVOS DO GIT (não do filesystem todo).
+    #
+    # Por que `git ls-files` em vez de `rsync --dry-run ./`:
+    #   rsync vê o filesystem inteiro: pega .local/, .cache/, IDE folders,
+    #   __pycache__, arquivos temp, etc. Mesmo com `--exclude`, é fácil
+    #   esquecer alguma pasta nova. `git ls-files` é a verdade absoluta
+    #   sobre "o que pertence ao projeto" — se não está no git, não vai.
+    #
+    # Listamos só "?    ?    arquivo" (sem +/- linhas — não temos como
+    # saber sem ter o estado do servidor pra comparar).
+    info "Listando arquivos rastreados pelo git..."
+    NUMSTAT="$(git ls-files | awk '$0 != "" {print "?\t?\t" $0}')"
+    DIFF_SOURCE="git ls-files (primeiro deploy)"
 fi
 
 if [ -z "${NUMSTAT}" ] || ! echo "${NUMSTAT}" | grep -q .; then
@@ -316,33 +315,21 @@ fi
 echo
 info "Transferindo ${#FILES_TO_TRANSFER[@]} arquivo(s) via rsync..."
 
-RSYNC_EXCLUDES=()
-for p in "${PRESERVAR[@]}"; do
-    RSYNC_EXCLUDES+=("--exclude=${p}")
-done
+# SEMPRE usa --files-from com lista explícita.
+# Garante que SÓ arquivos do repo são enviados — nada de .local/, .cache/,
+# IDE folders, __pycache__, secrets, ou qualquer coisa que esteja no
+# filesystem mas não no git.
+TMPLIST="$(mktemp)"
+trap 'rm -f "$TMPLIST"' EXIT
+printf '%s\n' "${FILES_TO_TRANSFER[@]}" > "${TMPLIST}"
 
-if [ "${MODE}" = "all" ]; then
-    # rsync de tudo (respeitando excludes) com --delete-after pra remover
-    # arquivos órfãos da versão antiga (ex: app.py.bak antigo).
-    if [ "${DRY_RUN}" = "1" ]; then
-        echo "  ${YELLOW}[dry-run]${RESET} rsync -avz --delete-after [excludes] ./ ${REMOTE_USER}@${REMOTE_HOST}:${APP_DIR}/"
-    else
-        rsync -avz --delete-after "${RSYNC_EXCLUDES[@]}" \
-            ./ "${REMOTE_USER}@${REMOTE_HOST}:${APP_DIR}/"
-    fi
+if [ "${DRY_RUN}" = "1" ]; then
+    echo "  ${YELLOW}[dry-run]${RESET} rsync -avzc --files-from=<lista> ./ ${REMOTE_USER}@${REMOTE_HOST}:${APP_DIR}/"
+    echo "  ${YELLOW}[dry-run]${RESET} arquivos que seriam enviados (${#FILES_TO_TRANSFER[@]}):"
+    sed 's/^/    /' "${TMPLIST}"
 else
-    # Interativo — usa --files-from com lista exata.
-    TMPLIST="$(mktemp)"
-    trap 'rm -f "$TMPLIST"' EXIT
-    printf '%s\n' "${FILES_TO_TRANSFER[@]}" > "${TMPLIST}"
-    if [ "${DRY_RUN}" = "1" ]; then
-        echo "  ${YELLOW}[dry-run]${RESET} rsync -avz --files-from=${TMPLIST} ./ ${REMOTE_USER}@${REMOTE_HOST}:${APP_DIR}/"
-        echo "  ${YELLOW}[dry-run]${RESET} lista de arquivos:"
-        sed 's/^/    /' "${TMPLIST}"
-    else
-        rsync -avz --files-from="${TMPLIST}" \
-            ./ "${REMOTE_USER}@${REMOTE_HOST}:${APP_DIR}/"
-    fi
+    rsync -avzc --files-from="${TMPLIST}" \
+        ./ "${REMOTE_USER}@${REMOTE_HOST}:${APP_DIR}/"
 fi
 ok "rsync terminou"
 
