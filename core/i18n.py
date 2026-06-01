@@ -1,24 +1,19 @@
-"""Tradução pt-BR das mensagens nativas do Streamlit.
+"""Tradução pt-BR das mensagens nativas do Streamlit (versão segura).
 
-Por que existe:
- O Streamlit hardcoda várias mensagens em inglês na UI dos widgets (ex.:
- "Press Ctrl+Enter to submit form", "Browse files", "Drag and drop file
- here", "Limit 200MB per file"). Não dá pra controlar por parâmetro do
- widget — vêm direto do componente React empacotado. A única forma de
- traduzir sem fork-ar o Streamlit é injetar JS que observa mutações no
- DOM e substitui o texto na renderização.
+Histórico:
+ 1ª versão usava `MutationObserver` com `characterData: true + subtree:
+ true` sobre `document.body`. Em DOM grande do Streamlit (centenas de
+ widgets), cada modificação de texto disparava nova mutação, criando uma
+ cascata de callbacks que travava a main thread. Login → branco.
 
-Como funciona:
- `aplicar_traducoes_pt_br()` injeta um `<script>` via `components.html`
- que (1) aplica traduções no DOM inicial e (2) instala um MutationObserver
- que reaplica a cada mudança (rerun do Streamlit, widget criado/removido,
- etc.). O `closeToast` do toast de chat usou padrão parecido — função
- global no top frame que sobrevive aos iframes do `components.html`.
-
-Custo:
- MutationObserver é barato quando filtra bem (`childList + subtree`).
- Como roda só nos containers que podem ter as strings-alvo, impacto é
- desprezível mesmo em pages com centenas de widgets.
+Versão atual:
+ - `setInterval(500ms)` com `querySelectorAll` cirúrgico nos `data-testid`
+   exatos onde as strings inglês aparecem (`InputInstructions`,
+   `stFileUploaderDropzoneInstructions`, etc.). Sem walk recursivo do DOM.
+ - Idempotente: flag em `window.parent` impede instalar de novo entre
+   reruns. Se o setInterval ficar órfão (Streamlit recarrega o frame), o
+   próximo `aplicar_traducoes_pt_br()` reinstala.
+ - `try/catch` em volta — i18n é cosmético, nunca quebra o app.
 """
 
 from __future__ import annotations
@@ -26,15 +21,7 @@ from __future__ import annotations
 import streamlit.components.v1 as _components
 
 
-# Mapa simples de tradução: string em inglês → pt-BR.
-# Coberto:
-#  - form: text_area / text_input com botão de submit
-#  - file_uploader: rótulos e dicas
-#  - st.dataframe / st.toast nativos: poucos hits, mantemos curto
-#
-# Pra adicionar nova tradução: inclua o par (en, pt) abaixo. Se a string
-# tem parte variável (ex.: "Limit 200MB per file"), use a lista de regex
-# `_REGEX_TRADUCOES` mais abaixo.
+# Mapa exato: string em inglês → pt-BR.
 _TRADUCOES_EXATAS = {
     # Forms
     "Press Ctrl+Enter to submit form": "Use Ctrl+Enter para enviar",
@@ -52,35 +39,47 @@ _TRADUCOES_EXATAS = {
     "Loading...":                       "Carregando...",
     "Running...":                       "Executando...",
     "Connecting":                       "Conectando",
-    "Stop":                             "Parar",
-    "Rerun":                            "Re-executar",
-    "Deploy":                           "Publicar",
 }
 
-# Padrões com parte variável (limite de upload, contagens dinâmicas).
-# Cada entrada: (regex_em_ingles, template_pt_br_com_$1, $2, ...)
+# Padrões com parte variável.
 _REGEX_TRADUCOES = [
-    (r"^Limit (\d+(?:\.\d+)?[KMG]?B) per file$",  "Limite $1 por arquivo"),
-    (r"^Limit (\d+(?:\.\d+)?[KMG]?B) per file • ",
-     "Limite $1 por arquivo • "),
+    (r"^Limit (\d+(?:\.\d+)?[KMG]?B) per file$",
+     "Limite $1 por arquivo"),
+    (r"^Limit (\d+(?:\.\d+)?[KMG]?B) per file • (.+)$",
+     "Limite $1 por arquivo • $2"),
+]
+
+# Seletores onde as strings-alvo aparecem. Mais específico = menos custo
+# por tick. Se uma nova string surgir num seletor não listado, adicionar
+# aqui depois de inspecionar o DOM no DevTools.
+_SELETORES_ALVO = [
+    '[data-testid="InputInstructions"]',
+    '[data-testid="stFileUploaderDropzoneInstructions"]',
+    '[data-testid="stFileUploaderDropzone"] button',
+    '[data-testid="stFileUploaderDropzone"] span',
+    '[data-testid="stFileUploaderFileName"] + small',
+    # Selectbox / multiselect placeholders
+    '.stSelectbox div[role="combobox"]',
+    '.stMultiSelect div[role="combobox"]',
 ]
 
 
 def _build_js_payload() -> str:
-    """Gera o conteúdo JS com as traduções (string-safe pra escapar aspas)."""
+    """Gera o conteúdo JS com as traduções (escapando aspas via JSON)."""
     import json as _json
     return (
         "var TRAD_EXATAS = " + _json.dumps(_TRADUCOES_EXATAS) + ";\n"
-        "var TRAD_REGEX = " + _json.dumps(_REGEX_TRADUCOES) + ";"
+        "var TRAD_REGEX = " + _json.dumps(_REGEX_TRADUCOES) + ";\n"
+        "var SELETORES = " + _json.dumps(_SELETORES_ALVO) + ";"
     )
 
 
 def aplicar_traducoes_pt_br() -> None:
     """Injeta JS que substitui strings em inglês pelo equivalente pt-BR.
 
-    Chame UMA VEZ no boot do `app.py`, depois do CSS global e antes de
-    qualquer outro componente. O MutationObserver fica ativo pela sessão
-    inteira; reruns parciais não precisam re-injetar.
+    Chame UMA VEZ no boot do `app.py`, depois do CSS global. O setInterval
+    fica ativo na sessão do browser; reruns parciais não re-injetam graças
+    à flag em `window.parent.__waI18nInstalled`.
     """
     _payload = _build_js_payload()
     _components.html(
@@ -92,18 +91,20 @@ def aplicar_traducoes_pt_br() -> None:
                 var doc = TOP.document;
 
                 // Idempotente: se já instalamos pra esta sessão, sai.
+                // Se o intervalo anterior ficou órfão (frame recarregou),
+                // a flag mora em window.parent → sobrevive.
                 if (TOP.__waI18nInstalled) return;
                 TOP.__waI18nInstalled = true;
 
                 {_payload}
 
-                // Compila regex em pares prontos
+                // Compila regex em pares prontos (1x)
                 var regexPares = TRAD_REGEX.map(function (pair) {{
                     return {{ re: new RegExp(pair[0]), pt: pair[1] }};
                 }});
 
                 function traduzirTexto(s) {{
-                    if (!s) return s;
+                    if (!s) return null;
                     var t = s.trim();
                     if (TRAD_EXATAS[t]) return TRAD_EXATAS[t];
                     for (var i = 0; i < regexPares.length; i++) {{
@@ -117,49 +118,38 @@ def aplicar_traducoes_pt_br() -> None:
                             return out;
                         }}
                     }}
-                    return null;  // sem tradução
+                    return null;
                 }}
 
-                function aplicar(no) {{
-                    // Percorre TextNodes do nó passado.
-                    if (!no) return;
-                    if (no.nodeType === 3) {{  // TEXT_NODE
-                        var traduzido = traduzirTexto(no.nodeValue);
-                        if (traduzido !== null) no.nodeValue = traduzido;
-                        return;
-                    }}
-                    if (no.nodeType !== 1) return;  // só elementos depois
-                    // Ignora <script>/<style> pra não destruir código
-                    var tag = no.tagName;
-                    if (tag === 'SCRIPT' || tag === 'STYLE') return;
-                    // Filhos recursivamente
-                    for (var i = 0; i < no.childNodes.length; i++) {{
-                        aplicar(no.childNodes[i]);
+                function tick() {{
+                    try {{
+                        for (var si = 0; si < SELETORES.length; si++) {{
+                            var els = doc.querySelectorAll(SELETORES[si]);
+                            for (var ei = 0; ei < els.length; ei++) {{
+                                var el = els[ei];
+                                // textContent direto (não recursão).
+                                // Se o nodo tem filhos com sub-estrutura,
+                                // o seletor já é específico o bastante
+                                // pra apontar pro container do texto puro.
+                                var atual = el.textContent;
+                                var traduzido = traduzirTexto(atual);
+                                if (traduzido !== null
+                                    && traduzido !== atual) {{
+                                    el.textContent = traduzido;
+                                }}
+                            }}
+                        }}
+                    }} catch (e) {{
+                        // Erro num tick não derruba o intervalo.
+                        // console.warn('i18n tick:', e);
                     }}
                 }}
 
-                // 1ª passada no DOM já renderizado
-                aplicar(doc.body);
-
-                // MutationObserver: reaplica em qualquer adição de nó.
-                // Throttling implícito do browser cuida do custo.
-                var obs = new TOP.MutationObserver(function (mutations) {{
-                    for (var i = 0; i < mutations.length; i++) {{
-                        var m = mutations[i];
-                        for (var j = 0; j < m.addedNodes.length; j++) {{
-                            aplicar(m.addedNodes[j]);
-                        }}
-                        // Também checa nó-alvo (caso só o textContent mude)
-                        if (m.type === 'characterData') {{
-                            aplicar(m.target);
-                        }}
-                    }}
-                }});
-                obs.observe(doc.body, {{
-                    childList: true,
-                    subtree: true,
-                    characterData: true,
-                }});
+                // Primeiro tick imediato + intervalo curto.
+                // 500ms é imperceptível pro user mas dá folga pro browser
+                // entre execuções. Se ficar visível, posso baixar pra 250ms.
+                tick();
+                TOP.setInterval(tick, 500);
             }} catch (e) {{
                 // I18n é cosmético — nunca quebra o app por causa disso.
                 console.warn('i18n-pt-br:', e);
