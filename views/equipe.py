@@ -14,6 +14,7 @@ import database as db
 from core.auth_ui import _avatar_circular_html
 from core.data import _invalidar_dados
 from core.helpers import _empty_state, _pode_gestor
+from core.ui_feedback import carregando
 
 
 # Guard de perfil — Gestor-only
@@ -279,31 +280,36 @@ for _, u in df_membros.iterrows():
 
             if st.button("💾 Salvar Alterações", key=f"sv_u_{u['id']}",
                          use_container_width=True):
-                # Senha: vazio mantém, preenchido hasheia
-                if up_senha.strip():
-                    _senha_para_salvar = db.gerar_hash(up_senha)
-                    _msg = "Dados atualizados (senha trocada)."
-                else:
-                    _senha_para_salvar = u["senha"]
-                    _msg = "Dados atualizados (senha mantida)."
-                # Resposta secreta: vazio mantém o hash atual, preenchido re-hasheia
-                if up_resp.strip():
-                    _resp_para_salvar = db.gerar_hash(up_resp.strip().lower())
-                else:
-                    _resp_para_salvar = u.get("resposta_secreta")
-                conn = db.conectar()
-                c = conn.cursor()
-                c.execute(
-                    "UPDATE usuarios SET nome=%s, cargo=%s, senha=%s, "
-                    "perfil=%s, pergunta_secreta=%s, resposta_secreta=%s "
-                    "WHERE id=%s",
-                    (up_nome, up_cargo, _senha_para_salvar, up_perf,
-                     up_perg.strip() or None, _resp_para_salvar, u["id"]),
-                )
-                conn.commit()
-                conn.close()
-                st.session_state[f"editor_u_{u['id']}"] = False
-                _invalidar_dados()
+                with carregando(f"Salvando dados de {u['nome']}..."):
+                    # Senha: vazio mantém, preenchido hasheia
+                    if up_senha.strip():
+                        _senha_para_salvar = db.gerar_hash(up_senha)
+                        _msg = "Dados atualizados (senha trocada)."
+                    else:
+                        _senha_para_salvar = u["senha"]
+                        _msg = "Dados atualizados (senha mantida)."
+                    # Resposta secreta: vazio mantém o hash atual,
+                    # preenchido re-hasheia
+                    if up_resp.strip():
+                        _resp_para_salvar = db.gerar_hash(
+                            up_resp.strip().lower()
+                        )
+                    else:
+                        _resp_para_salvar = u.get("resposta_secreta")
+                    conn = db.conectar()
+                    c = conn.cursor()
+                    c.execute(
+                        "UPDATE usuarios SET nome=%s, cargo=%s, senha=%s, "
+                        "perfil=%s, pergunta_secreta=%s, "
+                        "resposta_secreta=%s WHERE id=%s",
+                        (up_nome, up_cargo, _senha_para_salvar, up_perf,
+                         up_perg.strip() or None, _resp_para_salvar,
+                         u["id"]),
+                    )
+                    conn.commit()
+                    conn.close()
+                    st.session_state[f"editor_u_{u['id']}"] = False
+                    _invalidar_dados()
                 st.toast(_msg, icon="✅")
                 st.rerun()
 

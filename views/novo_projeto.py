@@ -14,6 +14,7 @@ import database as db
 
 from core.data import _invalidar_dados, _load_df_u
 from core.helpers import _estiliza_plotly, _init_etapas, _pode_editar
+from core.ui_feedback import carregando
 
 
 # Visualizador não cadastra
@@ -190,52 +191,54 @@ if submit_novo:
             st.session_state.etapas_form[i].update(et)
 
     if f_nm and f_eq:
-        checklist_final = (
-            ", ".join(f_chk) + (" | " + f_dem if f_dem.strip() else "")
-        )
-        _tags_csv = db.serializar_tags(db.parse_tags(f_tags)) or None
-        dados_sql = (
-            ", ".join(f_eq),   # projetista
-            f_nm,              # projeto
-            f_ed,              # endereco
-            f_so,              # solicitante
-            f_co,              # contato
-            f_sei,             # numero_sei
-            f_drec,            # data_recebimento
-            f_prev,            # previsao_execucao
-            f_di,              # data_inicio
-            f_dt,              # data_termino
-            f_dt,              # data_fim (compatibilidade Gantt)
-            "Em Espera",       # ← STATUS: entra na fila de triagem
-            f_li,              # link_projeto
-            checklist_final,   # demandas
-            f_esc,             # solicitacao
-            f_pr,              # prioridade
-            _tags_csv,         # tags (string CSV ou None)
-        )
-        novo_id = db.salvar_projeto(dados_sql)
-        if novo_id:
-            etapas_para_salvar = [
-                {"nome": et["nome"],
-                 "duracao_dias": et["duracao_dias"],
-                 "dias_offset": et["dias_offset"],
-                 "ordem": i}
-                for i, et in enumerate(etapas_validas)
-                if str(et.get("nome", "")).strip()
-            ]
-            if etapas_para_salvar:
-                db.salvar_etapas(novo_id, etapas_para_salvar)
+        with carregando(f"Criando projeto '{f_nm}'..."):
+            checklist_final = (
+                ", ".join(f_chk) + (" | " + f_dem if f_dem.strip() else "")
+            )
+            _tags_csv = db.serializar_tags(db.parse_tags(f_tags)) or None
+            dados_sql = (
+                ", ".join(f_eq),   # projetista
+                f_nm,              # projeto
+                f_ed,              # endereco
+                f_so,              # solicitante
+                f_co,              # contato
+                f_sei,             # numero_sei
+                f_drec,            # data_recebimento
+                f_prev,            # previsao_execucao
+                f_di,              # data_inicio
+                f_dt,              # data_termino
+                f_dt,              # data_fim (compatibilidade Gantt)
+                "Em Espera",       # ← STATUS: entra na fila de triagem
+                f_li,              # link_projeto
+                checklist_final,   # demandas
+                f_esc,             # solicitacao
+                f_pr,              # prioridade
+                _tags_csv,         # tags (string CSV ou None)
+            )
+            novo_id = db.salvar_projeto(dados_sql)
+            if novo_id:
+                etapas_para_salvar = [
+                    {"nome": et["nome"],
+                     "duracao_dias": et["duracao_dias"],
+                     "dias_offset": et["dias_offset"],
+                     "ordem": i}
+                    for i, et in enumerate(etapas_validas)
+                    if str(et.get("nome", "")).strip()
+                ]
+                if etapas_para_salvar:
+                    db.salvar_etapas(novo_id, etapas_para_salvar)
 
-            db.log_aud(usuario, "criar", "projeto", novo_id, f_nm)
-            st.session_state.etapas_form = [
-                {"nome": "Levantamento", "duracao_dias": 5, "dias_offset": 0},
-                {"nome": "Projeto", "duracao_dias": 10, "dias_offset": 5},
-            ]
-            # Usar st.toast e NÃO st.success: o st.rerun() abaixo zera o
-            # script, então st.success aparece por ~200ms e some — efeito
-            # "pisca" reclamado pelo user. O st.toast sobrevive ao rerun
-            # (vive ~4s no overlay do Streamlit, fora do script run).
-            _invalidar_dados()
+                db.log_aud(usuario, "criar", "projeto", novo_id, f_nm)
+                st.session_state.etapas_form = [
+                    {"nome": "Levantamento", "duracao_dias": 5,
+                     "dias_offset": 0},
+                    {"nome": "Projeto", "duracao_dias": 10,
+                     "dias_offset": 5},
+                ]
+                _invalidar_dados()
+        if novo_id:
+            # st.toast em vez de st.success: sobrevive ao st.rerun abaixo
+            # (vive ~4s no overlay, fora do script run).
             st.toast(
                 f"✅ Projeto **{f_nm}** criado! Está na coluna "
                 f"**Em Espera** do Kanban.",

@@ -51,7 +51,16 @@ def _bridge_save_token(token: str) -> None:
 
     Chamado depois do auto-login bem-sucedido. Sem isso, abrir nova aba
     cairia na tela de login mesmo com sessão válida no banco.
+
+    IDEMPOTENTE POR SESSÃO: cada `_components.html()` cria um iframe novo
+    no DOM da página. Se chamado a cada rerun (que rola a cada clique,
+    toggle, tick de fragmento), enche o DOM de iframes invisíveis e
+    deixa a interface "estranha" — page-load lento, scroll travado.
+    Marca em session_state pra rodar SÓ NA PRIMEIRA VEZ que o token foi
+    visto. Próximas reruns viram no-op.
     """
+    if st.session_state.get("_auth_bridge_saved") == token:
+        return
     _components.html(
         f"""
         <script>
@@ -70,6 +79,7 @@ def _bridge_save_token(token: str) -> None:
         """,
         height=0,
     )
+    st.session_state["_auth_bridge_saved"] = token
 
 
 def _bridge_try_restore() -> None:
@@ -79,7 +89,14 @@ def _bridge_try_restore() -> None:
     e ainda não tentamos nesta aba, recarrega com `?t=TOKEN`. Se o token
     for inválido, o Python descarta e o user vê a tela de login — o flag
     anti-loop garante que não fica recarregando em ciclo.
+
+    IDEMPOTENTE: roda só na PRIMEIRA passagem pela tela de login. Sem
+    isso, cada interação na tela de login (digitar usuário, focar campo)
+    re-injetaria o iframe.
     """
+    if st.session_state.get("_auth_bridge_tried"):
+        return
+    st.session_state["_auth_bridge_tried"] = True
     _components.html(
         f"""
         <script>
@@ -108,7 +125,9 @@ def _bridge_clear() -> None:
     """Limpa o token do localStorage. Chamado no logout.
 
     Sem isso, depois de "Sair" o user abriria nova aba e seria
-    auto-logado de novo via localStorage stale.
+    auto-logado de novo via localStorage stale. Sem flag idempotente
+    aqui porque só é chamado dentro do `if st.button("Sair")`, que já
+    é one-shot.
     """
     _components.html(
         f"""

@@ -1006,25 +1006,34 @@ if "projeto_em_edicao" in st.session_state:
 
     # ── Ações dos botões ─────────────────────────────────────
     if _salvar:
-        equipe_str = ", ".join(ed_eq)
-        checklist_final = (
-            ", ".join(ed_chk)
-            + (" | " + ed_dem if ed_dem.strip() else "")
-        )
-        dados_finais = (
-            equipe_str, ed_nm, ed_ed, ed_so, ed_co,
-            ed_sei, ed_drec, ed_di, ed_dt, ed_dt,
-            ed_li, checklist_final, ed_esc, ed_pr,
-        )
-        db.atualizar_projeto_completo(id_ed, dados_finais)
-        # Tags vão num UPDATE separado pra não quebrar a assinatura fixa
-        # de `atualizar_projeto_completo` (14 valores, compat).
-        _tags_csv_save = db.serializar_tags(db.parse_tags(ed_tags)) or None
-        db.atualizar_campo_projeto(id_ed, "tags", _tags_csv_save)
-        db.log_aud(usuario, "editar", "projeto", id_ed,
-                   f"nome='{ed_nm}' tags='{_tags_csv_save or ''}'")
-        del st.session_state.projeto_em_edicao
-        _invalidar_dados()
+        # `with carregando(...)` envolve as chamadas de banco — mostra
+        # spinner "💾 Salvando projeto..." na tela DURANTE a operação.
+        # Sem isso, em latência alta (Postgres remoto, rsync de anexo),
+        # o user clica "Salvar" e a tela fica congelada parecendo bug.
+        with carregando(f"Salvando projeto '{ed_nm}'..."):
+            equipe_str = ", ".join(ed_eq)
+            checklist_final = (
+                ", ".join(ed_chk)
+                + (" | " + ed_dem if ed_dem.strip() else "")
+            )
+            dados_finais = (
+                equipe_str, ed_nm, ed_ed, ed_so, ed_co,
+                ed_sei, ed_drec, ed_di, ed_dt, ed_dt,
+                ed_li, checklist_final, ed_esc, ed_pr,
+            )
+            db.atualizar_projeto_completo(id_ed, dados_finais)
+            # Tags vão num UPDATE separado pra não quebrar a assinatura
+            # fixa de `atualizar_projeto_completo` (14 valores, compat).
+            _tags_csv_save = (
+                db.serializar_tags(db.parse_tags(ed_tags)) or None
+            )
+            db.atualizar_campo_projeto(id_ed, "tags", _tags_csv_save)
+            db.log_aud(
+                usuario, "editar", "projeto", id_ed,
+                f"nome='{ed_nm}' tags='{_tags_csv_save or ''}'",
+            )
+            del st.session_state.projeto_em_edicao
+            _invalidar_dados()
         # st.toast sobrevive ao st.rerun (vive no overlay, fora do script
         # run). st.success aqui apareceria por <300ms antes do rerun zerar
         # — efeito "pisca" reclamado pelo user.
@@ -1036,22 +1045,25 @@ if "projeto_em_edicao" in st.session_state:
             st.warning("Marque a caixa de confirmação antes de excluir.")
         else:
             _nome_excl = dados["projeto"]
-            db.excluir_projeto(id_ed)
-            db.log_aud(usuario, "excluir", "projeto", id_ed,
-                       f"nome='{_nome_excl}'")
-            del st.session_state.projeto_em_edicao
-            _invalidar_dados()
+            with carregando(f"Excluindo projeto '{_nome_excl}'..."):
+                db.excluir_projeto(id_ed)
+                db.log_aud(usuario, "excluir", "projeto", id_ed,
+                           f"nome='{_nome_excl}'")
+                del st.session_state.projeto_em_edicao
+                _invalidar_dados()
             st.toast(f"🗑️ Projeto **{_nome_excl}** excluído.", icon="✅")
             st.rerun()
 
     if _clonar:
-        novo_id = db.clonar_projeto(id_ed)
+        with carregando(f"Clonando '{dados['projeto']}'..."):
+            novo_id = db.clonar_projeto(id_ed)
+            if novo_id:
+                db.log_aud(
+                    usuario, "clonar", "projeto", id_ed,
+                    f"origem='{dados['projeto']}' -> novo_id={novo_id}",
+                )
+                _invalidar_dados()
         if novo_id:
-            db.log_aud(
-                usuario, "clonar", "projeto", id_ed,
-                f"origem='{dados['projeto']}' -> novo_id={novo_id}",
-            )
-            _invalidar_dados()
             # st.toast em vez de st.success — sobrevive ao rerun abaixo.
             st.toast(
                 f"📋 Projeto clonado (id={novo_id}). Abrindo edição.",
@@ -1177,11 +1189,12 @@ if "projeto_em_edicao" in st.session_state:
         st.rerun()
 
     if _salv_et:
-        db.salvar_etapas(
-            id_ed,
-            [e for e in novas_etapas if str(e["nome"]).strip()],
-        )
-        st.session_state[_key_et] = db.listar_etapas(id_ed)
+        with carregando("Salvando etapas..."):
+            db.salvar_etapas(
+                id_ed,
+                [e for e in novas_etapas if str(e["nome"]).strip()],
+            )
+            st.session_state[_key_et] = db.listar_etapas(id_ed)
         st.toast("✅ Etapas salvas!", icon="💾")
         st.rerun()
 
@@ -1347,15 +1360,16 @@ if "projeto_em_edicao" in st.session_state:
 
             if st.form_submit_button("🔄 Atualizar Progresso",
                                      use_container_width=True):
-                _c = db.conectar()
-                _cu = _c.cursor()
-                for _s, _p, _i in novos_vals:
-                    _cu.execute(
-                        "UPDATE progresso_disciplinas "
-                        "SET concluido=%s, percentual=%s WHERE id=%s",
-                        (_s, _p, _i),
-                    )
-                _c.commit()
-                _c.close()
+                with carregando("Salvando evolução..."):
+                    _c = db.conectar()
+                    _cu = _c.cursor()
+                    for _s, _p, _i in novos_vals:
+                        _cu.execute(
+                            "UPDATE progresso_disciplinas "
+                            "SET concluido=%s, percentual=%s WHERE id=%s",
+                            (_s, _p, _i),
+                        )
+                    _c.commit()
+                    _c.close()
                 st.toast("📈 Evolução salva!", icon="✅")
                 st.rerun()

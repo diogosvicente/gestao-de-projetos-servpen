@@ -20,6 +20,7 @@ import database as db
 
 from core.data import _load_df_u
 from core.helpers import _empty_state, _pill_select
+from core.ui_feedback import carregando
 
 
 usuario_atual = st.session_state.get("usuario", "")
@@ -767,20 +768,22 @@ with col_form:
     if submit_ok:
         if titulo_ev and resp_ev:
             if _ed_row is not None:
-                db.atualizar_evento(
-                    _ed_id, titulo_ev, tipo_ev, d_ini, d_fim,
-                    resp_ev, obs_ev, local_ev,
-                )
-                db.log_aud(usuario_atual, "editar", "agenda",
-                           _ed_id, titulo_ev)
-                if "agenda_edit_id" in st.session_state:
-                    del st.session_state.agenda_edit_id
+                with carregando("Atualizando compromisso..."):
+                    db.atualizar_evento(
+                        _ed_id, titulo_ev, tipo_ev, d_ini, d_fim,
+                        resp_ev, obs_ev, local_ev,
+                    )
+                    db.log_aud(usuario_atual, "editar", "agenda",
+                               _ed_id, titulo_ev)
+                    if "agenda_edit_id" in st.session_state:
+                        del st.session_state.agenda_edit_id
                 st.toast("📅 Compromisso atualizado!", icon="✅")
             else:
-                db.salvar_evento(titulo_ev, tipo_ev, d_ini, d_fim,
-                                 resp_ev, obs_ev, local_ev)
-                db.log_aud(usuario_atual, "criar", "agenda", None,
-                           titulo_ev)
+                with carregando("Registrando compromisso..."):
+                    db.salvar_evento(titulo_ev, tipo_ev, d_ini, d_fim,
+                                     resp_ev, obs_ev, local_ev)
+                    db.log_aud(usuario_atual, "criar", "agenda", None,
+                               titulo_ev)
                 st.toast("📅 Compromisso registrado!", icon="✅")
             st.rerun()
         else:

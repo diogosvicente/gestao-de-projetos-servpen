@@ -143,38 +143,44 @@ def _dialog_meu_perfil():
             )
             return
 
-    # 2) E-mail / avatar (cargo é read-only aqui — não atualizamos)
-    db.atualizar_perfil(nome, email=email, avatar_path=_avatar_path)
+    # Envelopa toda a parte de gravação num spinner — bcrypt rehash
+    # (resposta secreta e senha) pode levar 200-400ms, e em produção a
+    # latência do Postgres soma. Sem isso, user clica "Salvar" e nada
+    # aparece até o rerun ~1s depois — sensação de bug.
+    with carregando("Salvando perfil..."):
+        # 2) E-mail / avatar (cargo é read-only aqui — não atualizamos)
+        db.atualizar_perfil(nome, email=email, avatar_path=_avatar_path)
 
-    # 3) Pergunta secreta — só grava a resposta se ele digitou uma nova
-    if perg.strip() and resp.strip():
-        db.definir_pergunta_secreta(nome, perg.strip(), resp.strip())
-    elif perg.strip() and me.get("pergunta_secreta") != perg.strip():
-        st.warning(
-            "Você mudou a pergunta — preencha também a resposta secreta. "
-            "(Cargo e e-mail foram salvos.)"
-        )
+        # 3) Pergunta secreta — só grava a resposta se digitou uma nova
+        if perg.strip() and resp.strip():
+            db.definir_pergunta_secreta(nome, perg.strip(), resp.strip())
+        elif perg.strip() and me.get("pergunta_secreta") != perg.strip():
+            st.warning(
+                "Você mudou a pergunta — preencha também a resposta "
+                "secreta. (Cargo e e-mail foram salvos.)"
+            )
+            _invalidar_dados()
+            return
+
+        # 4) Troca de senha (exige senha atual correta)
+        if nova1 or nova2 or senha_atual:
+            if not db.verificar_senha(nome, senha_atual):
+                st.error("Senha atual incorreta — senha NÃO foi alterada. "
+                         "(Resto salvo.)")
+                _invalidar_dados()
+                return
+            if not nova1 or nova1 != nova2:
+                st.error("A nova senha e a repetição precisam ser iguais "
+                         "(e não vazias).")
+                _invalidar_dados()
+                return
+            db.redefinir_senha(nome, nova1)
+            db.log_aud(nome, "troca_senha", "usuario", None,
+                       "pelo próprio perfil")
+
+        db.log_aud(nome, "editar_perfil", "usuario", None,
+                   "cargo/email/avatar/pergunta")
         _invalidar_dados()
-        return
-
-    # 4) Troca de senha (exige senha atual correta)
-    if nova1 or nova2 or senha_atual:
-        if not db.verificar_senha(nome, senha_atual):
-            st.error("Senha atual incorreta — senha NÃO foi alterada. "
-                     "(Resto salvo.)")
-            _invalidar_dados()
-            return
-        if not nova1 or nova1 != nova2:
-            st.error("A nova senha e a repetição precisam ser iguais "
-                     "(e não vazias).")
-            _invalidar_dados()
-            return
-        db.redefinir_senha(nome, nova1)
-        db.log_aud(nome, "troca_senha", "usuario", None, "pelo próprio perfil")
-
-    db.log_aud(nome, "editar_perfil", "usuario", None,
-               "cargo/email/avatar/pergunta")
-    _invalidar_dados()
     # Toast em vez de success: o st.rerun() abaixo fecha o dialog e zera o
     # script — st.success piscaria por <200ms. O toast vive no overlay.
     st.toast("✅ Perfil atualizado!", icon="👤")
@@ -341,10 +347,16 @@ def tela_login():
         submit = st.form_submit_button("ACESSAR", use_container_width=True)
 
     if submit:
-        if u and s and auth.validar_login(u, s):
-            _token = db.criar_sessao(u, dias=7)
-            st.query_params["t"] = _token
-            db.log_aud(u, "login", "sessao", None, "sucesso")
+        # Envolve em spinner — bcrypt verify é o gargalo (200-400ms em
+        # CPU normal) e o user só vê a tela travada até o rerun
+        # confirmar. Antes, "Entrar" parecia não fazer nada por 1s.
+        with carregando("Validando credenciais..."):
+            _login_ok = bool(u and s and auth.validar_login(u, s))
+            if _login_ok:
+                _token = db.criar_sessao(u, dias=7)
+                st.query_params["t"] = _token
+                db.log_aud(u, "login", "sessao", None, "sucesso")
+        if _login_ok:
             st.toast("✅ Login realizado!", icon="🔓")
             st.rerun()
         else:
