@@ -26,14 +26,14 @@ import pandas as pd
 import streamlit as st
 
 import database as db
+from core import sessao
 
 
-# NOTA: o bridge `localStorage` (cross-tab login) foi REMOVIDO nesta versão.
-# Estava usando `streamlit.components.v1.html` que está deprecado (some
-# após 2026-06-01) e cada chamada injetava um iframe novo a cada rerun,
-# deixando o app lento e instável. Login entre abas (Ctrl+T sem ?t=) vai
-# pedir login até reimplementarmos via `st.iframe` ou cookies do reverse
-# proxy. F5 na mesma aba continua mantendo o login (via `?t=TOKEN`).
+# PERSISTÊNCIA DE LOGIN: via cookie `servpen_sessao` (core/sessao.py).
+# Substitui o antigo `?t=TOKEN`-só-na-URL, que deslogava em hard-refresh
+# (a navegação interna apaga a query string) e não passava pra nova aba.
+# O cookie sobrevive refresh, navegação e nova aba. Leitura nativa via
+# st.context.cookies; escrita 1× por sessão.
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -119,19 +119,21 @@ if _goto_chat:
     except KeyError:
         pass
 
-# Auto-login por token (sobrevive F5)
+# Auto-login por token — sobrevive F5, hard-refresh E nova aba.
+# `sessao.ler_token()` busca o token em ?t= (mais fresco) OU no cookie
+# (robusto: nova aba / refresh em subpágina onde a query string sumiu).
 if not st.session_state.get("autenticado", False):
-    _tok = st.query_params.get("t")
+    _tok = sessao.ler_token()
     _sess = db.validar_sessao(_tok)
     if _sess:
         st.session_state.autenticado = True
         st.session_state.usuario = _sess[0]
         st.session_state.perfil = _sess[1]
-        # Re-escreve o token na URL pra garantir que sobreviva a navegações
-        # de st.page_link (que zeram querystring em alguns casos). Sem isso,
-        # clicar num link de página OU no toast de chat fazia o user perder
-        # o ?t= e cair pra tela de login.
+        # Mantém o token na URL (compat com o toast de chat que monta
+        # links com ?t=) E grava/renova o cookie (1× por sessão, via
+        # flag interna). É aqui que uma aba nova "ganha" seu cookie.
         st.query_params["t"] = _tok
+        sessao.gravar_cookie(_tok)
 
 # ── ANTI-FANTASMA DO TOAST DE CHAT ─────────────────────────────────────
 # Bug histórico: clicar em "📨 Ver mensagem" no toast fazia page-reload
@@ -584,12 +586,16 @@ with st.sidebar:
     if st.button("🔴 Sair do Sistema", use_container_width=True,
                  key="btn_sair"):
         db.log_aud(st.session_state.usuario, "logout", "sessao", None, "")
-        db.deletar_sessao(st.query_params.get("t"))
-        st.query_params.clear()
+        db.deletar_sessao(sessao.ler_token())   # invalida no banco
         st.session_state.autenticado = False
         st.session_state.usuario = None
         st.session_state.perfil = None
-        st.rerun()
+        # logout_redirect() apaga o cookie E recarrega na URL base (sem
+        # ?t=) num único JS. st.stop() logo depois garante que o iframe
+        # do component seja commitado antes do reload disparar. NÃO usar
+        # st.rerun aqui (o iframe poderia não chegar a executar).
+        sessao.logout_redirect()
+        st.stop()
 
     # Toggle de Tema (Claro / Escuro)
     st.divider()
