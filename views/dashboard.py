@@ -23,9 +23,11 @@ import relatorios
 from core.data import _load_df_d, _load_df_p, _load_df_u
 from core.helpers import (
     _empty_state,
+    _equipe_atual,
     _estiliza_plotly,
     _pill_select,
     _section_header,
+    _ve_tudo,
 )
 from core.ui_feedback import carregando, erro_humano
 
@@ -35,6 +37,17 @@ perfil = st.session_state.get("perfil", "Gestor")
 df_p = _load_df_p(usuario, perfil)
 df_u = _load_df_u()
 df_d = _load_df_d()
+
+# Nomes de pessoas visíveis ao escopo de equipe do gestor logado.
+# Gestor Geral (_ve_tudo) vê todos; líder de equipe só vê a sua. Usado nos
+# blocos "por pessoa" (pizza de volume + cards de carga por projetista) pra
+# não vazar a contagem da outra equipe.
+if _ve_tudo() or df_u.empty:
+    _nomes_visiveis = df_u["nome"].tolist() if not df_u.empty else []
+else:
+    _nomes_visiveis = (
+        df_u[df_u["equipe"] == _equipe_atual()]["nome"].tolist()
+    )
 
 
 st.markdown(
@@ -286,7 +299,7 @@ _section_header(
 )
 
 if not df_p_limpo.empty and not df_u.empty:
-    lista_oficial = df_u["nome"].tolist()
+    lista_oficial = _nomes_visiveis   # só pessoas da equipe (Geral = todas)
 
     contagem_bruta = (
         df_p_limpo["projetista"]
@@ -771,7 +784,7 @@ if perfil == "Gestor":
         "Distribuição dos projetos por projetista e visão da carga atual.",
         cor="#7c3aed",
     )
-    lista_exibicao = df_u["nome"].tolist() if not df_u.empty else []
+    lista_exibicao = _nomes_visiveis   # cards só da equipe (Geral = todas)
 else:
     _section_header(
         "👤", "Minha Carga de Trabalho",

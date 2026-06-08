@@ -19,7 +19,7 @@ import streamlit as st
 import database as db
 
 from core.data import _load_df_u
-from core.helpers import _empty_state, _pill_select
+from core.helpers import _empty_state, _equipe_atual, _pill_select, _ve_tudo
 from core.ui_feedback import carregando
 
 
@@ -107,6 +107,34 @@ except Exception:
                  "responsaveis", "descricao", "local"]
     )
 
+# ── VISIBILIDADE POR EQUIPE ───────────────────────────────────
+# Quem o usuário pode ver na agenda (via `responsaveis`, CSV de nomes):
+#   - Gestor Geral .......... TUDO (sem filtro).
+#   - Líder SERVPEN/SERVPAR .. eventos de projetistas da sua equipe.
+#   - Projetista/Visualizador  só os próprios eventos (regra antiga).
+# `_nomes_agenda = None` significa "vê tudo".
+if _ve_tudo():
+    _nomes_agenda = None
+elif perfil_atual == "Gestor":
+    _nomes_agenda = db.nomes_por_equipe(_equipe_atual())
+else:
+    _nomes_agenda = {usuario_atual}
+
+
+def _agenda_mask(df):
+    """Máscara booleana: True nas linhas cujo `responsaveis` intersecta os
+    nomes visíveis. Compara por CONJUNTO de nomes (split por vírgula +
+    strip) — evita o falso-positivo de substring ('Ana' em 'Mariana').
+    Se `_nomes_agenda is None`, tudo visível."""
+    if _nomes_agenda is None or df.empty:
+        return pd.Series(True, index=df.index)
+    return df["responsaveis"].apply(
+        lambda v: bool(
+            {n.strip() for n in str(v).split(",") if n.strip()}
+            & _nomes_agenda
+        )
+    )
+
 # ── MÉTRICAS NO TOPO (4 cards) ────────────────────────────────
 _hoje_ag = datetime.now().date()
 _limite_7d_ag = _hoje_ag + pd.Timedelta(days=7)
@@ -123,11 +151,7 @@ if not _df_ag_visivel.empty:
     _df_ag_visivel["_df"] = pd.to_datetime(
         _df_ag_visivel["data_fim"], errors="coerce",
     ).dt.date
-    if perfil_atual != "Gestor":
-        _df_ag_visivel = _df_ag_visivel[
-            _df_ag_visivel["responsaveis"].astype(str)
-            .str.contains(usuario_atual, na=False)
-        ]
+    _df_ag_visivel = _df_ag_visivel[_agenda_mask(_df_ag_visivel)]
 
 
 def _toca_janela(row, ini, fim):
@@ -182,14 +206,10 @@ visao_ag = _pill_select(
 
 # ── exportar .ics ─────────────────────────────────────────────
 if not df_agenda.empty:
-    df_exp = (
-        df_agenda if perfil_atual == "Gestor"
-        else df_agenda[
-            df_agenda["responsaveis"].str.contains(usuario_atual, na=False)
-        ]
-    )
+    df_exp = df_agenda[_agenda_mask(df_agenda)]
     leg = (
-        "(todos os eventos)" if perfil_atual == "Gestor"
+        "(todos os eventos)" if _nomes_agenda is None
+        else "(da sua equipe)" if perfil_atual == "Gestor"
         else "(somente os seus)"
     )
     if not df_exp.empty:
@@ -264,11 +284,7 @@ with col_cal:
             df_tmp = df_agenda.copy()
             df_tmp["di"] = pd.to_datetime(df_tmp["data_inicio"], errors="coerce")
             df_tmp["df"] = pd.to_datetime(df_tmp["data_fim"], errors="coerce")
-            if perfil_atual != "Gestor":
-                df_tmp = df_tmp[
-                    df_tmp["responsaveis"]
-                    .str.contains(usuario_atual, na=False)
-                ]
+            df_tmp = df_tmp[_agenda_mask(df_tmp)]   # isolamento por equipe
             for _, ev in df_tmp.iterrows():
                 if pd.isna(ev["di"]):
                     continue
@@ -693,9 +709,17 @@ with col_form:
     )
     st.subheader(_titulo_form)
 
-    equipe_lista = (
-        df_u["nome"].tolist() if not df_u.empty else [usuario_atual]
-    )
+    # "Envolvidos" lista só gente da própria equipe (Geral vê todas) — pra
+    # um líder não criar evento de projetista da outra equipe (que ele nem
+    # conseguiria ver depois).
+    if df_u.empty:
+        equipe_lista = [usuario_atual]
+    elif _ve_tudo():
+        equipe_lista = df_u["nome"].tolist()
+    else:
+        equipe_lista = (
+            df_u[df_u["equipe"] == _equipe_atual()]["nome"].tolist()
+        )
 
     with st.form("form_agenda_nova", clear_on_submit=True):
         titulo_ev = st.text_input(

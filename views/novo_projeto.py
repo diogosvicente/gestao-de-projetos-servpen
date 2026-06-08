@@ -13,7 +13,13 @@ import streamlit as st
 import database as db
 
 from core.data import _invalidar_dados, _load_df_u
-from core.helpers import _estiliza_plotly, _init_etapas, _pode_editar
+from core.helpers import (
+    _equipe_atual,
+    _estiliza_plotly,
+    _init_etapas,
+    _pode_editar,
+    _ve_tudo,
+)
 from core.ui_feedback import carregando
 
 
@@ -59,9 +65,18 @@ with st.form("form_novo_projeto_v2", clear_on_submit=False):
     f_ed = r3c1.text_input("Endereço da Obra")
     f_li = r3c2.text_input("Link da Pasta (Drive/Nuvem)")
 
+    # Projetistas disponíveis: líder de equipe só atribui gente da própria
+    # equipe; Gestor Geral atribui qualquer um. (O projeto em si continua
+    # compartilhado — só a lista de quem você designa é filtrada.)
+    if df_u.empty:
+        _opcoes_eq = []
+    elif _ve_tudo():
+        _opcoes_eq = df_u["nome"].tolist()
+    else:
+        _opcoes_eq = df_u[df_u["equipe"] == _equipe_atual()]["nome"].tolist()
     f_eq = st.multiselect(
         "Equipe Responsável *",
-        df_u["nome"].tolist() if not df_u.empty else [],
+        _opcoes_eq,
     )
 
     r4c1, r4c2 = st.columns([1, 2])

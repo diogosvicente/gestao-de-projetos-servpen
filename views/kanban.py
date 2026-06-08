@@ -19,10 +19,12 @@ from core.data import _invalidar_dados, _load_df_d, _load_df_p, _load_df_u
 from core.helpers import (
     _badge_status,
     _empty_state,
+    _equipe_atual,
     _estiliza_plotly,
     _pill_select,
     _pode_editar,
     _render_tag_chips,
+    _ve_tudo,
 )
 from core.ui_feedback import carregando, erro_humano
 
@@ -1231,6 +1233,31 @@ if "projeto_em_edicao" in st.session_state:
     #  Checklist: slider 100% → checkbox marcado automaticamente
     # ════════════════════════════════════════════════════════
     st.markdown("### 📊 Evolução Técnica por Disciplina")
+
+    # ── ISOLAMENTO POR EQUIPE ──────────────────────────────────
+    # A evolução pertence a quem é DESIGNADO no projeto (o projetista).
+    # Líder de equipe só vê/edita a evolução de projetos onde algum
+    # projetista é da sua equipe. O board e o Gantt continuam abertos a
+    # todos (projeto compartilhado) — só este painel filtra.
+    if _ve_tudo():
+        _pode_ver_evolucao = True
+    else:
+        _proj_nomes = {
+            n.strip() for n in str(dados.get("projetista", "")).split(",")
+            if n.strip()
+        }
+        _pode_ver_evolucao = bool(
+            _proj_nomes & db.nomes_por_equipe(_equipe_atual())
+        )
+
+    if not _pode_ver_evolucao:
+        st.info(
+            "🔒 A evolução técnica deste projeto é gerida por outra equipe "
+            "(nenhum projetista da sua equipe está designado). O projeto e "
+            "o cronograma continuam visíveis, mas o progresso por "
+            "disciplina pertence à equipe responsável."
+        )
+        st.stop()
 
     # Disciplinas vêm do campo demandas (parte antes do "|")
     _dem_raw = str(dados.get("demandas", "")).split("|")[0]

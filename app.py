@@ -129,6 +129,11 @@ if not st.session_state.get("autenticado", False):
         st.session_state.autenticado = True
         st.session_state.usuario = _sess[0]
         st.session_state.perfil = _sess[1]
+        # Carrega a equipe de gestão na sessão (SERVPEN/SERVPAR/GERAL) —
+        # base de todo o isolamento de visão. validar_sessao só devolve
+        # (usuario, perfil), então buscamos a equipe via obter_usuario.
+        _me_boot = db.obter_usuario(_sess[0]) or {}
+        st.session_state.equipe = _me_boot.get("equipe", "SERVPEN")
         # Mantém o token na URL (compat com o toast de chat que monta
         # links com ?t=) E grava/renova o cookie (1× por sessão, via
         # flag interna). É aqui que uma aba nova "ganha" seu cookie.

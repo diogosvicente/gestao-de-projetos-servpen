@@ -55,6 +55,22 @@ def _pode_gestor():
     return st.session_state.get("perfil", "") == "Gestor"
 
 
+# ─── ESCOPO POR EQUIPE (SERVPEN / SERVPAR / GERAL) ──────────────────
+# Controla o isolamento de visão entre equipes de gestão. A `equipe` do
+# usuário é carregada na sessão no login/auto-login (ver app.py e
+# core/auth_ui.py). Detalhes em docs/PROMPT-controle-equipes.md.
+def _equipe_atual():
+    """Equipe do usuário logado: 'SERVPEN' | 'SERVPAR' | 'GERAL'.
+    Default 'SERVPEN' se ausente (sessão antiga / campo não carregado)."""
+    return st.session_state.get("equipe", "SERVPEN")
+
+
+def _ve_tudo():
+    """True se o escopo do usuário NÃO filtra por equipe (Gestor Geral).
+    Use antes de qualquer filtro de equipe: se True, mostra tudo."""
+    return _equipe_atual() == "GERAL"
+
+
 # ─── TEMPO ──────────────────────────────────────────────────────────
 def _tempo_relativo(dt_input):
     """Converte data/hora em texto relativo: 'agora', 'há 5 min', 'há 2 h',

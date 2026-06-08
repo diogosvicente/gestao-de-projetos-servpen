@@ -13,7 +13,7 @@ import database as db
 
 from core.auth_ui import _avatar_circular_html
 from core.data import _invalidar_dados
-from core.helpers import _empty_state, _pode_gestor
+from core.helpers import _empty_state, _equipe_atual, _pode_gestor, _ve_tudo
 from core.ui_feedback import carregando
 
 
@@ -28,7 +28,20 @@ if not _pode_gestor():
 
 usuario = st.session_state.usuario
 
+# Escopo de equipe do gestor logado. GERAL = vê/edita tudo e escolhe a
+# equipe ao cadastrar. Líder de equipe (SERVPEN/SERVPAR) só vê/edita a
+# própria equipe e NÃO promove ninguém a Gestor nem muda equipe (regra
+# em docs/PROMPT-controle-equipes.md §3.1).
+_MINHA_EQUIPE = _equipe_atual()
+_GERAL = _ve_tudo()
+_EQUIPES = ["SERVPEN", "SERVPAR", "GERAL"]
+
 st.header("👥 Gestão de Membros e Acessos")
+if not _GERAL:
+    st.caption(
+        f"Você gerencia a equipe **{_MINHA_EQUIPE}**. Pessoas que você "
+        f"cadastrar entram automaticamente nesta equipe."
+    )
 
 # 1. CADASTRO DE NOVO MEMBRO
 with st.expander("➕ Cadastrar Novo Colaborador"):
@@ -39,14 +52,34 @@ with st.expander("➕ Cadastrar Novo Colaborador"):
 
         c3, c4 = st.columns(2)
         n_senha = c3.text_input("Senha de Acesso", type="password")
+        # Perfis disponíveis dependem do escopo: só o Gestor Geral pode
+        # criar outro Gestor (promover a líder). Líder de equipe cria só
+        # Projetista/Visualizador.
+        _perfis_novo = (
+            ["Projetista", "Gestor", "Visualizador"] if _GERAL
+            else ["Projetista", "Visualizador"]
+        )
         n_perf = c4.selectbox(
             "Perfil de Sistema",
-            ["Projetista", "Gestor", "Visualizador"],
+            _perfis_novo,
             help=(
-                "Visualizador: acesso somente leitura (não pode criar, "
-                "editar ou excluir nada)."
+                "Visualizador: acesso somente leitura. "
+                + ("Gestor: líder de equipe."
+                   if _GERAL else
+                   "Só o Gestor Geral cria novos Gestores.")
             ),
         )
+
+        # Equipe: Gestor Geral escolhe; líder de equipe grava a própria.
+        if _GERAL:
+            n_equipe = st.selectbox(
+                "Equipe", _EQUIPES, index=0,
+                help="A qual equipe de gestão esta pessoa pertence. "
+                     "GERAL = vê tudo (use só para outro Gestor Geral).",
+            )
+        else:
+            n_equipe = _MINHA_EQUIPE
+            st.caption(f"Equipe: **{n_equipe}** (sua equipe)")
 
         # Pergunta secreta (usada na recuperação de senha)
         n_email = st.text_input(
@@ -77,13 +110,20 @@ with st.expander("➕ Cadastrar Novo Colaborador"):
                         db.gerar_hash(n_resp.strip().lower())
                         if n_resp.strip() else None
                     )
+                    # Defesa no servidor: nunca aceitar perfil/equipe fora
+                    # do permitido pro escopo, mesmo se o front for burlado.
+                    _perf_ok = n_perf if n_perf in _perfis_novo else "Projetista"
+                    _equipe_ok = (
+                        n_equipe if (_GERAL and n_equipe in _EQUIPES)
+                        else _MINHA_EQUIPE
+                    )
                     c.execute(
                         "INSERT INTO usuarios (nome, senha, perfil, cargo, "
-                        "email, pergunta_secreta, resposta_secreta) "
-                        "VALUES (%s,%s,%s,%s,%s,%s,%s)",
-                        (n_nome, db.gerar_hash(n_senha), n_perf, n_cargo,
+                        "email, pergunta_secreta, resposta_secreta, equipe) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                        (n_nome, db.gerar_hash(n_senha), _perf_ok, n_cargo,
                          n_email.strip() or None,
-                         n_perg.strip() or None, _resp_hash),
+                         n_perg.strip() or None, _resp_hash, _equipe_ok),
                     )
                     conn.commit()
                     if not n_perg.strip() or not n_resp.strip():
@@ -103,12 +143,22 @@ with st.expander("➕ Cadastrar Novo Colaborador"):
 st.divider()
 
 # 2. LISTAGEM DE USUÁRIOS
-df_membros = pd.read_sql_query(
-    "SELECT * FROM usuarios ORDER BY "
-    "CASE perfil WHEN 'Gestor' THEN 0 WHEN 'Projetista' THEN 1 ELSE 2 END, "
-    "nome",
-    db.get_engine(),
-)
+# Líder de equipe só vê a própria equipe; Gestor Geral vê todos.
+if _GERAL:
+    df_membros = pd.read_sql_query(
+        "SELECT * FROM usuarios ORDER BY "
+        "CASE perfil WHEN 'Gestor' THEN 0 WHEN 'Projetista' THEN 1 "
+        "ELSE 2 END, nome",
+        db.get_engine(),
+    )
+else:
+    df_membros = pd.read_sql_query(
+        "SELECT * FROM usuarios WHERE COALESCE(equipe,'SERVPEN') = %s "
+        "ORDER BY CASE perfil WHEN 'Gestor' THEN 0 "
+        "WHEN 'Projetista' THEN 1 ELSE 2 END, nome",
+        db.get_engine(),
+        params=(_MINHA_EQUIPE,),
+    )
 
 # Métricas de composição da equipe
 mc1, mc2, mc3, mc4 = st.columns(4)
@@ -146,12 +196,19 @@ if df_membros.empty:
         cor_borda="#d97706",
     )
 
+_cores_equipe = {
+    "SERVPEN": "#0e7490",   # ciano-escuro
+    "SERVPAR": "#7c3aed",   # roxo
+    "GERAL":   "#374151",   # cinza-grafite
+}
+
 for _, u in df_membros.iterrows():
     cor_p = _cores_perfil.get(u["perfil"], "#0056b3")
     cargo_txt = u.get("cargo") or "Colaborador"
     email_txt = u.get("email") or ""
     eh_eu = (u["nome"] == usuario)
     tem_perg = bool(u.get("pergunta_secreta"))
+    equipe_u = u.get("equipe") or "SERVPEN"
 
     with st.container(border=True):
         cav, cinfo, cbadge = st.columns([0.13, 0.67, 0.20])
@@ -184,20 +241,37 @@ for _, u in df_membros.iterrows():
                 + f"<div style='font-size:.72rem;margin-top:2px'>{_perg_html}</div>",
                 unsafe_allow_html=True,
             )
-        # Badge do perfil
+        # Badge do perfil + badge da equipe (equipe só interessa pro
+        # Gestor Geral, que vê gente de equipes diferentes na mesma lista)
+        _cor_eq = _cores_equipe.get(equipe_u, "#374151")
+        _badge_equipe = (
+            f"<div style='margin-top:4px'>"
+            f"<span style='background:{_cor_eq};color:#fff;"
+            f"padding:2px 10px;border-radius:14px;font-size:.62rem;"
+            f"font-weight:700;letter-spacing:.5px'>{equipe_u}</span></div>"
+            if _GERAL else ""
+        )
         cbadge.markdown(
             f"<div style='text-align:right'>"
             f"<span style='background:{cor_p};color:#fff;"
             f"padding:3px 12px;border-radius:14px;font-size:.7rem;"
             f"font-weight:700;text-transform:uppercase;letter-spacing:.5px'>"
-            f"{u['perfil']}</span></div>",
+            f"{u['perfil']}</span>{_badge_equipe}</div>",
             unsafe_allow_html=True,
         )
+
+        # Permissão de gerência sobre ESTE alvo: líder de equipe não mexe
+        # em Gestores (nem nos colegas de equipe, nem em si — pra isso há
+        # "Meu Perfil"). Só o Gestor Geral gerencia Gestores.
+        _pode_gerenciar_alvo = _GERAL or (u["perfil"] != "Gestor")
 
         # Ações
         ca1, ca2, _ca3 = st.columns([0.28, 0.30, 0.42])
         if ca1.button("✏️ Editar", key=f"ed_u_{u['id']}",
-                      use_container_width=True):
+                      use_container_width=True,
+                      disabled=not _pode_gerenciar_alvo,
+                      help=(None if _pode_gerenciar_alvo else
+                            "Só o Gestor Geral edita Gestores.")):
             st.session_state[f"editor_u_{u['id']}"] = not st.session_state.get(
                 f"editor_u_{u['id']}", False
             )
@@ -205,6 +279,8 @@ for _, u in df_membros.iterrows():
         with ca2.popover("🗑️ Remover", use_container_width=True):
             if u["nome"] == usuario:
                 st.error("Não é possível excluir o próprio usuário logado.")
+            elif not _pode_gerenciar_alvo:
+                st.error("Só o Gestor Geral pode remover Gestores.")
             else:
                 st.markdown(f"**Remover `{u['nome']}` permanentemente?**")
                 st.caption(
@@ -227,6 +303,11 @@ for _, u in df_membros.iterrows():
                     st.rerun()
 
         # PAINEL DE EDIÇÃO INTEGRADO
+        # Defesa extra: se o editor foi aberto e o alvo não é gerenciável
+        # (líder tentando editar Gestor), fecha sem renderizar.
+        if st.session_state.get(f"editor_u_{u['id']}") and \
+                not _pode_gerenciar_alvo:
+            st.session_state[f"editor_u_{u['id']}"] = False
         if st.session_state.get(f"editor_u_{u['id']}"):
             st.divider()
             ce1, ce2 = st.columns(2)
@@ -250,12 +331,29 @@ for _, u in df_membros.iterrows():
                     "mantém a que já existe."
                 ),
             )
-            _perfis = ["Projetista", "Gestor", "Visualizador"]
-            up_perf = ce4.selectbox(
-                "Perfil", _perfis,
-                index=_perfis.index(u["perfil"]) if u["perfil"] in _perfis else 0,
-                key=f"p_{u['id']}",
+            # Perfil: só o Gestor Geral pode promover a Gestor. Líder de
+            # equipe edita só Projetista/Visualizador.
+            _perfis = (
+                ["Projetista", "Gestor", "Visualizador"] if _GERAL
+                else ["Projetista", "Visualizador"]
             )
+            _idx_perf = _perfis.index(u["perfil"]) if u["perfil"] in _perfis else 0
+            up_perf = ce4.selectbox(
+                "Perfil", _perfis, index=_idx_perf, key=f"p_{u['id']}",
+            )
+
+            # Equipe: só o Gestor Geral troca. Líder de equipe vê fixa.
+            if _GERAL:
+                _idx_eq = (
+                    _EQUIPES.index(equipe_u) if equipe_u in _EQUIPES else 0
+                )
+                up_equipe = st.selectbox(
+                    "Equipe", _EQUIPES, index=_idx_eq, key=f"eq_{u['id']}",
+                    help="Mover a pessoa entre equipes de gestão.",
+                )
+            else:
+                up_equipe = equipe_u
+                st.caption(f"Equipe: **{equipe_u}** (só o Gestor Geral altera)")
 
             # Pergunta secreta (recuperação de senha). Carrega a pergunta
             # atual; resposta sempre vazia (é hash).
@@ -296,18 +394,38 @@ for _, u in df_membros.iterrows():
                         )
                     else:
                         _resp_para_salvar = u.get("resposta_secreta")
+                    # ── Validação de permissão NO SERVIDOR ──────────────
+                    # Nunca confiar só no widget escondido. Líder de equipe
+                    # não pode promover a Gestor nem trocar a equipe: força
+                    # os valores de volta ao seguro.
+                    if _GERAL:
+                        _perf_final = up_perf
+                        _equipe_final = (
+                            up_equipe if up_equipe in _EQUIPES else equipe_u
+                        )
+                    else:
+                        _perf_final = (
+                            up_perf if up_perf in ("Projetista", "Visualizador")
+                            else u["perfil"]
+                        )
+                        _equipe_final = equipe_u  # líder não muda equipe
                     conn = db.conectar()
                     c = conn.cursor()
                     c.execute(
                         "UPDATE usuarios SET nome=%s, cargo=%s, senha=%s, "
                         "perfil=%s, pergunta_secreta=%s, "
-                        "resposta_secreta=%s WHERE id=%s",
-                        (up_nome, up_cargo, _senha_para_salvar, up_perf,
+                        "resposta_secreta=%s, equipe=%s WHERE id=%s",
+                        (up_nome, up_cargo, _senha_para_salvar, _perf_final,
                          up_perg.strip() or None, _resp_para_salvar,
-                         u["id"]),
+                         _equipe_final, u["id"]),
                     )
                     conn.commit()
                     conn.close()
+                    db.log_aud(
+                        usuario, "editar", "usuario", u["id"],
+                        f"nome='{up_nome}' perfil='{_perf_final}' "
+                        f"equipe='{_equipe_final}'",
+                    )
                     st.session_state[f"editor_u_{u['id']}"] = False
                     _invalidar_dados()
                 st.toast(_msg, icon="✅")

@@ -17,7 +17,16 @@ import database as db
 
 @st.cache_data(ttl=8, show_spinner=False)
 def _load_df_u():
-    return pd.read_sql_query("SELECT nome FROM usuarios", db.get_engine())
+    # Inclui `equipe` e `perfil` pro controle por equipe (SERVPEN/SERVPAR/
+    # GERAL). COALESCE garante 'SERVPEN' em linha antiga sem o default.
+    # Callers que só usam `nome` continuam funcionando (colunas extras não
+    # quebram nada).
+    return pd.read_sql_query(
+        "SELECT nome, perfil, cargo, email, avatar_path, "
+        "COALESCE(equipe,'SERVPEN') AS equipe "
+        "FROM usuarios",
+        db.get_engine(),
+    )
 
 
 @st.cache_data(ttl=8, show_spinner=False)

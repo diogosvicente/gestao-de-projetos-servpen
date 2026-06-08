@@ -304,7 +304,8 @@ def obter_usuario(nome):
     conn = conectar(); c = conn.cursor()
     try:
         c.execute(
-            "SELECT id, nome, perfil, cargo, email, pergunta_secreta, avatar_path "
+            "SELECT id, nome, perfil, cargo, email, pergunta_secreta, "
+            "avatar_path, equipe "
             "FROM usuarios WHERE nome = %s",
             (nome,),
         )
@@ -314,7 +315,51 @@ def obter_usuario(nome):
         return {
             'id': row[0], 'nome': row[1], 'perfil': row[2], 'cargo': row[3],
             'email': row[4], 'pergunta_secreta': row[5], 'avatar_path': row[6],
+            # equipe pode ser NULL em linha antiga antes do default aplicar —
+            # normaliza pra SERVPEN (mesmo default da migração).
+            'equipe': row[7] or 'SERVPEN',
         }
+    finally:
+        conn.close()
+
+
+# ─── CONTROLE POR EQUIPE (SERVPEN / SERVPAR / GERAL) ───────
+def nomes_por_equipe(equipe):
+    """Conjunto de NOMES de usuários de uma equipe ('SERVPEN'|'SERVPAR').
+
+    Usado pra derivar o grupo de projetos/agenda (cujos campos `projetista`
+    e `responsaveis` são CSV de nomes): um projeto/evento "pertence" a uma
+    equipe se algum nome dele estiver neste conjunto.
+
+    `GERAL` não filtra nada (Gestor Geral vê tudo) — quem chama deve checar
+    `_ve_tudo()` antes e nem invocar isto nesse caso. Por segurança, se vier
+    'GERAL' aqui, retorna todos os nomes.
+    """
+    conn = conectar(); c = conn.cursor()
+    try:
+        if equipe == 'GERAL':
+            c.execute("SELECT nome FROM usuarios")
+        else:
+            c.execute(
+                "SELECT nome FROM usuarios WHERE COALESCE(equipe,'SERVPEN') = %s",
+                (equipe,),
+            )
+        return {r[0] for r in c.fetchall()}
+    finally:
+        conn.close()
+
+
+def definir_equipe_usuario(nome, equipe):
+    """Grava a equipe de um usuário. Use apenas a partir de fluxo do Gestor
+    Geral (a permissão é validada na view)."""
+    if equipe not in ('SERVPEN', 'SERVPAR', 'GERAL'):
+        raise ValueError(f"equipe inválida: {equipe!r}")
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute(
+            "UPDATE usuarios SET equipe = %s WHERE nome = %s", (equipe, nome)
+        )
+        conn.commit()
     finally:
         conn.close()
 
@@ -729,6 +774,12 @@ def _criar_tabelas_impl():
             ("usuarios",              "resposta_secreta",   "TEXT"),
             ("usuarios",              "email",              "TEXT"),
             ("usuarios",              "avatar_path",        "TEXT"),
+            # Equipe de gestão: 'SERVPEN' | 'SERVPAR' | 'GERAL'.
+            # Define isolamento de visão. Num projetista = a qual equipe
+            # pertence. Num Gestor = escopo (GERAL = vê tudo, sem filtro).
+            # Existentes viram SERVPEN por padrão; Gestor Geral reclassifica
+            # na tela de Equipe. Ver docs/PROMPT-controle-equipes.md.
+            ("usuarios",              "equipe",             "TEXT DEFAULT 'SERVPEN'"),
             ("projetos",              "prioridade",         "TEXT"),
             # Tags livres separadas por vírgula. Ex.: "Crítico,Aguardando Cliente".
             # Schema TEXT (não tabela normalizada) é OK na escala atual (dezenas
