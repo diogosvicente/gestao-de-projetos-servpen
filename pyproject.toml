@@ -22,7 +22,6 @@ exclude = [
     ".vscode",
     ".vscode-server",
     ".claude",
-    "seed.py",                # marcado obsoleto, formato antigo SQLite
 ]
 
 [tool.ruff.lint]
