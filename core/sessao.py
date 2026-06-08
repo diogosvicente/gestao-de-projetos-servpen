@@ -75,13 +75,24 @@ def gravar_cookie(token: str) -> None:
     st.session_state[_FLAG_GRAVADO] = token
 
 
-def logout_redirect() -> None:
-    """Apaga o cookie + recarrega a página na URL base (sem `?t=`).
+def limpar_cookie() -> None:
+    """Apaga o cookie de sessão no browser (logout).
 
-    Usado no logout. Faz tudo em UM JS: zera o cookie e
-    `location.replace` pra base — o reload abre uma sessão nova, sem
-    token, caindo na tela de login. Como é a última coisa que roda
-    (chame `st.stop()` logo depois), o JS executa de fato.
+    Usado no logout. APENAS zera o cookie — NÃO tenta recarregar a página.
+
+    Histórico do bug: a versão anterior fazia
+    `window.parent.location.replace()` aqui, mas o iframe do
+    `components.html` é sandboxed SEM `allow-top-navigation` — então o
+    redirect era bloqueado (SecurityError, engolido pelo catch). O cookie
+    limpava, mas a página não recarregava; com o `st.stop()` que vinha
+    depois, a tela ficava só com a sidebar e o usuário precisava clicar
+    "Sair" duas vezes.
+
+    Fix: o logout agora é feito 100% no servidor (deletar_sessao +
+    limpar session_state + st.rerun em app.py). Esta função só apaga o
+    cookie no browser, sem redirect. Como `deletar_sessao` invalida a
+    sessão no banco, mesmo que o cookie demore a sumir, o token fica
+    inválido — o rerun já cai na tela de login.
     """
     _components.html(
         f"""
@@ -89,10 +100,7 @@ def logout_redirect() -> None:
         try {{
             window.parent.document.cookie =
                 "{_COOKIE_NOME}=; path=/; max-age=0; SameSite=Lax";
-            var u = new URL(window.parent.location.href);
-            u.search = "";              // remove ?t= e quaisquer params
-            window.parent.location.replace(u.toString());
-        }} catch (e) {{ console.warn('sessao logout:', e); }}
+        }} catch (e) {{ console.warn('sessao limpar cookie:', e); }}
         </script>
         """,
         height=0,

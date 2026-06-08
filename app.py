@@ -504,6 +504,10 @@ if _eh_tema_claro():
 # 8. TELA DE LOGIN (se não autenticado)
 # ═══════════════════════════════════════════════════════════════════════
 if not st.session_state.autenticado:
+    # Veio de um logout? Apaga o cookie de sessão agora (na render da tela
+    # de login, onde o iframe do component executa sem st.stop() cortando).
+    if st.session_state.pop("_logout_limpar_cookie", False):
+        sessao.limpar_cookie()
     from core.auth_ui import tela_login
     tela_login()
     st.stop()
@@ -590,17 +594,22 @@ with st.sidebar:
     # ── BOTÃO SAIR + TEMA ───────────────────────────────────────
     if st.button("🔴 Sair do Sistema", use_container_width=True,
                  key="btn_sair"):
+        # Logout 100% no servidor + st.rerun() — sai de uma vez só.
+        # (A versão antiga tentava redirecionar via JS no iframe, que é
+        # bloqueado pelo sandbox; a tela ficava só com a sidebar e exigia
+        # 2 cliques.) deletar_sessao invalida o token no banco, então
+        # mesmo que o cookie demore a sumir, o próximo run cai no login.
         db.log_aud(st.session_state.usuario, "logout", "sessao", None, "")
         db.deletar_sessao(sessao.ler_token())   # invalida no banco
+        st.query_params.clear()                 # tira ?t= da URL
         st.session_state.autenticado = False
         st.session_state.usuario = None
         st.session_state.perfil = None
-        # logout_redirect() apaga o cookie E recarrega na URL base (sem
-        # ?t=) num único JS. st.stop() logo depois garante que o iframe
-        # do component seja commitado antes do reload disparar. NÃO usar
-        # st.rerun aqui (o iframe poderia não chegar a executar).
-        sessao.logout_redirect()
-        st.stop()
+        st.session_state.equipe = None
+        # Sinaliza pra apagar o cookie no próximo render (na tela de login),
+        # onde o iframe roda sem st.stop() cortando.
+        st.session_state["_logout_limpar_cookie"] = True
+        st.rerun()
 
     # Toggle de Tema (Claro / Escuro)
     st.divider()
