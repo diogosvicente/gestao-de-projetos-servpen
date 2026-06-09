@@ -514,6 +514,25 @@ if not st.session_state.autenticado:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# 8.1 REFRESH DE perfil/equipe A CADA RUN (não só no login)
+# ═══════════════════════════════════════════════════════════════════════
+# `perfil` e `equipe` eram lidos do banco APENAS no momento do login (bloco
+# de auto-login). Enquanto a sessão ficava viva, mudanças no banco (ex.:
+# Gestor Geral promove alguém, ou define a equipe de outro) NÃO refletiam —
+# o usuário continuava com o valor antigo até deslogar/relogar. Pior: quem
+# foi setado como GERAL via SQL com a sessão já aberta continuava "preso"
+# em SERVPEN.
+#
+# Fix: reler do banco a cada run. É barato (1 SELECT por nome) e a sidebar
+# já fazia esse mesmo fetch pro avatar — reusamos o resultado mais abaixo.
+# Mantém `_pode_gestor()` (que monta o menu) e `_ve_tudo()` sempre corretos.
+_me_atual = db.obter_usuario(st.session_state.usuario) or {}
+if _me_atual:
+    st.session_state.perfil = _me_atual.get("perfil") or st.session_state.perfil
+    st.session_state.equipe = _me_atual.get("equipe") or "SERVPEN"
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # 9. SIDEBAR GLOBAL (renderiza em TODAS as páginas)
 # ═══════════════════════════════════════════════════════════════════════
 from core.auth_ui import _avatar_circular_html, _dialog_meu_perfil
@@ -562,7 +581,8 @@ with st.sidebar:
     # da sidebar (versão anterior tinha o st.navigation default ficando
     # acima — agora usamos position="hidden" no navigation e listamos
     # os links manualmente abaixo).
-    _me_side = db.obter_usuario(st.session_state.usuario) or {}
+    # Reusa o _me_atual já buscado na seção 8.1 (evita 2 SELECTs iguais).
+    _me_side = _me_atual or db.obter_usuario(st.session_state.usuario) or {}
     st.markdown(
         _avatar_circular_html(_me_side.get("avatar_path"), size=88),
         unsafe_allow_html=True,
