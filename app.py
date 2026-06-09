@@ -134,6 +134,11 @@ if not st.session_state.get("autenticado", False):
         # (usuario, perfil), então buscamos a equipe via obter_usuario.
         _me_boot = db.obter_usuario(_sess[0]) or {}
         st.session_state.equipe = _me_boot.get("equipe", "SERVPEN")
+        # Guarda o token na sessão pra re-injetar o ?t= na URL a CADA run
+        # (ver seção 8.1). Sem isso, navegar pelo menu (st.page_link tira a
+        # query string) + hard-refresh deslogava: o ?t= sumia da URL e o
+        # cookie nem sempre é lido atrás do Apache.
+        st.session_state["_auth_token"] = _tok
         # Mantém o token na URL (compat com o toast de chat que monta
         # links com ?t=) E grava/renova o cookie (1× por sessão, via
         # flag interna). É aqui que uma aba nova "ganha" seu cookie.
@@ -511,6 +516,24 @@ if not st.session_state.autenticado:
     from core.auth_ui import tela_login
     tela_login()
     st.stop()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 8.0 MANTÉM O ?t=TOKEN NA URL A CADA RUN (sobrevive hard-refresh)
+# ═══════════════════════════════════════════════════════════════════════
+# O `st.page_link` do menu APAGA a query string ao navegar (vira só
+# /kanban). Num F5 normal o Streamlit reconecta na sessão quente e segue
+# logado; num Ctrl+Shift+R ele descarta a sessão e tenta restaurar pelo
+# token — mas o ?t= já sumiu da URL e o cookie nem sempre é lido atrás do
+# Apache → deslogava. Fix: re-injetar o token na URL TODA vez, usando o
+# que guardamos em sessão no login. Assim a barra de endereço sempre tem
+# ?t=, e qualquer refresh restaura. Setar o mesmo valor é no-op (não causa
+# rerun).
+_auth_tok = st.session_state.get("_auth_token") or sessao.ler_token()
+if _auth_tok:
+    st.session_state["_auth_token"] = _auth_tok
+    if st.query_params.get("t") != _auth_tok:
+        st.query_params["t"] = _auth_tok
 
 
 # ═══════════════════════════════════════════════════════════════════════
