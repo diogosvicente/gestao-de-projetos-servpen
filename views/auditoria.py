@@ -11,9 +11,11 @@ import html as _html
 import io as _io
 from datetime import datetime
 
+import pandas as pd
 import streamlit as st
 
 import database as db
+import relatorios
 
 from core.data import _load_df_u
 from core.helpers import _pode_gestor, _tempo_relativo
@@ -116,3 +118,72 @@ if linhas:
     st.markdown(tabela, unsafe_allow_html=True)
 else:
     st.info("🔍 Nenhum evento encontrado para os filtros atuais.")
+
+
+# ══════════════════════════════════════════════════════════════════════
+# HISTÓRICO DE ALTERAÇÕES DE PROJETOS (antes/depois)
+# ══════════════════════════════════════════════════════════════════════
+st.divider()
+st.subheader("🕓 Histórico de Alterações de Projetos")
+st.caption(
+    "Mudanças em campos de projetos JÁ INICIADOS (responsável, prazos e "
+    "demais campos), com valor anterior e novo. Projetos 'Em Espera' não "
+    "geram histórico."
+)
+
+_df_alt = pd.read_sql(
+    "SELECT data, projeto_nome, campo, valor_anterior, valor_novo, autor "
+    "FROM projeto_alteracoes ORDER BY data DESC LIMIT 2000",
+    db.get_engine(),
+)
+
+_ca1, _ca2 = st.columns([3, 1])
+_ca1.metric("Alterações registradas", len(_df_alt))
+if not _df_alt.empty:
+    _ca2.download_button(
+        "📊 Exportar Excel",
+        data=relatorios.gerar_excel_historico(_df_alt),
+        file_name=f"historico_alteracoes_"
+                  f"{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument."
+             "spreadsheetml.sheet",
+        use_container_width=True,
+    )
+
+    _linhas_alt = []
+    for _, _r in _df_alt.iterrows():
+        _dt = pd.to_datetime(_r["data"], errors="coerce")
+        _quando = _dt.strftime("%d/%m/%Y %H:%M") if pd.notna(_dt) else "—"
+        _linhas_alt.append(
+            f"<tr>"
+            f"<td style='white-space:nowrap;opacity:.7;font-size:.85em'>"
+            f"{_quando}</td>"
+            f"<td>{_html.escape(str(_r.get('projeto_nome') or '—'))}</td>"
+            f"<td><b>{_html.escape(str(_r.get('campo') or ''))}</b></td>"
+            f"<td style='color:#ef4444'>"
+            f"{_html.escape(str(_r.get('valor_anterior') or '—'))}</td>"
+            f"<td style='color:#10b981'>"
+            f"{_html.escape(str(_r.get('valor_novo') or '—'))}</td>"
+            f"<td style='opacity:.8'>"
+            f"{_html.escape(str(_r.get('autor') or '—'))}</td>"
+            f"</tr>"
+        )
+    st.markdown(
+        "<div style='max-height:480px;overflow-y:auto;"
+        "border:1px solid rgba(128,128,128,0.2);border-radius:8px'>"
+        "<table style='width:100%;border-collapse:collapse;font-size:0.9rem'>"
+        "<thead style='position:sticky;top:0;background:rgba(0,86,179,0.12);"
+        "backdrop-filter:blur(4px)'><tr>"
+        "<th style='padding:8px 10px;text-align:left'>Quando</th>"
+        "<th style='padding:8px 10px;text-align:left'>Projeto</th>"
+        "<th style='padding:8px 10px;text-align:left'>Campo</th>"
+        "<th style='padding:8px 10px;text-align:left'>Anterior</th>"
+        "<th style='padding:8px 10px;text-align:left'>Novo</th>"
+        "<th style='padding:8px 10px;text-align:left'>Autor</th>"
+        "</tr></thead><tbody>"
+        + "".join(_linhas_alt) +
+        "</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
+else:
+    st.info("Nenhuma alteração de projeto registrada ainda.")

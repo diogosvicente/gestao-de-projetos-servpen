@@ -328,6 +328,76 @@ def gerar_excel(df, df_etapas=None, df_progresso=None):
 # ═════════════════════════════════════════════════════════════
 #  2. PDF COMPLETO
 # ═════════════════════════════════════════════════════════════
+def gerar_excel_historico(df):
+    """Gera um .xlsx do HISTÓRICO DE ALTERAÇÕES dos projetos.
+
+    `df` deve ter as colunas: data, projeto_nome, campo, valor_anterior,
+    valor_novo, autor (qualquer subconjunto é tolerado). Retorna bytes.
+    """
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        wb = writer.book
+        ws = wb.add_worksheet('Histórico')
+        writer.sheets['Histórico'] = ws
+
+        fmt_titulo = wb.add_format({
+            'bold': True, 'font_color': 'white', 'bg_color': '#003366',
+            'align': 'center', 'valign': 'vcenter', 'font_size': 12,
+        })
+        fmt_cab = wb.add_format({
+            'bold': True, 'font_color': 'white', 'bg_color': '#0056b3',
+            'border': 1, 'align': 'center', 'valign': 'vcenter',
+            'font_size': 10,
+        })
+        fmt_cel = wb.add_format({
+            'border': 1, 'valign': 'vcenter', 'font_size': 9,
+            'text_wrap': True,
+        })
+        fmt_alt = wb.add_format({
+            'border': 1, 'valign': 'vcenter', 'font_size': 9,
+            'bg_color': '#f3f4f6', 'text_wrap': True,
+        })
+
+        COLS = [
+            ('Data/Hora',      'data',            18),
+            ('Projeto',        'projeto_nome',    32),
+            ('Campo',          'campo',           20),
+            ('Valor Anterior', 'valor_anterior',  28),
+            ('Novo Valor',     'valor_novo',      28),
+            ('Autor',          'autor',           18),
+        ]
+        ws.merge_range(
+            0, 0, 0, len(COLS) - 1,
+            'SERVPEN — Histórico de Alterações  |  '
+            + datetime.now().strftime('%d/%m/%Y %H:%M'),
+            fmt_titulo,
+        )
+        ws.set_row(0, 24)
+        for j, (titulo, _, larg) in enumerate(COLS):
+            ws.write(1, j, titulo, fmt_cab)
+            ws.set_column(j, j, larg)
+
+        if df is None or df.empty:
+            ws.merge_range(2, 0, 2, len(COLS) - 1,
+                           'Sem alterações registradas.', fmt_cel)
+        else:
+            df = df.copy()
+            # Formata a data pra dd/mm/yyyy HH:MM (string)
+            if 'data' in df.columns:
+                df['data'] = pd.to_datetime(
+                    df['data'], errors='coerce'
+                ).dt.strftime('%d/%m/%Y %H:%M')
+            for i, (_, row) in enumerate(df.iterrows()):
+                fmt = fmt_alt if i % 2 else fmt_cel
+                for j, (_, chave, _l) in enumerate(COLS):
+                    val = row.get(chave, '')
+                    ws.write(i + 2, j, '' if pd.isna(val) else str(val), fmt)
+        ws.freeze_panes(2, 0)
+
+    return output.getvalue()
+
+
+# ═════════════════════════════════════════════════════════════
 def gerar_pdf(df, df_etapas=None, df_progresso=None):
     # ── SOLUÇÃO CONTRA DUPLICIDADE: HIGIENIZAÇÃO DE ÍNDICES E COLUNAS ──
     if df is not None:

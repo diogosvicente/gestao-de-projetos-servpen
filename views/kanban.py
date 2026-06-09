@@ -23,6 +23,7 @@ from core.helpers import (
     _estiliza_plotly,
     _pill_select,
     _pode_editar,
+    _pode_gestor,
     _render_tag_chips,
     _ve_tudo,
 )
@@ -44,6 +45,18 @@ def _data_br(valor):
         return "—"
     _d = pd.to_datetime(str(valor), errors="coerce")
     return _d.strftime("%d/%m/%Y") if pd.notna(_d) else "—"
+
+
+def _fmt_hist(valor, is_date=False):
+    """Normaliza um valor pra comparar/exibir no histórico de alterações.
+    Datas viram dd/mm/yyyy; resto vira string limpa; vazio/None vira ''."""
+    if valor is None:
+        return ""
+    if is_date:
+        _d = pd.to_datetime(str(valor), errors="coerce")
+        return _d.strftime("%d/%m/%Y") if pd.notna(_d) else ""
+    s = str(valor).strip()
+    return "" if s in ("", "None", "NaT", "—") else s
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1037,13 +1050,60 @@ if "projeto_em_edicao" in st.session_state:
                 ed_sei, ed_drec, ed_di, ed_dt, ed_dt,
                 ed_li, checklist_final, ed_esc, ed_pr,
             )
-            db.atualizar_projeto_completo(id_ed, dados_finais)
-            # Tags vão num UPDATE separado pra não quebrar a assinatura
-            # fixa de `atualizar_projeto_completo` (14 valores, compat).
+            # Tags (CSV) — calculado aqui pra entrar no diff do histórico.
             _tags_csv_save = (
                 db.serializar_tags(db.parse_tags(ed_tags)) or None
             )
+            # ── HISTÓRICO DE ALTERAÇÕES (antes/depois) ───────────
+            # Compara o estado ANTIGO (`dados`) com os novos valores do
+            # form. Só registra se o projeto está INICIADO (status !=
+            # 'Em Espera') — projeto não iniciado não gera histórico.
+            _campos_hist = [
+                ("Responsável",        dados.get("projetista"),
+                 equipe_str, False),
+                ("Nome do Projeto",    dados.get("projeto"), ed_nm, False),
+                ("Endereço",           dados.get("endereco"), ed_ed, False),
+                ("Solicitante",        dados.get("solicitante"),
+                 ed_so, False),
+                ("Contato",            dados.get("contato"), ed_co, False),
+                ("Nº SEI",             dados.get("numero_sei"),
+                 ed_sei, False),
+                ("Data de Recebimento", dados.get("data_recebimento"),
+                 ed_drec, True),
+                ("Data de Início",     dados.get("data_inicio"),
+                 ed_di, True),
+                ("Data de Término",
+                 dados.get("data_termino") or dados.get("data_fim"),
+                 ed_dt, True),
+                ("Link",               dados.get("link_projeto"),
+                 ed_li, False),
+                ("Demandas/Checklist", dados.get("demandas"),
+                 checklist_final, False),
+                ("Solicitação",        dados.get("solicitacao"),
+                 ed_esc, False),
+                ("Prioridade",         dados.get("prioridade"),
+                 ed_pr, False),
+                ("Tags",               dados.get("tags"),
+                 _tags_csv_save, False),
+            ]
+            _alteracoes = []
+            for _lbl, _ant, _nov, _isd in _campos_hist:
+                _a = _fmt_hist(_ant, _isd)
+                _n = _fmt_hist(_nov, _isd)
+                if _a != _n:
+                    _alteracoes.append((_lbl, _a, _n))
+
+            db.atualizar_projeto_completo(id_ed, dados_finais)
+            # Tags num UPDATE separado (assinatura fixa de
+            # atualizar_projeto_completo — 14 valores, compat).
             db.atualizar_campo_projeto(id_ed, "tags", _tags_csv_save)
+
+            # Grava o histórico (gatilho: projeto iniciado).
+            if str(dados.get("status", "")).strip() != "Em Espera":
+                db.registrar_alteracoes_projeto(
+                    id_ed, ed_nm, _alteracoes, usuario,
+                )
+
             db.log_aud(
                 usuario, "editar", "projeto", id_ed,
                 f"nome='{ed_nm}' tags='{_tags_csv_save or ''}'",
@@ -1243,33 +1303,74 @@ if "projeto_em_edicao" in st.session_state:
             pass
 
     # ════════════════════════════════════════════════════════
+    #  HISTÓRICO DE ALTERAÇÕES DO PROJETO
+    #  (só projetos iniciados geram registro — ver salvar acima)
+    # ════════════════════════════════════════════════════════
+    with st.expander("🕓 Histórico de Alterações"):
+        _df_hist = pd.read_sql(
+            "SELECT data, campo, valor_anterior, valor_novo, autor "
+            "FROM projeto_alteracoes WHERE projeto_id = %s "
+            "ORDER BY data DESC LIMIT 200",
+            db.get_engine(), params=(int(id_ed),),
+        )
+        if _df_hist.empty:
+            st.caption(
+                "Nenhuma alteração registrada. O histórico passa a ser "
+                "gravado quando o projeto sai de **Em Espera** (iniciado)."
+            )
+        else:
+            for _, _h in _df_hist.iterrows():
+                _quando = _data_br(_h["data"])
+                _hora = ""
+                _dt_h = pd.to_datetime(_h["data"], errors="coerce")
+                if pd.notna(_dt_h):
+                    _quando = _dt_h.strftime("%d/%m/%Y")
+                    _hora = _dt_h.strftime(" %H:%M")
+                _ant = _h.get("valor_anterior") or "—"
+                _nov = _h.get("valor_novo") or "—"
+                st.markdown(
+                    f"<div style='border-left:3px solid #0056b3;"
+                    f"padding:2px 0 2px 10px;margin:4px 0;font-size:.86rem;'>"
+                    f"<b>{_h['campo']}</b>: "
+                    f"<span style='color:#ef4444;'>{_ant}</span> → "
+                    f"<span style='color:#10b981;'>{_nov}</span><br>"
+                    f"<span style='opacity:.6;font-size:.76rem;'>"
+                    f"{_quando}{_hora} · {_h.get('autor') or '—'}</span></div>",
+                    unsafe_allow_html=True,
+                )
+
+    # ════════════════════════════════════════════════════════
     #  EVOLUÇÃO TÉCNICA POR DISCIPLINA
     #  Checklist: slider 100% → checkbox marcado automaticamente
     # ════════════════════════════════════════════════════════
     st.markdown("### 📊 Evolução Técnica por Disciplina")
 
     # ── ISOLAMENTO POR EQUIPE ──────────────────────────────────
-    # A evolução pertence a quem é DESIGNADO no projeto (o projetista).
-    # Líder de equipe só vê/edita a evolução de projetos onde algum
-    # projetista é da sua equipe. O board e o Gantt continuam abertos a
-    # todos (projeto compartilhado) — só este painel filtra.
+    # Regra de visibilidade da EVOLUÇÃO (só ela — board e Gantt são abertos
+    # a todos, projeto compartilhado):
+    #   • Gestor Geral .......... vê tudo.
+    #   • Gestor de equipe ....... vê se ALGUÉM da sua equipe está designado
+    #                              no projeto (interseção projetista×equipe).
+    #   • Projetista/Visualizador  vê SÓ se ELE PRÓPRIO está designado no
+    #                              projeto ("somente as pessoas envolvidas").
+    _proj_nomes = {
+        n.strip() for n in str(dados.get("projetista", "")).split(",")
+        if n.strip()
+    }
     if _ve_tudo():
         _pode_ver_evolucao = True
-    else:
-        _proj_nomes = {
-            n.strip() for n in str(dados.get("projetista", "")).split(",")
-            if n.strip()
-        }
+    elif _pode_gestor():
         _pode_ver_evolucao = bool(
             _proj_nomes & db.nomes_por_equipe(_equipe_atual())
         )
+    else:
+        _pode_ver_evolucao = usuario in _proj_nomes
 
     if not _pode_ver_evolucao:
         st.info(
-            "🔒 A evolução técnica deste projeto é gerida por outra equipe "
-            "(nenhum projetista da sua equipe está designado). O projeto e "
-            "o cronograma continuam visíveis, mas o progresso por "
-            "disciplina pertence à equipe responsável."
+            "🔒 A evolução técnica só é visível para quem está designado no "
+            "projeto (e, para gestores, quando alguém da sua equipe está "
+            "envolvido). O projeto e o cronograma continuam visíveis."
         )
         st.stop()
 

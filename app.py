@@ -77,13 +77,9 @@ if "usuario" not in st.session_state:
     st.session_state.usuario = None
 if "perfil" not in st.session_state:
     st.session_state.perfil = "Gestor"
-if "lista_checklist" not in st.session_state:
-    st.session_state.lista_checklist = [
-        "Água Pluvial", "Arquitetura", "Ar condicionado", "Esgoto",
-        "Especificação Técnica", "Estrutura", "Exaustão", "Gás", "HVAC",
-        "Incêndio", "Laudo", "Levantamento", "Lógica",
-        "Memorial Descritivo", "Planilha", "Topografia",
-    ]
+# `lista_checklist` (disciplinas) é carregada do banco APÓS db.criar_tabelas()
+# — ver seção 5. Aqui não inicializamos pra não fixar a lista antes da tabela
+# `disciplinas` existir/ser semeada.
 if "tema" not in st.session_state:
     st.session_state.tema = "dark"
 
@@ -103,6 +99,15 @@ if "tema" not in st.session_state:
 # conexões concorrentes causava DEADLOCK de ALTER TABLE. Agora é 1 chamada.
 db.criar_tabelas()
 db.limpar_sessoes_expiradas()
+
+# Disciplinas (checklist mestre) — carrega do banco agora que a tabela
+# `disciplinas` existe e está semeada. Recarrega 1× por sessão.
+if "lista_checklist" not in st.session_state:
+    try:
+        st.session_state.lista_checklist = db.listar_disciplinas()
+    except Exception:
+        # Fallback defensivo: usa a semente em memória se o SELECT falhar.
+        st.session_state.lista_checklist = list(db._DISCIPLINAS_SEED)
 
 # Toast custom "📨 Ver mensagem" navega via `?_goto_chat=NOME`. Lemos aqui
 # (após o parse natural de query params do Streamlit), setamos a flag que

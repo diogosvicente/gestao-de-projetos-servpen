@@ -43,10 +43,15 @@ with st.expander("⚙️ Gerenciar Disciplinas do Checklist"):
         "Nova Disciplina (ex: Gás, Acústica)", key="add_disc",
     )
     if st.button("Adicionar Disciplina", key="btn_add_disc"):
-        if nova_disc and nova_disc not in st.session_state.lista_checklist:
-            st.session_state.lista_checklist.append(nova_disc)
-            st.toast(f"➕ '{nova_disc}' adicionada!", icon="✅")
+        _nd = (nova_disc or "").strip()
+        if _nd and _nd not in st.session_state.lista_checklist:
+            # Persiste no banco (tabela disciplinas) + atualiza a sessão.
+            db.adicionar_disciplina(_nd)
+            st.session_state.lista_checklist = db.listar_disciplinas()
+            st.toast(f"➕ '{_nd}' adicionada!", icon="✅")
             st.rerun()
+        elif _nd in st.session_state.lista_checklist:
+            st.toast("Essa disciplina já existe.", icon="ℹ️")
 
 # ── Formulário principal ──────────────────────────────────
 with st.form("form_novo_projeto_v2", clear_on_submit=False):

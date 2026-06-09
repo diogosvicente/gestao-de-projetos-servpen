@@ -48,6 +48,17 @@ _schema_lock = threading.Lock()
 _schema_pronto = False
 
 
+# Lista-semente de disciplinas (checklist mestre). Semeada na tabela
+# `disciplinas` no 1º boot via ON CONFLICT DO NOTHING (idempotente).
+# Novas disciplinas adicionadas pela tela são gravadas nessa tabela.
+_DISCIPLINAS_SEED = [
+    "Água Pluvial", "Ar condicionado", "Arquitetura", "CFTV", "Elétrica",
+    "Esgoto", "Especificação Técnica", "Estrutura", "Exaustão", "Gás",
+    "HVAC", "Hidráulica", "Incêndio", "Laudo", "Levantamento", "Lógica",
+    "Memorial Descritivo", "Planilha", "Topografia",
+]
+
+
 # ─── CONEXÃO ──────────────────────────────────────────────
 def conectar():
     """Abre uma nova conexão Postgres (psycopg3).
@@ -735,6 +746,40 @@ def _criar_tabelas_impl():
         c.execute("CREATE INDEX IF NOT EXISTS idx_dl_usuario ON diario_leituras(usuario)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_dl_diario  ON diario_leituras(diario_id)")
 
+        # ── HISTÓRICO DE ALTERAÇÕES DO PROJETO ──
+        # Log antes/depois por campo. Só é populado quando o projeto está
+        # INICIADO (status != 'Em Espera') — ver views/kanban.py no salvar.
+        # Exibido no card do projeto + aba Auditoria, e exportável em Excel.
+        c.execute('''CREATE TABLE IF NOT EXISTS projeto_alteracoes (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            projeto_id BIGINT,
+            projeto_nome TEXT,
+            campo TEXT NOT NULL,
+            valor_anterior TEXT,
+            valor_novo TEXT,
+            autor TEXT,
+            data TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
+        c.execute("CREATE INDEX IF NOT EXISTS idx_proj_alt_projeto "
+                  "ON projeto_alteracoes(projeto_id, data DESC)")
+
+        # ── DISCIPLINAS (checklist mestre, persistente) ──
+        # Antes a lista vivia só em session_state (sumia ao adicionar pela
+        # tela). Agora fica no banco. Semeada com _DISCIPLINAS_SEED;
+        # ON CONFLICT garante idempotência (não duplica nem apaga as que o
+        # usuário já tiver adicionado).
+        c.execute('''CREATE TABLE IF NOT EXISTS disciplinas (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            nome TEXT UNIQUE NOT NULL,
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
+        for _disc in _DISCIPLINAS_SEED:
+            c.execute(
+                "INSERT INTO disciplinas (nome) VALUES (%s) "
+                "ON CONFLICT (nome) DO NOTHING",
+                (_disc,),
+            )
+
 
         # ── RATE LIMITING DE LOGIN ──
         # Rastreia falhas recentes pra brecar brute-force.
@@ -974,6 +1019,65 @@ def atualizar_campo_projeto(id_p, coluna, valor):
     conn = conectar(); c = conn.cursor()
     try:
         c.execute(f"UPDATE projetos SET {coluna} = %s WHERE id = %s", (valor, int(id_p)))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ─── DISCIPLINAS (checklist mestre) ───────────────────────
+def listar_disciplinas():
+    """Lista de nomes de disciplinas (ordem alfabética). Fonte das opções
+    de checklist em Novo Projeto e na edição do Kanban."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("SELECT nome FROM disciplinas ORDER BY nome")
+        return [r[0] for r in c.fetchall()]
+    finally:
+        conn.close()
+
+
+def adicionar_disciplina(nome):
+    """Adiciona uma disciplina ao checklist mestre (idempotente).
+    Retorna True se criou, False se já existia ou nome vazio."""
+    nome = (nome or "").strip()
+    if not nome:
+        return False
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute(
+            "INSERT INTO disciplinas (nome) VALUES (%s) "
+            "ON CONFLICT (nome) DO NOTHING",
+            (nome,),
+        )
+        criou = c.rowcount > 0
+        conn.commit()
+        return criou
+    finally:
+        conn.close()
+
+
+# ─── HISTÓRICO DE ALTERAÇÕES DO PROJETO ───────────────────
+def registrar_alteracoes_projeto(projeto_id, projeto_nome, alteracoes, autor):
+    """Grava N alterações de campos de um projeto (antes/depois).
+
+    `alteracoes`: lista de tuplas (campo, valor_anterior, valor_novo) — já
+    formatadas pra leitura humana pela view. Chamada SÓ quando o projeto
+    está iniciado (status != 'Em Espera'); a decisão fica na view.
+    No-op se a lista for vazia.
+    """
+    if not alteracoes:
+        return
+    conn = conectar(); c = conn.cursor()
+    try:
+        for campo, antes, depois in alteracoes:
+            c.execute(
+                "INSERT INTO projeto_alteracoes "
+                "(projeto_id, projeto_nome, campo, valor_anterior, "
+                "valor_novo, autor) VALUES (%s,%s,%s,%s,%s,%s)",
+                (int(projeto_id), projeto_nome, campo,
+                 (antes if antes != "" else None),
+                 (depois if depois != "" else None), autor),
+            )
         conn.commit()
     finally:
         conn.close()
