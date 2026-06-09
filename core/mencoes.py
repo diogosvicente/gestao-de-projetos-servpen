@@ -14,6 +14,28 @@ import streamlit as st
 import database as db
 
 
+def _inserir_mencao_cb(text_key, selecionado_key):
+    """Callback do botão 'Inserir menção'. Appenda `@"Nome"` ao text_area.
+
+    CRÍTICO que isto rode num `on_click` (callback), NÃO no corpo do script:
+    o Streamlit proíbe escrever em `st.session_state[<key-de-widget>]` DEPOIS
+    que o widget foi instanciado no mesmo run (era o
+    `StreamlitAPIException: st.session_state.diario_texto cannot be modified
+    after the widget ... is instantiated`). Callbacks executam ANTES da
+    re-instanciação dos widgets, então a escrita é permitida.
+    """
+    sel = st.session_state.get(selecionado_key, "—")
+    if not sel or sel == "—":
+        return
+    atual = st.session_state.get(text_key, "") or ""
+    # Separador: nada se o texto está vazio ou já termina em espaço/linha;
+    # senão um espaço. (O código antigo usava endswith((" ","\\n","")) — o
+    # "" no fim torna o teste SEMPRE True, então a menção grudava no texto.)
+    sep = "" if (atual == "" or atual.endswith((" ", "\n"))) else " "
+    st.session_state[text_key] = f'{atual}{sep}@"{sel}" '
+    st.session_state[selecionado_key] = "—"   # reseta o selectbox
+
+
 def _popover_mencionar(text_key, nomes_disponiveis, *, label="@ Mencionar",
                        pop_key=None, selecionado_key=None, eu_mesmo=None):
     """Popover compacto que appenda `@"Nome"` ao text_area associado.
@@ -42,20 +64,21 @@ def _popover_mencionar(text_key, nomes_disponiveis, *, label="@ Mencionar",
 
     with st.popover(label, use_container_width=False):
         st.caption("Selecione um membro pra inserir `@\"Nome\"` no fim do texto.")
-        sel = st.selectbox(
+        st.selectbox(
             "Membro",
             options=["—"] + sorted(opcoes, key=str.lower),
             key=selecionado_key,
             label_visibility="collapsed",
         )
-        if st.button("➕ Inserir menção", key=f"{pop_key}_btn",
-                     use_container_width=True):
-            if sel and sel != "—":
-                atual = st.session_state.get(text_key, "") or ""
-                sep = "" if atual.endswith((" ", "\n", "")) else " "
-                st.session_state[text_key] = f'{atual}{sep}@"{sel}" '
-                st.session_state[selecionado_key] = "—"
-                st.rerun()
+        # on_click roda ANTES dos widgets serem reinstanciados → pode
+        # escrever na key do text_area sem o StreamlitAPIException. O
+        # callback já dispara o rerun sozinho (sem st.rerun explícito).
+        st.button(
+            "➕ Inserir menção", key=f"{pop_key}_btn",
+            use_container_width=True,
+            on_click=_inserir_mencao_cb,
+            args=(text_key, selecionado_key),
+        )
 
 
 def _extrair_mencoes(texto, lista_usuarios):
