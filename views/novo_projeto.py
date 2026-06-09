@@ -102,11 +102,13 @@ with st.form("form_novo_projeto_v2", clear_on_submit=False):
     st.markdown("#### 📅 Datas")
     dc1, dc2, dc3, dc4 = st.columns(4)
     f_drec = dc1.date_input("Data de Recebimento do Pedido",
-                            value=datetime.now())
+                            value=datetime.now(), format="DD/MM/YYYY")
     f_prev = dc2.date_input("Previsão de Início da Execução",
-                            value=datetime.now())
-    f_di = dc3.date_input("Data de Início", value=datetime.now())
-    f_dt = dc4.date_input("Data de Término", value=datetime.now())
+                            value=datetime.now(), format="DD/MM/YYYY")
+    f_di = dc3.date_input("Data de Início", value=datetime.now(),
+                          format="DD/MM/YYYY")
+    f_dt = dc4.date_input("Data de Término", value=datetime.now(),
+                          format="DD/MM/YYYY")
 
     st.markdown("#### 📋 Escopo e Disciplinas")
     f_chk = st.multiselect("Disciplinas do Projeto",

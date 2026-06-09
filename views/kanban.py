@@ -36,6 +36,16 @@ df_u = _load_df_u()
 df_d = _load_df_d()
 
 
+def _data_br(valor):
+    """Formata uma data (string ISO do banco, date, Timestamp) para o padrão
+    pt-BR dd/mm/yyyy. Retorna '—' se vazio/None/inválido. Usado nos cards do
+    Kanban (board/lista/resumo), que mostravam a data crua '2026-06-02'."""
+    if valor is None or str(valor).strip() in ("", "—", "None", "NaT"):
+        return "—"
+    _d = pd.to_datetime(str(valor), errors="coerce")
+    return _d.strftime("%d/%m/%Y") if pd.notna(_d) else "—"
+
+
 # ══════════════════════════════════════════════════════════════════════
 # HELPERS (visões alternativas do Kanban)
 # ══════════════════════════════════════════════════════════════════════
@@ -280,7 +290,7 @@ def _render_lista_kanban(df_kanban, df_d):
                 f"👤 {row.get('projetista', '—')}</div>",
                 unsafe_allow_html=True,
             )
-            _prazo = row.get("data_termino") or row.get("data_fim") or "—"
+            _prazo = _data_br(row.get("data_termino") or row.get("data_fim"))
             cols[4].markdown(
                 f"<div style='padding-top:8px;font-size:12px;'>"
                 f"📅 {_prazo}</div>",
@@ -356,7 +366,7 @@ def _render_resumo_kanban(df_kanban, df_d):
                     c1.markdown(
                         f"• **{r['projeto']}** — 👤 {r['projetista']} "
                         f"· 📅 "
-                        f"{r.get('data_termino') or r.get('data_fim') or '—'}"
+                        f"{_data_br(r.get('data_termino') or r.get('data_fim'))}"
                     )
                     if c2.button("🔍", key=f"resumo_max_{pid}",
                                  help="Abrir projeto"):
@@ -726,8 +736,8 @@ else:
                     else:
                         badge_pri = ""
 
-                    prazo_str = str(
-                        p.get("data_fim", "") or p.get("data_termino", "") or "—"
+                    prazo_str = _data_br(
+                        p.get("data_fim") or p.get("data_termino")
                     )
 
                     _tags_html = _render_tag_chips(p.get("tags"), small=True)
@@ -943,20 +953,24 @@ if "projeto_em_edicao" in st.session_state:
         ed_drec = dc1.date_input(
             "Data de Recebimento",
             value=_parse_d(dados.get("data_recebimento")),
+            format="DD/MM/YYYY",
         )
         ed_prev = dc2.date_input(
             "Previsão de Execução",
             value=_parse_d(dados.get("previsao_execucao")),
+            format="DD/MM/YYYY",
         )
         ed_di = dc3.date_input(
             "Data de Início",
             value=_parse_d(dados.get("data_inicio")),
+            format="DD/MM/YYYY",
         )
         ed_dt = dc4.date_input(
             "Data de Término",
             value=_parse_d(
                 dados.get("data_termino") or dados.get("data_fim")
             ),
+            format="DD/MM/YYYY",
         )
 
         st.markdown("#### 📋 Escopo e Disciplinas")

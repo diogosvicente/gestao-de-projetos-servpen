@@ -757,8 +757,10 @@ with col_form:
             _d_ini_def = _d_fim_def = datetime.now().date()
 
         c_d1, c_d2 = st.columns(2)
-        d_ini = c_d1.date_input("Início", value=_d_ini_def)
-        d_fim = c_d2.date_input("Término", value=_d_fim_def)
+        d_ini = c_d1.date_input("Início", value=_d_ini_def,
+                                format="DD/MM/YYYY")
+        d_fim = c_d2.date_input("Término", value=_d_fim_def,
+                                format="DD/MM/YYYY")
 
         _def_resp = (
             [r.strip() for r in str(_ed_row["responsaveis"]).split(",")
