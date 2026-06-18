@@ -88,6 +88,17 @@ equipe", "gestor geral") que no código mapeiam para **dois eixos distintos**:
   minha equipe?" no seletor cai. A *visibilidade* continua controlada à parte
   (ver complemento da Agenda).
 
+### Item 13 (extra, fora do PDF) — Dashboard: Evolução Técnica por perfil/equipe
+- **Demanda (18/06):** nos gráficos de **Evolução Técnica** do Dashboard,
+  "gestores veem tudo, projetista só vê os seus".
+- **Hoje:** a seção "Evolução Técnica por Projeto" (`views/dashboard.py:449`)
+  carregava `progresso_disciplinas` de TODOS os projetos, sem filtro por
+  perfil/equipe.
+- **✅ Resolvido/implementado (18/06):** filtra `df_evolucao` na fonte, mesmo
+  critério da Evolução no Kanban — **Gestor Geral vê tudo; gestor de equipe vê
+  a sua equipe; projetista/visualizador vê só os projetos em que está
+  designado**. Propaga pra heatmap, barras, tabela e multiselect.
+
 ---
 
 ## 🗄️ Mudança de schema (coluna/tabela nova)
@@ -207,7 +218,7 @@ Isto **refina os itens 7 e 9** na Agenda:
 
 | Tema | Itens | Natureza |
 |---|---|---|
-| Permissões (Gestor × Projetista) | 1-topo, 1-lista, 2, 4, 9 | Ajuste de regras (`_pode_gestor`/`_pode_editar`/escopo de equipe) |
+| Permissões (Gestor × Projetista) | 1-topo, 1-lista, 2, 4, 9, 13 | Ajuste de regras (`_pode_gestor`/`_pode_editar`/escopo de equipe) |
 | Mudança de schema | 3 (codigo), 10 (local), 12 (endereços) | Banco + UI |
 | Ajustes pontuais de UI | 5, 7, 8, 11 | Pequenos, localizados |
 | Feature nova (esforço maior) | 6 (chat: grupos + emoji) | Repensar o chat 1-a-1 |

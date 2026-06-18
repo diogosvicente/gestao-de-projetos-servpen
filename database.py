@@ -780,6 +780,17 @@ def _criar_tabelas_impl():
                 (_disc,),
             )
 
+        # ── ENDEREÇOS (cadastro mestre, persistente) ──
+        # Lista de endereços reutilizáveis no cadastro de projetos (item 12).
+        # Mesmo molde de `disciplinas`: UNIQUE no nome, idempotente. NÃO é
+        # semeada — endereços entram conforme os projetos são salvos/editados
+        # (ver `adicionar_endereco`, chamado no salvar/atualizar do projeto).
+        c.execute('''CREATE TABLE IF NOT EXISTS enderecos (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            endereco TEXT UNIQUE NOT NULL,
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
+
 
         # ── RATE LIMITING DE LOGIN ──
         # Rastreia falhas recentes pra brecar brute-force.
@@ -831,6 +842,12 @@ def _criar_tabelas_impl():
             # de projetos). Pra ler como lista: split(',') + strip(). Pra filtrar
             # pesquisa SQL: WHERE tags LIKE '%,Crítico,%' (com comma-padding).
             ("projetos",              "tags",               "TEXT"),
+            # Código/Número do projeto (item 3): opcional e ÚNICO quando
+            # preenchido. A unicidade é garantida pelo índice parcial criado
+            # abaixo (WHERE codigo IS NOT NULL) — a migração só cria a coluna.
+            ("projetos",              "codigo",             "TEXT"),
+            # Local (item 10): complemento livre do endereço (bloco/andar/sala).
+            ("projetos",              "local",              "TEXT"),
             ("diario",                "resposta_gestor",    "TEXT"),
             ("diario",                "anexo",              "TEXT"),
             ("diario",                "resolvido",          "INTEGER DEFAULT 0"),
@@ -892,6 +909,21 @@ def _criar_tabelas_impl():
         except Exception as e:
             c.execute("ROLLBACK TO SAVEPOINT idx_step")
             log.warning("CREATE INDEX idx_projetos_status_prior: %s", e)
+
+        # Índice ÚNICO PARCIAL do código do projeto (item 3): garante
+        # unicidade só quando preenchido — vários projetos sem código (NULL)
+        # convivem. Mesmo padrão de savepoint (a coluna pode não existir até
+        # a migração acima rodar em bancos muito antigos).
+        try:
+            c.execute("SAVEPOINT idx_cod")
+            c.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_projetos_codigo "
+                "ON projetos(codigo) WHERE codigo IS NOT NULL"
+            )
+            c.execute("RELEASE SAVEPOINT idx_cod")
+        except Exception as e:
+            c.execute("ROLLBACK TO SAVEPOINT idx_cod")
+            log.warning("CREATE UNIQUE INDEX idx_projetos_codigo: %s", e)
 
         conn.commit()
     except Exception as e:
@@ -963,7 +995,7 @@ def listar_tags_existentes():
 
 
 # ─── PROJETOS ─────────────────────────────────────────────
-def salvar_projeto(dados):
+def salvar_projeto(dados, codigo=None, local=None):
     """Insere um novo projeto e retorna o id (via RETURNING).
 
     `dados` aceita 16 ou 17 valores:
@@ -972,13 +1004,17 @@ def salvar_projeto(dados):
           data_fim, status, link_projeto, demandas, solicitacao, prioridade.
       17: os 16 acima + `tags` (string CSV de tags, ou None).
 
-    Manter o overload pra não quebrar callers existentes (compatibilidade
-    com versões antigas do app.py que ainda passam 16).
+    `codigo` (item 3) e `local` (item 10) vêm como kwargs pra não mexer na
+    tupla posicional (compat com callers antigos). `codigo` vazio vira NULL —
+    o índice único parcial só vale pra não-nulos, então vários sem código OK.
     """
     if len(dados) == 16:
         dados = (*dados, None)  # tags = NULL
     elif len(dados) != 17:
         raise ValueError(f"salvar_projeto: esperava 16 ou 17 valores, veio {len(dados)}")
+
+    codigo = (codigo or "").strip() or None
+    local = (local or "").strip() or None
 
     conn = conectar(); c = conn.cursor()
     try:
@@ -987,9 +1023,9 @@ def salvar_projeto(dados):
                       numero_sei, data_recebimento, previsao_execucao,
                       data_inicio, data_termino, data_fim,
                       status, link_projeto, demandas, solicitacao, prioridade,
-                      tags)
-                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                     RETURNING id''', dados)
+                      tags, codigo, local)
+                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                     RETURNING id''', (*dados, codigo, local))
         novo_id = c.fetchone()[0]
         conn.commit()
         return novo_id
@@ -1052,6 +1088,59 @@ def adicionar_disciplina(nome):
         criou = c.rowcount > 0
         conn.commit()
         return criou
+    finally:
+        conn.close()
+
+
+# ─── ENDEREÇOS (cadastro mestre) ──────────────────────────
+def listar_enderecos():
+    """Lista de endereços do cadastro mestre (ordem alfabética). Fonte das
+    opções do campo 'Endereço da Obra' em Novo Projeto e na edição."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("SELECT endereco FROM enderecos ORDER BY endereco")
+        return [r[0] for r in c.fetchall()]
+    finally:
+        conn.close()
+
+
+def adicionar_endereco(endereco):
+    """Adiciona um endereço ao cadastro mestre (idempotente). Chamado ao
+    salvar/editar projeto pra que o endereço usado entre na lista.
+    Retorna True se criou, False se já existia ou veio vazio."""
+    endereco = (endereco or "").strip()
+    if not endereco:
+        return False
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute(
+            "INSERT INTO enderecos (endereco) VALUES (%s) "
+            "ON CONFLICT (endereco) DO NOTHING",
+            (endereco,),
+        )
+        criou = c.rowcount > 0
+        conn.commit()
+        return criou
+    finally:
+        conn.close()
+
+
+def codigo_disponivel(codigo, ignorar_id=None):
+    """True se `codigo` está livre (ou vazio). Validação amigável antes de
+    salvar — o índice único é a garantia final. `ignorar_id` exclui o próprio
+    projeto na edição."""
+    codigo = (codigo or "").strip()
+    if not codigo:
+        return True
+    conn = conectar(); c = conn.cursor()
+    try:
+        if ignorar_id is None:
+            c.execute("SELECT 1 FROM projetos WHERE codigo = %s LIMIT 1",
+                      (codigo,))
+        else:
+            c.execute("SELECT 1 FROM projetos WHERE codigo = %s "
+                      "AND id <> %s LIMIT 1", (codigo, int(ignorar_id)))
+        return c.fetchone() is None
     finally:
         conn.close()
 
@@ -1120,15 +1209,17 @@ def clonar_projeto(id_origem, sufixo=" (cópia)"):
         c.execute(
             """SELECT projetista, projeto, endereco, solicitante, contato,
                       numero_sei, link_projeto, demandas, solicitacao,
-                      prioridade, tags
+                      prioridade, tags, local
                  FROM projetos WHERE id = %s""",
             (int(id_origem),),
         )
         row = c.fetchone()
         if not row:
             raise ValueError(f"projeto id={id_origem} não existe")
+        # `codigo` NÃO é copiado de propósito: é único por projeto. O clone
+        # nasce sem código (NULL); o usuário define um na edição se quiser.
         (projetista, projeto, endereco, solicitante, contato, numero_sei,
-         link_projeto, demandas, solicitacao, prioridade, tags) = row
+         link_projeto, demandas, solicitacao, prioridade, tags, local) = row
 
         novo_nome = f"{projeto}{sufixo}" if sufixo else projeto
 
@@ -1139,13 +1230,13 @@ def clonar_projeto(id_origem, sufixo=" (cópia)"):
                 numero_sei, data_recebimento, previsao_execucao,
                 data_inicio, data_termino, data_fim,
                 status, link_projeto, demandas, solicitacao, prioridade,
-                tags)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                tags, local)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                RETURNING id""",
             (projetista, novo_nome, endereco, solicitante, contato,
              numero_sei, hoje, hoje, hoje, hoje, hoje,
              "Em Espera", link_projeto, demandas, solicitacao, prioridade,
-             tags),
+             tags, local),
         )
         novo_id = c.fetchone()[0]
 

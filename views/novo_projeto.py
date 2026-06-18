@@ -57,18 +57,39 @@ with st.expander("⚙️ Gerenciar Disciplinas do Checklist"):
 with st.form("form_novo_projeto_v2", clear_on_submit=False):
 
     st.markdown("#### 📌 Identificação")
+    rc01, rc02 = st.columns(2)
+    f_cod = rc01.text_input(
+        "Código do Projeto",
+        placeholder="opcional — único",
+        help="Código/número interno do projeto. Opcional; se preenchido, "
+             "precisa ser único.",
+    )
+    f_nm = rc02.text_input("Nome do Projeto / Cliente *")
+
     r1c1, r1c2 = st.columns(2)
-    f_nm = r1c1.text_input("Nome do Projeto / Cliente *")
-    f_sei = r1c2.text_input("Nº SEI / Documento",
+    f_sei = r1c1.text_input("Nº SEI / Documento",
                             placeholder="ex.: 2024/12345-6")
+    f_so = r1c2.text_input("Solicitante / Cliente")
 
     r2c1, r2c2 = st.columns(2)
-    f_so = r2c1.text_input("Solicitante / Cliente")
-    f_co = r2c2.text_input("Contato (Tel/Email)")
+    f_co = r2c1.text_input("Contato (Tel/Email)")
+    f_li = r2c2.text_input("Link da Pasta (Drive/Nuvem)")
 
+    # Endereço da Obra: select do cadastro mestre (item 12) com opção de digitar
+    # um novo (accept_new_options); "Local" é complemento livre (item 10).
     r3c1, r3c2 = st.columns(2)
-    f_ed = r3c1.text_input("Endereço da Obra")
-    f_li = r3c2.text_input("Link da Pasta (Drive/Nuvem)")
+    f_ed = r3c1.selectbox(
+        "Endereço da Obra",
+        options=db.listar_enderecos(),
+        index=None,
+        accept_new_options=True,
+        placeholder="Selecione ou digite um novo…",
+    )
+    f_lo = r3c2.text_input(
+        "Local",
+        placeholder="bloco / andar / sala / referência",
+        help="Complemento do endereço.",
+    )
 
     # Projetistas disponíveis: líder de equipe só atribui gente da própria
     # equipe; Gestor Geral atribui qualquer um. (O projeto em si continua
@@ -213,6 +234,14 @@ if submit_novo:
             st.session_state.etapas_form[i].update(et)
 
     if f_nm and f_eq:
+        _cod = (f_cod or "").strip()
+        _end = (f_ed or "").strip()
+        if _cod and not db.codigo_disponivel(_cod):
+            st.warning(
+                f"⚠️ O código **{_cod}** já está em uso por outro projeto. "
+                "Use um código único ou deixe em branco."
+            )
+            st.stop()
         with carregando(f"Criando projeto '{f_nm}'..."):
             checklist_final = (
                 ", ".join(f_chk) + (" | " + f_dem if f_dem.strip() else "")
@@ -221,7 +250,7 @@ if submit_novo:
             dados_sql = (
                 ", ".join(f_eq),   # projetista
                 f_nm,              # projeto
-                f_ed,              # endereco
+                _end,              # endereco
                 f_so,              # solicitante
                 f_co,              # contato
                 f_sei,             # numero_sei
@@ -237,8 +266,11 @@ if submit_novo:
                 f_pr,              # prioridade
                 _tags_csv,         # tags (string CSV ou None)
             )
-            novo_id = db.salvar_projeto(dados_sql)
+            novo_id = db.salvar_projeto(dados_sql, codigo=_cod, local=f_lo)
             if novo_id:
+                # Endereço usado entra no cadastro mestre (item 12).
+                if _end:
+                    db.adicionar_endereco(_end)
                 etapas_para_salvar = [
                     {"nome": et["nome"],
                      "duracao_dias": et["duracao_dias"],

@@ -26,6 +26,7 @@ from core.helpers import (
     _equipe_atual,
     _estiliza_plotly,
     _pill_select,
+    _pode_gestor,
     _section_header,
     _ve_tudo,
 )
@@ -453,6 +454,26 @@ try:
         JOIN projetos p ON pd.projeto_id = p.id
         ORDER BY p.projeto, pd.disciplina
     """, db.get_engine())
+
+    # Visibilidade da Evolução Técnica (mesmo critério da Evolução no Kanban):
+    #   • Gestor Geral .......... vê tudo.
+    #   • Gestor de equipe ....... vê projetos com alguém da SUA equipe designado.
+    #   • Projetista/Visualizador  vê SÓ os projetos em que ELE está designado.
+    # `projetista` é CSV de nomes — casa por interseção. Filtrar aqui na fonte
+    # propaga pra todas as visões (heatmap/barras/tabela) e pro multiselect.
+    if not df_evolucao.empty and not _ve_tudo():
+        if _pode_gestor():
+            _nomes_ok = set(db.nomes_por_equipe(_equipe_atual()))
+        else:
+            _nomes_ok = {usuario}
+        df_evolucao = df_evolucao[
+            df_evolucao["projetista"].apply(
+                lambda s: bool(
+                    {n.strip() for n in str(s).split(",") if n.strip()}
+                    & _nomes_ok
+                )
+            )
+        ].copy()
 
     if not df_evolucao.empty:
         projetos_com_dados = df_evolucao["projeto"].unique().tolist()

@@ -909,24 +909,50 @@ if "projeto_em_edicao" in st.session_state:
     with st.form("form_edicao_v6"):
 
         st.markdown("#### 📌 Identificação")
-        r1c1, r1c2 = st.columns(2)
-        ed_nm = r1c1.text_input("Nome do Projeto / Cliente *",
+        rc01, rc02 = st.columns(2)
+        ed_cod = rc01.text_input(
+            "Código do Projeto",
+            value=str(dados.get("codigo", "")),
+            placeholder="opcional — único",
+            help="Opcional; se preenchido, precisa ser único.",
+        )
+        ed_nm = rc02.text_input("Nome do Projeto / Cliente *",
                                 value=str(dados["projeto"]))
-        ed_sei = r1c2.text_input("Nº SEI / Documento",
+
+        r1c1, r1c2 = st.columns(2)
+        ed_sei = r1c1.text_input("Nº SEI / Documento",
                                  value=str(dados.get("numero_sei", "")),
                                  placeholder="ex.: 2024/12345-6")
+        ed_so = r1c2.text_input("Solicitante / Cliente",
+                                value=str(dados["solicitante"]))
 
         r2c1, r2c2 = st.columns(2)
-        ed_so = r2c1.text_input("Solicitante / Cliente",
-                                value=str(dados["solicitante"]))
-        ed_co = r2c2.text_input("Contato (Tel/Email)",
+        ed_co = r2c1.text_input("Contato (Tel/Email)",
                                 value=str(dados["contato"]))
-
-        r3c1, r3c2 = st.columns(2)
-        ed_ed = r3c1.text_input("Endereço da Obra",
-                                value=str(dados["endereco"]))
-        ed_li = r3c2.text_input("Link da Pasta (Drive/Nuvem)",
+        ed_li = r2c2.text_input("Link da Pasta (Drive/Nuvem)",
                                 value=str(dados["link_projeto"]))
+
+        # Endereço: select do cadastro mestre (item 12) + digitar novo;
+        # "Local" é complemento livre (item 10).
+        _end_atual = str(dados.get("endereco", "")).strip()
+        _end_opts = db.listar_enderecos()
+        if _end_atual and _end_atual not in _end_opts:
+            _end_opts = [_end_atual] + _end_opts
+        r3c1, r3c2 = st.columns(2)
+        ed_ed = r3c1.selectbox(
+            "Endereço da Obra",
+            options=_end_opts,
+            index=(_end_opts.index(_end_atual) if _end_atual in _end_opts
+                   else None),
+            accept_new_options=True,
+            placeholder="Selecione ou digite um novo…",
+        )
+        ed_lo = r3c2.text_input(
+            "Local",
+            value=str(dados.get("local", "")),
+            placeholder="bloco / andar / sala / referência",
+            help="Complemento do endereço.",
+        )
 
         list_u = df_u["nome"].tolist()
         def_u = [
@@ -1035,6 +1061,14 @@ if "projeto_em_edicao" in st.session_state:
 
     # ── Ações dos botões ─────────────────────────────────────
     if _salvar:
+        _cod_save = (ed_cod or "").strip()
+        _end_save = (ed_ed or "").strip()
+        if _cod_save and not db.codigo_disponivel(_cod_save, ignorar_id=id_ed):
+            st.warning(
+                f"⚠️ O código **{_cod_save}** já está em uso por outro "
+                "projeto. Use um código único ou deixe em branco."
+            )
+            st.stop()
         # `with carregando(...)` envolve as chamadas de banco — mostra
         # spinner "💾 Salvando projeto..." na tela DURANTE a operação.
         # Sem isso, em latência alta (Postgres remoto, rsync de anexo),
@@ -1046,7 +1080,7 @@ if "projeto_em_edicao" in st.session_state:
                 + (" | " + ed_dem if ed_dem.strip() else "")
             )
             dados_finais = (
-                equipe_str, ed_nm, ed_ed, ed_so, ed_co,
+                equipe_str, ed_nm, _end_save, ed_so, ed_co,
                 ed_sei, ed_drec, ed_di, ed_dt, ed_dt,
                 ed_li, checklist_final, ed_esc, ed_pr,
             )
@@ -1062,7 +1096,9 @@ if "projeto_em_edicao" in st.session_state:
                 ("Responsável",        dados.get("projetista"),
                  equipe_str, False),
                 ("Nome do Projeto",    dados.get("projeto"), ed_nm, False),
-                ("Endereço",           dados.get("endereco"), ed_ed, False),
+                ("Código",             dados.get("codigo"), _cod_save, False),
+                ("Endereço",           dados.get("endereco"), _end_save, False),
+                ("Local",              dados.get("local"), ed_lo, False),
                 ("Solicitante",        dados.get("solicitante"),
                  ed_so, False),
                 ("Contato",            dados.get("contato"), ed_co, False),
@@ -1097,6 +1133,15 @@ if "projeto_em_edicao" in st.session_state:
             # Tags num UPDATE separado (assinatura fixa de
             # atualizar_projeto_completo — 14 valores, compat).
             db.atualizar_campo_projeto(id_ed, "tags", _tags_csv_save)
+            # Código e Local (itens 3/10) — UPDATE separado, mesmo padrão das
+            # tags (atualizar_projeto_completo tem assinatura fixa de 14).
+            db.atualizar_campo_projeto(id_ed, "codigo", _cod_save or None)
+            db.atualizar_campo_projeto(
+                id_ed, "local", (ed_lo or "").strip() or None
+            )
+            # Endereço usado entra no cadastro mestre (item 12).
+            if _end_save:
+                db.adicionar_endereco(_end_save)
 
             # Grava o histórico (gatilho: projeto iniciado).
             if str(dados.get("status", "")).strip() != "Em Espera":
