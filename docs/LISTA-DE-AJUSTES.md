@@ -57,14 +57,19 @@ equipe", "gestor geral") que no código mapeiam para **dois eixos distintos**:
 - **Fazer:** para projetista, só "Abrir detalhes / editar" aparece; botões de
   transição de status somem (ficam só para Gestor). Contraparte do item 1-lista.
 
-### Item 4 ⚠️ — "Etapas do Projeto" (edição, só gestor): % concluído + status
+### Item 4 — "Etapas do Projeto" (edição, só gestor): % concluído + status
 - **Atenção a uma confusão de seções:** o % de conclusão hoje só existe em
   "Evolução Técnica por Disciplina" (média dos sliders, `views/kanban.py:1477`).
   A seção "Etapas do Projeto" (`views/kanban.py:1163`) só tem o mini-Gantt
   (nome/duração/offset) — sem marcação de concluído nem status de prazo.
 - **Fazer:** na seção de Etapas, visível só para Gestor, exibir um percentual
   concluído e um rótulo de situação (atraso / no prazo / adiantado / concluído).
-- **Decisão pendente:** fonte do %/status — ver decisões no fim.
+- **✅ Fonte (resolvido 18/06):** **por datas**, usando a janela programada da
+  **própria etapa** — início = offset; fim = offset + duração — comparada com
+  hoje. **Não** usar a data de início do projeto. Sem marcação manual de
+  concluído. *(Implicação: "atraso/adiantado" só se distingue se houver sinal
+  de progresso real; por data pura dá pra mostrar a posição no cronograma —
+  a iniciar / em andamento / encerrada. Ver nota de confirmação na conversa.)*
 
 ### Item 9 ⚠️ — "Envolvidos" e "Equipe Responsável": gestores veem todas as equipes
 - **Hoje:** tanto em Agenda (`views/agenda.py:715`) quanto em Novo Projeto
@@ -74,8 +79,11 @@ equipe", "gestor geral") que no código mapeiam para **dois eixos distintos**:
   todos de todas as equipes em "Envolvidos" e "Equipe Responsável"; o membro
   comum continua restrito à própria equipe. A condição muda de "é GERAL?" para
   "é Gestor? (ou GERAL)".
-- **⚠️ Sobrescrito em parte pelo complemento da Agenda** — ver seção própria
-  abaixo (na Agenda, **todos** marcam todos).
+- **✅ Resolvido pelo complemento:** a *seleção* de "Envolvidos" / "Equipe
+  Responsável" fica liberada para **todos** (qualquer um marca qualquer um),
+  tanto na **Agenda** quanto no **Novo Projeto**. A condição "é GERAL? / é da
+  minha equipe?" no seletor cai. A *visibilidade* continua controlada à parte
+  (ver complemento da Agenda).
 
 ---
 
@@ -122,7 +130,9 @@ equipe", "gestor geral") que no código mapeiam para **dois eixos distintos**:
   calendário (que limita à equipe).
 - **Fazer:** alinhar a listagem de baixo à mesma regra do calendário — usuário
   padrão vê só os seus, gestor de equipe só da equipe, gestor geral vê tudo
-  (fazer a tabela usar `_agenda_mask`). **Reforçado pelo complemento da Agenda.**
+  (fazer a tabela usar `_agenda_mask`). **Reforçado pelo complemento da Agenda**
+  — e a máscara passa a incluir também os compromissos em que o usuário está
+  **marcado como envolvido** (ver complemento).
 
 ### Item 8 — Agenda > Novo Compromisso: adicionar "Outros" na Categoria
 - **Hoje:** lista fixa em `views/agenda.py:729`:
@@ -142,13 +152,16 @@ equipe", "gestor geral") que no código mapeiam para **dois eixos distintos**:
 
 ## 🚀 Feature nova (esforço maior)
 
-### Item 6 ⚠️ — Chat: "select all" para mencionar todos + emoji
+### Item 6 — Chat: enviar para "todos" (grupos) + emoji
 - **Descompasso com a arquitetura atual:** o Chat (`views/chat.py`) é 1-para-1
   (DM estilo WhatsApp) — não tem grupos, menções nem emoji picker.
-- **Fazer (duas features novas):** (a) forma de enviar/mencionar "todos" de uma
-  vez e (b) um seletor de emoji no campo de mensagem.
-- **Item de maior esforço da lista** — não é ajuste, é capacidade nova.
-- **Decisão pendente:** broadcast vs. grupo de verdade — ver decisões no fim.
+- **✅ Fazer (resolvido 18/06):** **grupos de verdade** (não broadcast). Criar
+  3 grupos padrão automáticos — **TODOS** (todo mundo), **SERVPEN** e
+  **SERVPAR** (membros derivados da equipe) — além das DMs 1-a-1 já existentes.
+  Mais um **seletor de emoji** no campo de mensagem.
+- **Item de maior esforço da lista** — não é ajuste, é capacidade nova:
+  conversas com mais de 2 participantes (mensagens endereçadas a um grupo,
+  marcação de leitura por grupo, etc.).
 
 ---
 
@@ -169,9 +182,12 @@ Isto **refina os itens 7 e 9** na Agenda:
   vê tudo. A listagem (`views/agenda.py:843`) passa a usar `_agenda_mask` igual
   ao calendário.
 
-**Em aberto (ver decisões):** o escopo do "todos marcam todos" (só Agenda ou
-também o "Equipe Responsável" do Novo Projeto) e se ser marcado por alguém de
-outra equipe faz o compromisso aparecer pra essa pessoa.
+**✅ Resolvido (18/06/2026):**
+- **Escopo:** "todos marcam todos" vale **na Agenda E no Novo Projeto**
+  ("Envolvidos" e "Equipe Responsável").
+- **Ser marcado dá visibilidade:** se você é marcado num compromisso, passa a
+  vê-lo **mesmo sendo de outra equipe**. Regra final da Agenda: **gestor geral
+  vê tudo; os demais veem os da sua equipe + aqueles em que estão marcados.**
 
 ---
 
@@ -188,16 +204,62 @@ outra equipe faz o compromisso aparecer pra essa pessoa.
 - **3 → 11** — Código precisa existir antes da coluna/filtro na Lista.
 - **10 → 12** — campo Local junto do cadastro mestre de endereços.
 
-## Decisões pendentes (antes de implementar)
-1. **Item 6 (chat):** broadcast (mensagem para todos de uma vez) ou **grupo de
-   verdade** (conversa em grupo com "selecionar todos")?
-2. **Item 4 (etapas):** o %/status vem **(a)** das datas (offset/duração vs.
-   hoje), **(b)** de uma marcação de "concluído" por etapa, ou **(c)** dos dois?
-3. **Complemento da Agenda — escopo:** o "todos marcam todos" vale **só na
-   Agenda**, ou também no "Equipe Responsável" do Novo Projeto (item 9)?
-4. **Complemento da Agenda — efeito colateral:** se A (Servpen) marca B
-   (Servpar) num compromisso, **B passa a ver esse compromisso** (visão por
-   envolvimento) ou não vê (visão estritamente por equipe)?
+## Decisões (resolvidas em 18/06/2026)
+1. **Item 6 (chat):** **grupos de verdade**. 3 grupos padrão automáticos —
+   **TODOS**, **SERVPEN**, **SERVPAR** (membros por equipe) — além das DMs
+   1-a-1. + emoji picker no campo de mensagem.
+2. **Item 4 (etapas):** **(a) por datas**, usando a janela programada da
+   **própria etapa** (início = offset; fim = offset + duração) vs. hoje — não a
+   data de início do projeto. Sem marcação manual de concluído.
+3. **Complemento da Agenda — escopo:** "todos marcam todos" vale **na Agenda E
+   no Novo Projeto** ("Envolvidos" e "Equipe Responsável"). A restrição por
+   equipe na *seleção* cai nos dois.
+4. **Complemento da Agenda — efeito:** **ser marcado dá visibilidade.** Se A
+   marca B, B passa a ver o compromisso, mesmo de outra equipe. Visão final da
+   Agenda: **gestor geral vê tudo; os demais veem os da sua equipe + aqueles em
+   que estão marcados.**
+
+> **1 ponto pra confirmar (não bloqueia):** no item 4, com base **só em datas**
+> dá pra mostrar a posição no cronograma (a iniciar / em andamento / encerrada),
+> mas distinguir **"atraso" vs "adiantado"** exige um sinal de progresso real
+> (ex.: cruzar com a Evolução Técnica por Disciplina). Confirmar se quer só a
+> leitura por data ou esse cruzamento.
+
+## Pontos em aberto / a confirmar (antes de implementar)
+
+Levantados no check de 18/06 — em sua maioria pequenos, mas vale travar antes
+ou no início da implementação:
+
+1. **Item 3 — Código:** é **obrigatório** ou opcional? E os **projetos antigos**
+   (sem código): deixar vazio (o `UNIQUE` do Postgres aceita vários nulos) ou
+   preencher/backfill?
+2. **Itens 10 + 12 — Endereço × Local × cadastro mestre:**
+   - O **"Local"** (item 10) é campo **livre** novo, ou também sai do **cadastro
+     de endereços** (item 12)?
+   - O cadastro mestre (item 12) **substitui** o "Endereço da Obra" texto-livre
+     por um *select*, ou **convive** com ele? Migrar os endereços já digitados?
+3. **Item 6 — chat:** precisa de **mini-spec próprio** (schema de grupo,
+   não-lidas e notificação por grupo, emoji picker no Streamlit — não é nativo).
+   A decisão de produto (grupos TODOS/SERVPEN/SERVPAR) já está; falta o "como".
+4. **Cross-cutting (técnico):**
+   - Colunas novas (`codigo`, `local`) precisam entrar no **histórico de
+     alterações** (antes/depois).
+   - Migrations das colunas/tabelas novas precisam **rodar no deploy**
+     (`deploy-238.sh`).
+   - Quem **gerencia o cadastro de endereços** (item 12) — só Gestor, como
+     Disciplinas?
+
+## Notas do check no código (18/06/2026)
+
+- **Agenda não tem "Envolvidos" separado:** o evento tem o campo
+  **`responsaveis`** e o `_agenda_mask` (`views/agenda.py:124`) já filtra por
+  ele. Logo "se te marco, você vê" já é o comportamento atual (usuário padrão só
+  vê eventos em que é responsável). "Marcar" = adicionar em `responsaveis`;
+  falta só **abrir o seletor pra todos** e fazer a **listagem** usar a máscara
+  (item 7).
+- **Item 1-lista já tem a visibilidade da Evolução:** `views/kanban.py:1356-1367`
+  já libera a Evolução Técnica só pra quem está **designado** no projeto — o
+  "read-only menos a Evolução" encaixa nessa regra.
 
 ## Sugestão de ordem de ataque
 1. Schema primeiro: **3 → 10 → 12** (destrava o 11 e padroniza dados).
