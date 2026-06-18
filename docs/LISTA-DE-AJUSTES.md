@@ -64,12 +64,15 @@ equipe", "gestor geral") que no código mapeiam para **dois eixos distintos**:
   (nome/duração/offset) — sem marcação de concluído nem status de prazo.
 - **Fazer:** na seção de Etapas, visível só para Gestor, exibir um percentual
   concluído e um rótulo de situação (atraso / no prazo / adiantado / concluído).
-- **✅ Fonte (resolvido 18/06):** **por datas**, usando a janela programada da
-  **própria etapa** — início = offset; fim = offset + duração — comparada com
-  hoje. **Não** usar a data de início do projeto. Sem marcação manual de
-  concluído. *(Implicação: "atraso/adiantado" só se distingue se houver sinal
-  de progresso real; por data pura dá pra mostrar a posição no cronograma —
-  a iniciar / em andamento / encerrada. Ver nota de confirmação na conversa.)*
+- **✅ Fonte (resolvido 18/06):** **cruzar datas com progresso.** O **% real**
+  vem da "Evolução Técnica por Disciplina"; o **% esperado** vem da janela
+  programada da **própria etapa** (início = offset; fim = offset + duração) vs.
+  hoje. A **situação** compara os dois: real < esperado → **atraso**; real >
+  esperado → **adiantado**; ≈ → **no prazo**; 100% → **concluído**. (Datas da
+  etapa, não a data de início do projeto.)
+- **A definir no build:** como obter o "% real" **por etapa** — a Evolução é por
+  *disciplina*/projeto, não por etapa. Provável: usar o % do projeto contra a
+  janela de cada etapa, ou amarrar etapa ↔ disciplina. Resolver ao implementar.
 
 ### Item 9 ⚠️ — "Envolvidos" e "Equipe Responsável": gestores veem todas as equipes
 - **Hoje:** tanto em Agenda (`views/agenda.py:715`) quanto em Novo Projeto
@@ -95,12 +98,17 @@ equipe", "gestor geral") que no código mapeiam para **dois eixos distintos**:
 - **Fazer:** criar coluna `codigo TEXT` com constraint `UNIQUE`, posicionar o
   campo no topo do form de Novo Projeto (e de edição), validando duplicidade
   antes de salvar. É a base do item 11.
+- **✅ Resolvido (18/06):** **opcional** — pode ficar vazio; quando preenchido,
+  precisa ser único (vários nulos são OK no Postgres). Projetos antigos ficam
+  sem código até alguém editar (sem backfill).
 
 ### Item 10 — Novo Projeto: campo "Local" abaixo de "Endereço da Obra"
 - **Hoje:** o form tem "Endereço da Obra" (`views/novo_projeto.py:70`); a
   tabela `projetos` não tem coluna `local` (a tabela `agenda` tem).
 - **Fazer:** adicionar campo "Local" logo abaixo do endereço, com coluna no
   banco e refletido no form de edição. Conecta com o item 12.
+- **✅ Resolvido (18/06):** "Local" é **complemento do endereço** — texto livre
+  (bloco / andar / sala / referência). Não sai do cadastro de endereços.
 
 ### Item 12 — cadastro mestre de endereços para usar no cadastro de projetos
 - **Fazer:** criar um cadastro mestre de endereços (tabela própria + tela de
@@ -108,6 +116,10 @@ equipe", "gestor geral") que no código mapeiam para **dois eixos distintos**:
   expander de `views/novo_projeto.py:41`), para que no cadastro de projeto o
   usuário selecione um endereço de uma lista em vez de digitar texto livre.
   Complemento estrutural dos itens 10 e 3; padroniza os dados.
+- **✅ Resolvido (18/06):** o "Endereço da Obra" vira **select + digitar novo** —
+  escolhe da lista; se digitar um endereço inédito, ele entra no cadastro. Sem
+  migração obrigatória dos antigos (entram conforme forem usados/reeditados).
+  Cadastro **gerenciado só por Gestor** (igual Disciplinas).
 
 ---
 
@@ -198,7 +210,7 @@ Isto **refina os itens 7 e 9** na Agenda:
 | Permissões (Gestor × Projetista) | 1-topo, 1-lista, 2, 4, 9 | Ajuste de regras (`_pode_gestor`/`_pode_editar`/escopo de equipe) |
 | Mudança de schema | 3 (codigo), 10 (local), 12 (endereços) | Banco + UI |
 | Ajustes pontuais de UI | 5, 7, 8, 11 | Pequenos, localizados |
-| Feature nova (esforço maior) | 6 (chat: mencionar todos + emoji) | Repensar o chat 1-a-1 |
+| Feature nova (esforço maior) | 6 (chat: grupos + emoji) | Repensar o chat 1-a-1 |
 
 ## Dependências entre itens
 - **3 → 11** — Código precisa existir antes da coluna/filtro na Lista.
@@ -208,9 +220,9 @@ Isto **refina os itens 7 e 9** na Agenda:
 1. **Item 6 (chat):** **grupos de verdade**. 3 grupos padrão automáticos —
    **TODOS**, **SERVPEN**, **SERVPAR** (membros por equipe) — além das DMs
    1-a-1. + emoji picker no campo de mensagem.
-2. **Item 4 (etapas):** **(a) por datas**, usando a janela programada da
-   **própria etapa** (início = offset; fim = offset + duração) vs. hoje — não a
-   data de início do projeto. Sem marcação manual de concluído.
+2. **Item 4 (etapas):** **cruzar datas com progresso** — % real (Evolução
+   Técnica) vs % esperado (janela da etapa) para classificar atraso / no prazo /
+   adiantado / concluído. (Como obter o % por etapa fica pro build.)
 3. **Complemento da Agenda — escopo:** "todos marcam todos" vale **na Agenda E
    no Novo Projeto** ("Envolvidos" e "Equipe Responsável"). A restrição por
    equipe na *seleção* cai nos dois.
@@ -218,36 +230,24 @@ Isto **refina os itens 7 e 9** na Agenda:
    marca B, B passa a ver o compromisso, mesmo de outra equipe. Visão final da
    Agenda: **gestor geral vê tudo; os demais veem os da sua equipe + aqueles em
    que estão marcados.**
+5. **Item 3 (Código):** **opcional** — único quando preenchido; antigos sem
+   código, sem backfill.
+6. **Item 10 (Local):** **complemento** do endereço (texto livre: bloco / andar /
+   sala). Não vem do cadastro.
+7. **Item 12 (cadastro de endereços):** "Endereço da Obra" vira **select +
+   digitar novo**; gerenciado só por Gestor. Sem migração obrigatória dos antigos.
+8. **Cross-cutting:** colunas novas entram no **histórico**; migrations **rodam
+   no deploy** (`deploy-238.sh`); cadastro de endereços só Gestor.
 
-> **1 ponto pra confirmar (não bloqueia):** no item 4, com base **só em datas**
-> dá pra mostrar a posição no cronograma (a iniciar / em andamento / encerrada),
-> mas distinguir **"atraso" vs "adiantado"** exige um sinal de progresso real
-> (ex.: cruzar com a Evolução Técnica por Disciplina). Confirmar se quer só a
-> leitura por data ou esse cruzamento.
+## Pontos em aberto (restantes)
 
-## Pontos em aberto / a confirmar (antes de implementar)
+Quase tudo foi decidido em 18/06 (ver acima). Só sobra:
 
-Levantados no check de 18/06 — em sua maioria pequenos, mas vale travar antes
-ou no início da implementação:
-
-1. **Item 3 — Código:** é **obrigatório** ou opcional? E os **projetos antigos**
-   (sem código): deixar vazio (o `UNIQUE` do Postgres aceita vários nulos) ou
-   preencher/backfill?
-2. **Itens 10 + 12 — Endereço × Local × cadastro mestre:**
-   - O **"Local"** (item 10) é campo **livre** novo, ou também sai do **cadastro
-     de endereços** (item 12)?
-   - O cadastro mestre (item 12) **substitui** o "Endereço da Obra" texto-livre
-     por um *select*, ou **convive** com ele? Migrar os endereços já digitados?
-3. **Item 6 — chat:** precisa de **mini-spec próprio** (schema de grupo,
-   não-lidas e notificação por grupo, emoji picker no Streamlit — não é nativo).
-   A decisão de produto (grupos TODOS/SERVPEN/SERVPAR) já está; falta o "como".
-4. **Cross-cutting (técnico):**
-   - Colunas novas (`codigo`, `local`) precisam entrar no **histórico de
-     alterações** (antes/depois).
-   - Migrations das colunas/tabelas novas precisam **rodar no deploy**
-     (`deploy-238.sh`).
-   - Quem **gerencia o cadastro de endereços** (item 12) — só Gestor, como
-     Disciplinas?
+1. **Item 6 — chat:** precisa de **mini-spec próprio** ao chegar a vez (schema
+   de grupo, não-lidas e notificação por grupo, como fazer o emoji picker no
+   Streamlit — não é nativo). A decisão de produto já está; falta o "como".
+2. **Item 4 — % por etapa:** definir no build de onde sai o "% real" de cada
+   etapa (a Evolução é por disciplina/projeto, não por etapa).
 
 ## Notas do check no código (18/06/2026)
 
@@ -265,5 +265,5 @@ ou no início da implementação:
 1. Schema primeiro: **3 → 10 → 12** (destrava o 11 e padroniza dados).
 2. Permissões: **1-topo, 1-lista, 2, 9** + complemento da Agenda.
 3. UI pontual: **5, 7, 8, 11**.
-4. **Item 4** (depois de decidir a fonte do %/status).
-5. **Item 6** (chat) por último — maior esforço e exige decisão de arquitetura.
+4. **Item 4** (cruzar datas × Evolução Técnica; resolver o "% por etapa" no build).
+5. **Item 6** (chat) por último — maior esforço; precisa do mini-spec.
