@@ -200,12 +200,10 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
             if autor_logado in lista_usuarios_int:
                 lista_usuarios_int.remove(autor_logado)
 
-            pessoas_selecionadas = st.multiselect(
-                "Envolver outras pessoas na interação (Opcional):",
-                options=lista_usuarios_int,
-                key=f"Mencionar_{d['id']}",
-                placeholder="Selecione os projetistas ou gestores...",
-            )
+            # Item 5: removido o multiselect "Envolver outras pessoas na
+            # interação" — era redundante e só escrevia "(Ref: @X)" no rodapé
+            # sem disparar o fluxo real de menção. O "@ Mencionar inline"
+            # abaixo é o mecanismo de verdade (acesso + notificação).
             nova_orient = st.text_area(
                 "Adicionar resposta/comentário:",
                 placeholder="Escreva aqui para continuar o assunto...",
@@ -228,13 +226,8 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
                          use_container_width=True):
                 if nova_orient.strip():
                     data_hora = datetime.now().strftime("%d/%m/%Y %H:%M")
-                    marcacao = ""
-                    if pessoas_selecionadas:
-                        marcacao = " (Ref: " + ", ".join(
-                            [f"@{p}" for p in pessoas_selecionadas]
-                        ) + ")"
                     linha_comentario = (
-                        f"[{data_hora}] {autor_logado}{marcacao} "
+                        f"[{data_hora}] {autor_logado} "
                         f"({perfil}): {nova_orient.strip()}"
                     )
                     historico_banco = str(d.get("resposta_gestor") or "").strip()

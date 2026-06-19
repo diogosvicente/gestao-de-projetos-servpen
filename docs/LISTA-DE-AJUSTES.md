@@ -144,6 +144,8 @@ equipe", "gestor geral") que no código mapeiam para **dois eixos distintos**:
   menção (acesso + notificação); o @mencionar dispara.
 - **Fazer:** remover o multiselect e manter só o "@ Mencionar", que é o
   mecanismo real.
+- **✅ Resolvido (19/06):** multiselect removido (`views/diario.py`); o rodapé
+  "(Ref: @X)" sai junto. "@ Mencionar inline" segue como único mecanismo.
 
 ### Item 7 — Agenda: calendário e listagem com a mesma visibilidade
 - **Hoje:** o calendário já respeita a regra via `_agenda_mask` / `_nomes_agenda`
@@ -156,12 +158,17 @@ equipe", "gestor geral") que no código mapeiam para **dois eixos distintos**:
   (fazer a tabela usar `_agenda_mask`). **Reforçado pelo complemento da Agenda**
   — e a máscara passa a incluir também os compromissos em que o usuário está
   **marcado como envolvido** (ver complemento).
+- **✅ Resolvido (19/06):** a listagem de baixo passou a usar `_agenda_mask` (a
+  mesma regra do calendário) no lugar de "qualquer Gestor vê tudo"
+  (`views/agenda.py`). Gestor de equipe agora vê só a sua equipe na listagem.
 
 ### Item 8 — Agenda > Novo Compromisso: adicionar "Outros" na Categoria
 - **Hoje:** lista fixa em `views/agenda.py:729`:
   `["Visita Técnica", "Reunião", "Férias", "Licença", "Folga"]`.
 - **Fazer:** acrescentar "Outros". Lembrar de dar cor/ícone ao novo tipo nos
   mapas `TIPO_COR` / `TIPO_ICONE` (`views/agenda.py:233`), senão cai no cinza default.
+- **✅ Resolvido (19/06):** "Outros" adicionado às categorias + cor (`#0d9488`)
+  e ícone (📌) em `TIPO_COR`/`TIPO_ICONE` (`views/agenda.py`).
 
 ### Item 11 — Kanban (visão Lista): filtrar por SEI/Código e exibir as colunas
 - **Hoje:** a visão Lista (`views/kanban.py:65`) mostra Status, Projeto,

@@ -236,10 +236,12 @@ TIPO_COR = {
     "Férias":         "#059669",
     "Licença":        "#d97706",
     "Folga":          "#6b7280",
+    "Outros":         "#0d9488",
 }
 TIPO_ICONE = {
     "Visita Técnica": "🏗️", "Reunião": "🤝",
     "Férias": "🏖️", "Licença": "🏥", "Folga": "😴",
+    "Outros": "📌",
 }
 
 with col_cal:
@@ -727,7 +729,7 @@ with col_form:
             value=str(_ed_row["titulo"]) if _ed_row is not None else "",
         )
         _categorias = ["Visita Técnica", "Reunião", "Férias",
-                       "Licença", "Folga"]
+                       "Licença", "Folga", "Outros"]
         tipo_ev = st.selectbox(
             "Categoria",
             _categorias,
@@ -840,10 +842,10 @@ if not df_agenda.empty:
     df_show["data_fim"] = pd.to_datetime(df_show["data_fim"],
                                           errors="coerce")
 
-    if perfil_atual != "Gestor":
-        df_show = df_show[
-            df_show["responsaveis"].str.contains(usuario_atual, na=False)
-        ]
+    # Item 7: listagem usa a MESMA visibilidade do calendário (_agenda_mask)
+    # em vez de "qualquer Gestor vê tudo". Gestor geral vê tudo; gestor de
+    # equipe vê a equipe; usuário padrão vê os seus (e em que está marcado).
+    df_show = df_show[_agenda_mask(df_show)]
     if filtro_tipo != "Todos":
         df_show = df_show[df_show["tipo"] == filtro_tipo]
     if filtro_membro.strip():
