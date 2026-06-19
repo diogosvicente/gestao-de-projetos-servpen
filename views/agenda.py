@@ -711,17 +711,13 @@ with col_form:
     )
     st.subheader(_titulo_form)
 
-    # "Envolvidos" lista só gente da própria equipe (Geral vê todas) — pra
-    # um líder não criar evento de projetista da outra equipe (que ele nem
-    # conseguiria ver depois).
-    if df_u.empty:
-        equipe_lista = [usuario_atual]
-    elif _ve_tudo():
-        equipe_lista = df_u["nome"].tolist()
-    else:
-        equipe_lista = (
-            df_u[df_u["equipe"] == _equipe_atual()]["nome"].tolist()
-        )
+    # Item 9 / complemento da Agenda: TODOS marcam TODOS — o seletor de
+    # "Envolvidos" lista todo mundo, de qualquer equipe. A visibilidade depois
+    # continua por equipe via _agenda_mask; quem for marcado passa a ver o
+    # evento mesmo sendo de outra equipe.
+    equipe_lista = (
+        df_u["nome"].tolist() if not df_u.empty else [usuario_atual]
+    )
 
     with st.form("form_agenda_nova", clear_on_submit=True):
         titulo_ev = st.text_input(

@@ -40,6 +40,8 @@ equipe", "gestor geral") que no código mapeiam para **dois eixos distintos**:
   `views/novo_projeto.py:27`; link no menu para todos em `app.py:582`.
 - **Fazer:** trocar o guard `_pode_editar()` → `_pode_gestor()` na view e
   esconder o item do menu para não-gestores.
+- **✅ Resolvido (19/06):** guard em `views/novo_projeto.py` agora exige
+  `_pode_gestor()`; item "Novo Projeto" só entra no menu pra Gestor (`app.py`).
 
 ### Item 1-lista — no Kanban todos só visualizam, exceto Evolução Técnica por Disciplina
 - **Hoje:** no Kanban (`views/kanban.py`) o Projetista também edita (move
@@ -49,6 +51,10 @@ equipe", "gestor geral") que no código mapeiam para **dois eixos distintos**:
   Disciplina" (`views/kanban.py:1346`), onde o projetista designado continua
   marcando progresso. Gestor mantém edição total. Casa com a visibilidade já
   existente em `views/kanban.py:1356-1367`.
+- **✅ Resolvido (19/06):** form de edição fica read-only pra não-gestor
+  (campos `disabled` + banner "Modo leitura", só botão Fechar); bulk actions e
+  seleção da visão Lista também só pra Gestor. A Evolução Técnica (fora do
+  form) segue editável pelo designado (`views/kanban.py`).
 
 ### Item 2 — "Abrir detalhes / editar" é o único botão para o projetista
 - **Hoje:** no popover de cada card (`views/kanban.py:774`) existe "Abrir
@@ -56,6 +62,8 @@ equipe", "gestor geral") que no código mapeiam para **dois eixos distintos**:
   status (Mover, Pausar, Concluir, Cancelar...).
 - **Fazer:** para projetista, só "Abrir detalhes / editar" aparece; botões de
   transição de status somem (ficam só para Gestor). Contraparte do item 1-lista.
+- **✅ Resolvido (19/06):** os botões de status no popover agora estão sob
+  `_pode_gestor()` (`views/kanban.py`) — projetista vê só "Abrir detalhes".
 
 ### Item 4 — "Etapas do Projeto" (edição, só gestor): % concluído + status
 - **Atenção a uma confusão de seções:** o % de conclusão hoje só existe em
@@ -87,6 +95,8 @@ equipe", "gestor geral") que no código mapeiam para **dois eixos distintos**:
   tanto na **Agenda** quanto no **Novo Projeto**. A condição "é GERAL? / é da
   minha equipe?" no seletor cai. A *visibilidade* continua controlada à parte
   (ver complemento da Agenda).
+- **✅ Implementado (19/06):** seletores agora listam todos — `equipe_lista`
+  em `views/agenda.py` e `_opcoes_eq` em `views/novo_projeto.py`.
 
 ### Item 13 (extra, fora do PDF) — Dashboard: Evolução Técnica por perfil/equipe
 - **Demanda (18/06):** nos gráficos de **Evolução Técnica** do Dashboard,

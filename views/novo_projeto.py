@@ -14,18 +14,16 @@ import database as db
 
 from core.data import _invalidar_dados, _load_df_u
 from core.helpers import (
-    _equipe_atual,
     _estiliza_plotly,
     _init_etapas,
-    _pode_editar,
-    _ve_tudo,
+    _pode_gestor,
 )
 from core.ui_feedback import carregando
 
 
-# Visualizador não cadastra
-if not _pode_editar():
-    st.error("🛑 Visualizadores não podem criar projetos.")
+# Item 1: criação de projeto é exclusiva do Gestor.
+if not _pode_gestor():
+    st.error("🛑 Apenas Gestores podem criar projetos.")
     st.stop()
 
 
@@ -91,15 +89,9 @@ with st.form("form_novo_projeto_v2", clear_on_submit=False):
         help="Complemento do endereço.",
     )
 
-    # Projetistas disponíveis: líder de equipe só atribui gente da própria
-    # equipe; Gestor Geral atribui qualquer um. (O projeto em si continua
-    # compartilhado — só a lista de quem você designa é filtrada.)
-    if df_u.empty:
-        _opcoes_eq = []
-    elif _ve_tudo():
-        _opcoes_eq = df_u["nome"].tolist()
-    else:
-        _opcoes_eq = df_u[df_u["equipe"] == _equipe_atual()]["nome"].tolist()
+    # Item 9: "Equipe Responsável" lista TODOS (qualquer um marca qualquer um,
+    # de qualquer equipe). O projeto em si continua compartilhado.
+    _opcoes_eq = df_u["nome"].tolist() if not df_u.empty else []
     f_eq = st.multiselect(
         "Equipe Responsável *",
         _opcoes_eq,

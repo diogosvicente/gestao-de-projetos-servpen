@@ -108,7 +108,8 @@ def _render_lista_kanban(df_kanban, df_d):
     st.session_state["kanban_bulk_sel"] = sel_ids
 
     # ── TOOLBAR DE BULK ACTIONS (só aparece se houver seleção) ──
-    if sel_ids and _pode_editar():
+    # Item 1-lista: ações em lote (mudar status / tag) são só do Gestor.
+    if sel_ids and _pode_gestor():
         with st.container(border=True):
             st.markdown(
                 f"<div style='color:#3b82f6;font-weight:600;font-size:.9rem;"
@@ -242,7 +243,7 @@ def _render_lista_kanban(df_kanban, df_d):
     # Prioridade, Tags, botão (Código/SEI = item 11).
     _COLS_ET = [0.35, 1.3, 2.4, 1.2, 1.4, 1.7, 1.3, 1.1, 1.6, 0.5]
     hdr = st.columns(_COLS_ET)
-    if _pode_editar():
+    if _pode_gestor():
         _todos_marcados = (
             len(sel_ids) > 0 and sel_ids >= _ids_visiveis
         )
@@ -276,7 +277,7 @@ def _render_lista_kanban(df_kanban, df_d):
             cols = st.columns(_COLS_ET)
             pid = int(row["id"])
 
-            if _pode_editar():
+            if _pode_gestor():
                 _checked = cols[0].checkbox(
                     "", value=(pid in sel_ids),
                     key=f"lista_chk_{pid}",
@@ -809,7 +810,7 @@ else:
                             st.session_state.projeto_em_edicao = p["id"]
                             st.rerun()
 
-                        if _pode_editar():
+                        if _pode_gestor():
                             st.divider()
                             if status_db == "Em Espera":
                                 if st.button(
@@ -935,6 +936,10 @@ if "projeto_em_edicao" in st.session_state:
     #  FORMULÁRIO ESPELHANDO O CADASTRO DE NOVO PROJETO
     # ════════════════════════════════════════════════════════
     with st.form("form_edicao_v6"):
+        # Item 1-lista: não-gestor é read-only no formulário (campos
+        # desabilitados + sem botões de escrita). A exceção é a Evolução
+        # Técnica por Disciplina, renderizada FORA deste form (abaixo).
+        _ro_edit = not _pode_gestor()
 
         st.markdown("#### 📌 Identificação")
         rc01, rc02 = st.columns(2)
@@ -943,22 +948,28 @@ if "projeto_em_edicao" in st.session_state:
             value=str(dados.get("codigo", "")),
             placeholder="opcional — único",
             help="Opcional; se preenchido, precisa ser único.",
+            disabled=_ro_edit,
         )
         ed_nm = rc02.text_input("Nome do Projeto / Cliente *",
-                                value=str(dados["projeto"]))
+                                value=str(dados["projeto"]),
+                                disabled=_ro_edit)
 
         r1c1, r1c2 = st.columns(2)
         ed_sei = r1c1.text_input("Nº SEI / Documento",
                                  value=str(dados.get("numero_sei", "")),
-                                 placeholder="ex.: 2024/12345-6")
+                                 placeholder="ex.: 2024/12345-6",
+                                 disabled=_ro_edit)
         ed_so = r1c2.text_input("Solicitante / Cliente",
-                                value=str(dados["solicitante"]))
+                                value=str(dados["solicitante"]),
+                                disabled=_ro_edit)
 
         r2c1, r2c2 = st.columns(2)
         ed_co = r2c1.text_input("Contato (Tel/Email)",
-                                value=str(dados["contato"]))
+                                value=str(dados["contato"]),
+                                disabled=_ro_edit)
         ed_li = r2c2.text_input("Link da Pasta (Drive/Nuvem)",
-                                value=str(dados["link_projeto"]))
+                                value=str(dados["link_projeto"]),
+                                disabled=_ro_edit)
 
         # Endereço: select do cadastro mestre (item 12) + digitar novo;
         # "Local" é complemento livre (item 10).
@@ -974,12 +985,14 @@ if "projeto_em_edicao" in st.session_state:
                    else None),
             accept_new_options=True,
             placeholder="Selecione ou digite um novo…",
+            disabled=_ro_edit,
         )
         ed_lo = r3c2.text_input(
             "Local",
             value=str(dados.get("local", "")),
             placeholder="bloco / andar / sala / referência",
             help="Complemento do endereço.",
+            disabled=_ro_edit,
         )
 
         list_u = df_u["nome"].tolist()
@@ -988,7 +1001,7 @@ if "projeto_em_edicao" in st.session_state:
             if x.strip() in list_u
         ]
         ed_eq = st.multiselect("Equipe Responsável *", list_u,
-                               default=def_u)
+                               default=def_u, disabled=_ro_edit)
 
         lista_pri = ["Máxima", "Média", "Mínima"]
         pri_atual = str(dados.get("prioridade", "Média")).strip()
@@ -997,6 +1010,7 @@ if "projeto_em_edicao" in st.session_state:
         ed_pr = ed_r4c1.selectbox(
             "Prioridade", lista_pri,
             index=lista_pri.index(pri_atual) if pri_atual in lista_pri else 1,
+            disabled=_ro_edit,
         )
 
         _tags_existentes_e = db.listar_tags_existentes()
@@ -1013,6 +1027,7 @@ if "projeto_em_edicao" in st.session_state:
                 + (f"Já em uso: {', '.join(_tags_existentes_e)}."
                    if _tags_existentes_e else "")
             ),
+            disabled=_ro_edit,
         )
 
         st.markdown("#### 📅 Datas")
@@ -1021,16 +1036,19 @@ if "projeto_em_edicao" in st.session_state:
             "Data de Recebimento",
             value=_parse_d(dados.get("data_recebimento")),
             format="DD/MM/YYYY",
+            disabled=_ro_edit,
         )
         ed_prev = dc2.date_input(
             "Previsão de Execução",
             value=_parse_d(dados.get("previsao_execucao")),
             format="DD/MM/YYYY",
+            disabled=_ro_edit,
         )
         ed_di = dc3.date_input(
             "Data de Início",
             value=_parse_d(dados.get("data_inicio")),
             format="DD/MM/YYYY",
+            disabled=_ro_edit,
         )
         ed_dt = dc4.date_input(
             "Data de Término",
@@ -1038,6 +1056,7 @@ if "projeto_em_edicao" in st.session_state:
                 dados.get("data_termino") or dados.get("data_fim")
             ),
             format="DD/MM/YYYY",
+            disabled=_ro_edit,
         )
 
         st.markdown("#### 📋 Escopo e Disciplinas")
@@ -1053,39 +1072,53 @@ if "projeto_em_edicao" in st.session_state:
             "Disciplinas do Projeto",
             options=_lista_chk,
             default=[d for d in _discs_salvas if d in _lista_chk],
+            disabled=_ro_edit,
         )
 
         ed_esc = st.text_area("Descrição do Escopo",
-                              value=str(dados["solicitacao"]), height=90)
+                              value=str(dados["solicitacao"]), height=90,
+                              disabled=_ro_edit)
         _dem_extra = (
             str(dados.get("demandas", "")).split("|")[-1].strip()
             if "|" in str(dados.get("demandas", "")) else ""
         )
         ed_dem = st.text_area("Checklist Adicional / Demandas",
-                              value=_dem_extra, height=70)
+                              value=_dem_extra, height=70,
+                              disabled=_ro_edit)
 
         # ── BOTÕES ──────────────────────────────────────────
-        f_c1, f_c2, f_c3, f_c4 = st.columns(4)
-
-        _salvar = f_c1.form_submit_button("💾 Salvar e Sair",
-                                          use_container_width=True)
-        _clonar = f_c2.form_submit_button(
-            "📋 Clonar projeto",
-            use_container_width=True,
-            help=(
-                "Cria um novo projeto copiando dados básicos + estrutura "
-                "de etapas. Não copia diário, arquivos nem progresso."
-            ),
-        )
-        _excluir = f_c3.form_submit_button("🗑️ Excluir Projeto",
-                                           use_container_width=True)
-        _fechar = f_c4.form_submit_button("❌ Fechar",
-                                          use_container_width=True)
-
-        confirmar_del = st.checkbox(
-            f"⚠️ Confirmo EXCLUIR permanentemente '{dados['projeto']}'",
-            key=f"conf_del_{id_ed}",
-        )
+        # Item 1-lista: só Gestor vê Salvar/Clonar/Excluir. Não-gestor fica
+        # em modo leitura (campos desabilitados acima) + só "Fechar".
+        _salvar = _clonar = _excluir = False
+        confirmar_del = False
+        if _ro_edit:
+            st.info(
+                "🔒 Modo leitura — edição do projeto é exclusiva do Gestor. "
+                "Use a seção **Evolução Técnica por Disciplina** abaixo para "
+                "marcar seu progresso."
+            )
+            _fechar = st.form_submit_button("❌ Fechar",
+                                            use_container_width=True)
+        else:
+            f_c1, f_c2, f_c3, f_c4 = st.columns(4)
+            _salvar = f_c1.form_submit_button("💾 Salvar e Sair",
+                                              use_container_width=True)
+            _clonar = f_c2.form_submit_button(
+                "📋 Clonar projeto",
+                use_container_width=True,
+                help=(
+                    "Cria um novo projeto copiando dados básicos + estrutura "
+                    "de etapas. Não copia diário, arquivos nem progresso."
+                ),
+            )
+            _excluir = f_c3.form_submit_button("🗑️ Excluir Projeto",
+                                               use_container_width=True)
+            _fechar = f_c4.form_submit_button("❌ Fechar",
+                                              use_container_width=True)
+            confirmar_del = st.checkbox(
+                f"⚠️ Confirmo EXCLUIR permanentemente '{dados['projeto']}'",
+                key=f"conf_del_{id_ed}",
+            )
 
     # ── Ações dos botões ─────────────────────────────────────
     if _salvar:

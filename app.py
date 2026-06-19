@@ -579,8 +579,10 @@ _pages_gerais = [
             default=True),
     st.Page("views/kanban.py", title="Kanban", icon="📋",
             url_path="kanban"),
-    st.Page("views/novo_projeto.py", title="Novo Projeto", icon="➕",
-            url_path="novo_projeto"),
+    # Item 1: "Novo Projeto" só aparece pra Gestor (criação restrita).
+    # O guard em views/novo_projeto.py barra acesso direto por URL.
+    *([st.Page("views/novo_projeto.py", title="Novo Projeto", icon="➕",
+               url_path="novo_projeto")] if _pode_gestor() else []),
     st.Page("views/diario.py", title="Diário", icon="📝",
             url_path="diario"),
     st.Page("views/arquivos.py", title="Arquivos", icon="📁",
