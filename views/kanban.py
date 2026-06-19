@@ -238,7 +238,9 @@ def _render_lista_kanban(df_kanban, df_d):
                 st.rerun()
 
     # ── CABEÇALHO DA TABELA ──────────────────────────────────────
-    _COLS_ET = [0.35, 1.4, 3, 2, 1.5, 1.2, 2, 0.6]
+    # Colunas: chk, Status, Projeto, Código, SEI, Projetista, Prazo,
+    # Prioridade, Tags, botão (Código/SEI = item 11).
+    _COLS_ET = [0.35, 1.3, 2.4, 1.2, 1.4, 1.7, 1.3, 1.1, 1.6, 0.5]
     hdr = st.columns(_COLS_ET)
     if _pode_editar():
         _todos_marcados = (
@@ -259,7 +261,8 @@ def _render_lista_kanban(df_kanban, df_d):
         hdr[0].markdown(" ")
     for col_obj, txt in zip(
         hdr[1:],
-        ["Status", "Projeto", "Projetista", "Prazo", "Prioridade", "Tags", ""],
+        ["Status", "Projeto", "Código", "SEI", "Projetista", "Prazo",
+         "Prioridade", "Tags", ""],
     ):
         col_obj.markdown(
             f"<small style='color:#94a3b8;text-transform:uppercase;"
@@ -298,13 +301,27 @@ def _render_lista_kanban(df_kanban, df_d):
                 f"#{pid}</span></div>",
                 unsafe_allow_html=True,
             )
+            _cod_cell = str(row.get("codigo") or "").strip()
+            _cod_cell = _cod_cell if _cod_cell and _cod_cell.lower() != "nan" else "—"
             cols[3].markdown(
+                f"<div style='padding-top:8px;font-size:12px;"
+                f"font-family:monospace;opacity:.85;'>{_cod_cell}</div>",
+                unsafe_allow_html=True,
+            )
+            _sei_cell = str(row.get("numero_sei") or "").strip()
+            _sei_cell = _sei_cell if _sei_cell and _sei_cell.lower() != "nan" else "—"
+            cols[4].markdown(
+                f"<div style='padding-top:8px;font-size:12px;opacity:.85;'>"
+                f"{_sei_cell}</div>",
+                unsafe_allow_html=True,
+            )
+            cols[5].markdown(
                 f"<div style='padding-top:8px;font-size:12px;opacity:.85;'>"
                 f"👤 {row.get('projetista', '—')}</div>",
                 unsafe_allow_html=True,
             )
             _prazo = _data_br(row.get("data_termino") or row.get("data_fim"))
-            cols[4].markdown(
+            cols[6].markdown(
                 f"<div style='padding-top:8px;font-size:12px;'>"
                 f"📅 {_prazo}</div>",
                 unsafe_allow_html=True,
@@ -315,16 +332,16 @@ def _render_lista_kanban(df_kanban, df_d):
                 "Média":  "<span class='kc-pri-med'>◆ MÉD</span>",
                 "Mínima": "<span class='kc-pri-min'>▼ MÍN</span>",
             }.get(_pri, "")
-            cols[5].markdown(
+            cols[7].markdown(
                 f"<div style='padding-top:8px;'>{_pri_html}</div>",
                 unsafe_allow_html=True,
             )
-            cols[6].markdown(
+            cols[8].markdown(
                 f"<div style='padding-top:6px;'>"
                 f"{_render_tag_chips(row.get('tags'), small=True)}</div>",
                 unsafe_allow_html=True,
             )
-            if cols[7].button("🔍", key=f"lista_ver_{pid}",
+            if cols[9].button("🔍", key=f"lista_ver_{pid}",
                               help="Abrir detalhes / editar"):
                 st.session_state.projeto_em_edicao = pid
                 st.rerun()
@@ -469,8 +486,8 @@ st.header("📋 Controle de Fluxo")
 # ── BUSCA + FILTRO DE TAGS ───────────────────────────────────
 col_busca, col_tags = st.columns([3, 2])
 busca_kanban = col_busca.text_input(
-    "🔍 Buscar por nome, projetista ou cliente",
-    placeholder="ex.: residencial silva, joão, prefeitura...",
+    "🔍 Buscar por nome, projetista, cliente, SEI ou código",
+    placeholder="ex.: residencial silva, joão, 2024/12345, COD-001...",
     key="kanban_search",
 )
 _todas_tags_kanban = db.listar_tags_existentes()
@@ -492,10 +509,21 @@ tags_filtro = col_tags.multiselect(
 
 if busca_kanban:
     termo = busca_kanban.lower().strip()
+
+    def _col_busca(nome):
+        """Coluna como série de strings, ou série vazia se a coluna não
+        existir (robusto contra df sem `codigo`/`numero_sei`)."""
+        return (
+            df_p[nome].astype(str) if nome in df_p.columns
+            else pd.Series("", index=df_p.index)
+        )
+
     mask = (
-        df_p["projeto"].astype(str).str.lower().str.contains(termo, na=False)
-        | df_p["projetista"].astype(str).str.lower().str.contains(termo, na=False)
-        | df_p["solicitante"].astype(str).str.lower().str.contains(termo, na=False)
+        _col_busca("projeto").str.lower().str.contains(termo, na=False)
+        | _col_busca("projetista").str.lower().str.contains(termo, na=False)
+        | _col_busca("solicitante").str.lower().str.contains(termo, na=False)
+        | _col_busca("numero_sei").str.lower().str.contains(termo, na=False)
+        | _col_busca("codigo").str.lower().str.contains(termo, na=False)
     )
     df_kanban = df_p[mask].copy()
 else:

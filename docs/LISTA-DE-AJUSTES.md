@@ -170,6 +170,9 @@ equipe", "gestor geral") que no código mapeiam para **dois eixos distintos**:
 - **Fazer:** incluir colunas **SEI** e **Código** na tabela e estender a busca
   para casar por esses campos. **Depende do item 3** (Código precisa existir;
   SEI já existe como `numero_sei`).
+- **✅ Resolvido/implementado (19/06):** colunas **Código** e **SEI** na tabela
+  da visão Lista (logo após "Projeto") e busca estendida pra casar também por
+  `codigo` e `numero_sei` (`views/kanban.py`).
 
 ---
 
