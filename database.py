@@ -816,6 +816,18 @@ def _criar_tabelas_impl():
             expires_at BIGINT NOT NULL
         )''')
 
+        # ── CHAT: leitura de grupos por usuário (item 6) ──
+        # Grupos usam destinatario sentinela '@grupo:TODOS|SERVPEN|SERVPAR'.
+        # O `lido_em` (1 campo por linha) não serve p/ grupo; aqui rastreamos
+        # por usuário o último id já visto em cada grupo. Não-lidas = msgs do
+        # grupo com id maior que esse marcador.
+        c.execute('''CREATE TABLE IF NOT EXISTS chat_grupo_visto (
+            usuario          TEXT NOT NULL,
+            grupo            TEXT NOT NULL,
+            ultimo_id_visto  BIGINT DEFAULT 0,
+            PRIMARY KEY (usuario, grupo)
+        )''')
+
         # ── MIGRAÇÕES INCREMENTAIS (PG 9.6+: ADD COLUMN IF NOT EXISTS) ──
         # Pra bancos pré-existentes onde a tabela já existe sem essas colunas.
         migracoes = [
@@ -1428,6 +1440,87 @@ def marcar_lidas(usuario, remetente):
               (usuario, remetente))
     conn.commit()
     conn.close()
+
+
+# ─── CHAT: GRUPOS (item 6) ────────────────────────────────
+# 3 grupos padrão; sentinela vai em `chat.destinatario`. Visibilidade por
+# equipe: SERVPEN/SERVPAR só pra própria equipe; GERAL vê os 3; TODOS é geral.
+GRUPOS_CHAT = [
+    ("@grupo:TODOS",   "👥 TODOS",   "TODOS"),
+    ("@grupo:SERVPEN", "👥 SERVPEN", "SERVPEN"),
+    ("@grupo:SERVPAR", "👥 SERVPAR", "SERVPAR"),
+]
+
+
+def grupos_chat_visiveis(equipe):
+    """Lista [(sentinela, label)] dos grupos que um usuário da `equipe` vê.
+    TODOS sempre; o grupo da própria equipe; GERAL vê os 3."""
+    eq = (equipe or "SERVPEN").strip().upper()
+    return [
+        (sent, label) for sent, label, geq in GRUPOS_CHAT
+        if geq == "TODOS" or eq == "GERAL" or eq == geq
+    ]
+
+
+def nao_lidas_grupos(usuario, equipe):
+    """dict {sentinela: qtd não-lidas} para os grupos visíveis ao usuário.
+    Não-lida = msg do grupo com id > ultimo_id_visto e remetente != usuário."""
+    vis = grupos_chat_visiveis(equipe)
+    if not vis:
+        return {}
+    conn = conectar(); c = conn.cursor()
+    try:
+        out = {}
+        for sent, _label in vis:
+            c.execute(
+                "SELECT COUNT(*) FROM chat "
+                "WHERE destinatario = %s AND remetente <> %s "
+                "AND excluida_em IS NULL "
+                "AND id > COALESCE((SELECT ultimo_id_visto "
+                "                   FROM chat_grupo_visto "
+                "                   WHERE usuario = %s AND grupo = %s), 0)",
+                (sent, usuario, usuario, sent),
+            )
+            out[sent] = int(c.fetchone()[0] or 0)
+        return out
+    finally:
+        conn.close()
+
+
+def ids_nao_vistos_grupo(usuario, grupo):
+    """Set de ids de msgs do grupo ainda não vistas pelo usuário — alimenta o
+    separador 'novas mensagens'. Calcular ANTES de `marcar_grupo_visto`."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute(
+            "SELECT id FROM chat WHERE destinatario = %s AND remetente <> %s "
+            "AND id > COALESCE((SELECT ultimo_id_visto FROM chat_grupo_visto "
+            "                   WHERE usuario = %s AND grupo = %s), 0)",
+            (grupo, usuario, usuario, grupo),
+        )
+        return {int(r[0]) for r in c.fetchall()}
+    finally:
+        conn.close()
+
+
+def marcar_grupo_visto(usuario, grupo):
+    """Upsert: marca que `usuario` viu até a última mensagem de `grupo`."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute(
+            "SELECT COALESCE(MAX(id), 0) FROM chat WHERE destinatario = %s",
+            (grupo,),
+        )
+        _max = int(c.fetchone()[0] or 0)
+        c.execute(
+            "INSERT INTO chat_grupo_visto (usuario, grupo, ultimo_id_visto) "
+            "VALUES (%s,%s,%s) "
+            "ON CONFLICT (usuario, grupo) DO UPDATE SET ultimo_id_visto = %s",
+            (usuario, grupo, _max, _max),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ─── USUÁRIOS ─────────────────────────────────────────────

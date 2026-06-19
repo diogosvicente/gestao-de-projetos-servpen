@@ -28,7 +28,7 @@ _PAGE_SLUGS = [
 _CHAT_SLUG = "chat"
 
 
-def _chat_toast_html(remetente: str, qtd: int):
+def _chat_toast_html(remetente: str, qtd: int, alvo: str | None = None):
     """Injeta um toast persistente (30s) no DOM pai via JS.
 
     O `st.toast` nativo dura ~4s e não aceita botões. Aqui injetamos um div
@@ -47,7 +47,9 @@ def _chat_toast_html(remetente: str, qtd: int):
     `?_goto_chat=NOME` à URL atual — o que com `st.navigation` fazia o user
     cair em `/dashboard?_goto_chat=X` em vez de `/chat?_goto_chat=X`.
     """
-    _rem_js = _json.dumps(str(remetente))  # escape correto pro JS
+    alvo = alvo or remetente
+    _rem_js = _json.dumps(str(remetente))  # display (header do toast)
+    _alvo_js = _json.dumps(str(alvo))      # alvo do clique (pessoa ou grupo)
     _qtd_js = int(qtd)
     _slugs_js = _json.dumps(_PAGE_SLUGS)
     _chat_slug_js = _json.dumps(_CHAT_SLUG)
@@ -58,6 +60,7 @@ def _chat_toast_html(remetente: str, qtd: int):
             try {{
                 var doc = window.parent.document;
                 var REM = {_rem_js};
+                var ALVO = {_alvo_js};
                 var QTD = {_qtd_js};
                 var KNOWN_SLUGS = {_slugs_js};
                 var CHAT_SLUG = {_chat_slug_js};
@@ -146,12 +149,12 @@ def _chat_toast_html(remetente: str, qtd: int):
 
                 // Se já tem toast desse remetente, atualiza qtd e renova timer
                 var existing = stack.querySelector(
-                    '[data-rem="' + REM.replace(/"/g, '&quot;') + '"]'
+                    '[data-rem="' + ALVO.replace(/"/g, '&quot;') + '"]'
                 );
                 var toast = existing || doc.createElement('div');
                 if (!existing) {{
                     toast.className = 'wa-toast';
-                    toast.setAttribute('data-rem', REM);
+                    toast.setAttribute('data-rem', ALVO);
                 }}
                 toast.innerHTML = ''
                     + '<div class="wa-toast-head">'
@@ -195,7 +198,7 @@ def _chat_toast_html(remetente: str, qtd: int):
                         parts.push(CHAT_SLUG);
                     }}
                     urlGo.pathname = parts.join('/');
-                    urlGo.searchParams.set('_goto_chat', REM);
+                    urlGo.searchParams.set('_goto_chat', ALVO);
                     toast.querySelector('.wa-btn-go')
                          .setAttribute('href', urlGo.toString());
                 }} catch (e) {{
@@ -203,7 +206,7 @@ def _chat_toast_html(remetente: str, qtd: int):
                     // menos tenta levar pra alguma URL de chat.
                     toast.querySelector('.wa-btn-go')
                          .setAttribute('href',
-                             'chat?_goto_chat=' + encodeURIComponent(REM));
+                             'chat?_goto_chat=' + encodeURIComponent(ALVO));
                 }}
 
                 // Botão ✖ fecha.
@@ -268,6 +271,19 @@ def _global_notif(usuario):
             novas = qtd - anterior
             _chat_toast_html(rem, novas)
     st.session_state["_chat_ultimas_contagens"] = atuais_chat
+
+    # 1b) CHAT GRUPOS (item 6) — mesmo toast custom; alvo = sentinela do grupo
+    # pra o clique abrir o grupo certo. Display = label "👥 NOME".
+    _equipe_notif = st.session_state.get("equipe", "SERVPEN")
+    ultimas_grp = st.session_state.get("_chat_grp_ultimas", {})
+    atuais_grp = db.nao_lidas_grupos(usuario, _equipe_notif)
+    _grp_label = {s: l for s, l, _e in getattr(db, "GRUPOS_CHAT", [])}
+    for grp, qtd in atuais_grp.items():
+        anterior = ultimas_grp.get(grp, 0)
+        if qtd > anterior:
+            _chat_toast_html(_grp_label.get(grp, grp), qtd - anterior, alvo=grp)
+    st.session_state["_chat_grp_ultimas"] = atuais_grp
+
     # NÃO setar `_chat_proximo_contato` aqui (intencional).
     #
     # Histórico do bug: o fragmento setava esse hint com base no "último

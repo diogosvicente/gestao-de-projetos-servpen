@@ -204,6 +204,11 @@ equipe", "gestor geral") que no código mapeiam para **dois eixos distintos**:
 - **Item de maior esforço da lista** — não é ajuste, é capacidade nova:
   conversas com mais de 2 participantes (mensagens endereçadas a um grupo,
   marcação de leitura por grupo, etc.).
+- **✅ Resolvido/implementado (19/06):** 3 grupos padrão por sentinela em
+  `chat.destinatario` (`@grupo:TODOS|SERVPEN|SERVPAR`), visíveis **por equipe**;
+  não-lidas via tabela `chat_grupo_visto`; toast estendido pra grupos
+  (`core/notif.py`); emoji picker em popover (30 emojis, sem dependência).
+  Detalhe em [docs/CHAT-GRUPOS-SPEC.md](CHAT-GRUPOS-SPEC.md).
 
 ---
 
@@ -271,11 +276,8 @@ Isto **refina os itens 7 e 9** na Agenda:
 
 ## Pontos em aberto (restantes)
 
-Quase tudo foi decidido em 18/06 (ver acima). Só sobra:
-
-1. **Item 6 — chat:** precisa de **mini-spec próprio** ao chegar a vez (schema
-   de grupo, não-lidas e notificação por grupo, como fazer o emoji picker no
-   Streamlit — não é nativo). A decisão de produto já está; falta o "como".
+**Nada pendente — todos os itens (1–13 + complemento da Agenda) foram
+implementados e verificados (headless via AppTest + smoke-test no Postgres).** 🎉
 
 ## Notas do check no código (18/06/2026)
 

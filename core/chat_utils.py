@@ -74,21 +74,32 @@ _CHAT_CSS = """
 
 
 @st.fragment(run_every="2s")
-def _render_chat_messages(usuario, contato_nome):
+def _render_chat_messages(usuario, contato_nome, is_grupo=False):
     """Renderiza as bolhas estilo WhatsApp da conversa atual.
 
     Re-roda a cada 2s graças a `@st.fragment(run_every="2s")` — sem rerodar a
     página. Implementa: separador de dia (Hoje/Ontem/DD/MM), separador
     "⬇ N novas mensagens" (igual WhatsApp), edição inline, exclusão,
     marca "(editado)" e auto-scroll inteligente.
+
+    Se `is_grupo`, `contato_nome` é o sentinela do grupo ('@grupo:...') e a
+    query traz TODAS as mensagens daquele grupo (qualquer remetente). O nome
+    de quem enviou já aparece via `wa-who` nas bolhas que não são minhas.
     """
     try:
-        df_m = pd.read_sql_query(
-            "SELECT * FROM chat WHERE (remetente = %s AND destinatario = %s) "
-            "OR (remetente = %s AND destinatario = %s) ORDER BY id ASC",
-            db.get_engine(),
-            params=(usuario, contato_nome, contato_nome, usuario),
-        )
+        if is_grupo:
+            df_m = pd.read_sql_query(
+                "SELECT * FROM chat WHERE destinatario = %s ORDER BY id ASC",
+                db.get_engine(),
+                params=(contato_nome,),
+            )
+        else:
+            df_m = pd.read_sql_query(
+                "SELECT * FROM chat WHERE (remetente = %s AND destinatario = %s) "
+                "OR (remetente = %s AND destinatario = %s) ORDER BY id ASC",
+                db.get_engine(),
+                params=(usuario, contato_nome, contato_nome, usuario),
+            )
     except Exception as exc:
         erro_humano(
             "Carregar mensagens do chat", exc,
