@@ -860,6 +860,9 @@ def _criar_tabelas_impl():
             ("chat",                  "excluida_em",        "TIMESTAMP"),
             ("agenda",                "local",              "TEXT"),
             ("mencoes_notificacoes",  "dispensado_em",      "TIMESTAMP"),
+            # % de conclusão por etapa (item 4): Gestor preenche; cruzado com
+            # a data da etapa pra classificar atraso / no prazo / adiantado.
+            ("etapas_projeto",        "percentual",         "INTEGER DEFAULT 0"),
         ]
         # PASSO 1: lê o schema atual via information_schema (SELECT, só
         # pega AccessShareLock — NÃO conflita com nada). Migrations cujo
@@ -1277,13 +1280,15 @@ def salvar_etapas(projeto_id, etapas):
         c.execute("DELETE FROM etapas_projeto WHERE projeto_id = %s", (int(projeto_id),))
         for et in etapas:
             c.execute('''INSERT INTO etapas_projeto
-                         (projeto_id, nome, dias_offset, duracao_dias, ordem)
-                         VALUES (%s,%s,%s,%s,%s)''',
+                         (projeto_id, nome, dias_offset, duracao_dias, ordem,
+                          percentual)
+                         VALUES (%s,%s,%s,%s,%s,%s)''',
                       (int(projeto_id),
                        et['nome'],
                        int(et.get('dias_offset', 0)),
                        max(1, int(et.get('duracao_dias', 1))),
-                       int(et.get('ordem', 0))))
+                       int(et.get('ordem', 0)),
+                       max(0, min(100, int(et.get('percentual', 0) or 0)))))
         conn.commit()
     finally:
         conn.close()
@@ -1291,10 +1296,10 @@ def salvar_etapas(projeto_id, etapas):
 def listar_etapas(projeto_id):
     """Retorna lista de dicts ordenada por 'ordem'."""
     conn = conectar(); c = conn.cursor()
-    c.execute('''SELECT id, nome, dias_offset, duracao_dias, ordem
+    c.execute('''SELECT id, nome, dias_offset, duracao_dias, ordem, percentual
                  FROM etapas_projeto WHERE projeto_id = %s
                  ORDER BY ordem ASC''', (int(projeto_id),))
-    cols = ['id', 'nome', 'dias_offset', 'duracao_dias', 'ordem']
+    cols = ['id', 'nome', 'dias_offset', 'duracao_dias', 'ordem', 'percentual']
     rows = [dict(zip(cols, r)) for r in c.fetchall()]
     conn.close()
     return rows

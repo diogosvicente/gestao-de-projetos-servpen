@@ -72,15 +72,14 @@ equipe", "gestor geral") que no código mapeiam para **dois eixos distintos**:
   (nome/duração/offset) — sem marcação de concluído nem status de prazo.
 - **Fazer:** na seção de Etapas, visível só para Gestor, exibir um percentual
   concluído e um rótulo de situação (atraso / no prazo / adiantado / concluído).
-- **✅ Fonte (resolvido 18/06):** **cruzar datas com progresso.** O **% real**
-  vem da "Evolução Técnica por Disciplina"; o **% esperado** vem da janela
-  programada da **própria etapa** (início = offset; fim = offset + duração) vs.
-  hoje. A **situação** compara os dois: real < esperado → **atraso**; real >
-  esperado → **adiantado**; ≈ → **no prazo**; 100% → **concluído**. (Datas da
-  etapa, não a data de início do projeto.)
-- **A definir no build:** como obter o "% real" **por etapa** — a Evolução é por
-  *disciplina*/projeto, não por etapa. Provável: usar o % do projeto contra a
-  janela de cada etapa, ou amarrar etapa ↔ disciplina. Resolver ao implementar.
+- **✅ Resolvido/implementado (19/06):** **cruzar datas com progresso.** Cada
+  etapa ganhou um campo **% concl.** (`etapas_projeto.percentual`) que o Gestor
+  preenche (decisão final: % por etapa, não derivado da Evolução). A
+  **situação** compara esse % real com o **% esperado** pela data (janela =
+  data de início do projeto + offset, por `duracao_dias`): 100% → **Concluída**;
+  data não chegou → **A iniciar**; passou do fim sem 100% → **Atrasada**; senão
+  real vs esperado (±10 pts) → **Adiantada / No prazo / Atrasada**. A edição das
+  etapas passou a ser **só Gestor** (`views/kanban.py`, `database.py`).
 
 ### Item 9 ⚠️ — "Envolvidos" e "Equipe Responsável": gestores veem todas as equipes
 - **Hoje:** tanto em Agenda (`views/agenda.py:715`) quanto em Novo Projeto
@@ -251,9 +250,9 @@ Isto **refina os itens 7 e 9** na Agenda:
 1. **Item 6 (chat):** **grupos de verdade**. 3 grupos padrão automáticos —
    **TODOS**, **SERVPEN**, **SERVPAR** (membros por equipe) — além das DMs
    1-a-1. + emoji picker no campo de mensagem.
-2. **Item 4 (etapas):** **cruzar datas com progresso** — % real (Evolução
-   Técnica) vs % esperado (janela da etapa) para classificar atraso / no prazo /
-   adiantado / concluído. (Como obter o % por etapa fica pro build.)
+2. **Item 4 (etapas):** **cruzar datas com progresso** — % real = campo
+   **% concl.** por etapa (Gestor preenche) vs % esperado (janela da etapa) →
+   atraso / no prazo / adiantado / concluída. Edição das etapas só Gestor.
 3. **Complemento da Agenda — escopo:** "todos marcam todos" vale **na Agenda E
    no Novo Projeto** ("Envolvidos" e "Equipe Responsável"). A restrição por
    equipe na *seleção* cai nos dois.
@@ -277,8 +276,6 @@ Quase tudo foi decidido em 18/06 (ver acima). Só sobra:
 1. **Item 6 — chat:** precisa de **mini-spec próprio** ao chegar a vez (schema
    de grupo, não-lidas e notificação por grupo, como fazer o emoji picker no
    Streamlit — não é nativo). A decisão de produto já está; falta o "como".
-2. **Item 4 — % por etapa:** definir no build de onde sai o "% real" de cada
-   etapa (a Evolução é por disciplina/projeto, não por etapa).
 
 ## Notas do check no código (18/06/2026)
 

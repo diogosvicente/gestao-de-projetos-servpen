@@ -1273,112 +1273,188 @@ if "projeto_em_edicao" in st.session_state:
         st.session_state[_key_et] = db.listar_etapas(id_ed)
 
     _et_list = st.session_state[_key_et]
+    _ro_etapas = not _pode_gestor()   # item 4 / 1-lista: edição só Gestor
 
-    _COLS_ET = [0.5, 2.5, 1.2, 1.5, 0.7]
+    # ── Situação por etapa (item 4) ──────────────────────────────
+    # Cruza o % REAL (campo "% concl." preenchido pelo Gestor) com o %
+    # ESPERADO pela data: janela da etapa = data de início do projeto +
+    # offset, por `duracao_dias`. Classifica em A iniciar / No prazo /
+    # Adiantada / Atrasada / Concluída.
+    _di_proj_et = dados.get("data_inicio") or dados.get("data_fim")
+    _base_et = (
+        pd.to_datetime(str(_di_proj_et), errors="coerce")
+        if _di_proj_et else pd.NaT
+    )
+    _hoje_et = pd.Timestamp(datetime.now().date())
 
-    with st.form(f"form_etapas_{id_ed}"):
-        novas_etapas = []
-        _del_et = None
+    def _situacao_etapa(offset, duracao, percentual):
+        real = max(0, min(100, int(percentual or 0)))
+        if pd.isna(_base_et):
+            return (("Concluída", "#16a34a", None) if real >= 100
+                    else ("—", "#6b7280", None))
+        _ini = _base_et + pd.Timedelta(days=int(offset or 0))
+        _fim = _ini + pd.Timedelta(days=max(1, int(duracao or 1)) - 1)
+        _total = max(1, (_fim - _ini).days)
+        esperado = max(0, min(100, round((_hoje_et - _ini).days / _total * 100)))
+        if real >= 100:
+            return ("Concluída", "#16a34a", esperado)
+        if _hoje_et < _ini:
+            return ("A iniciar", "#6b7280", esperado)
+        if _hoje_et > _fim:
+            return ("Atrasada", "#dc2626", esperado)
+        _diff = real - esperado
+        if _diff >= 10:
+            return ("Adiantada", "#2563eb", esperado)
+        if _diff <= -10:
+            return ("Atrasada", "#dc2626", esperado)
+        return ("No prazo", "#16a34a", esperado)
 
+    def _badge_sit(lbl, cor):
+        return (
+            f"<span style='background:{cor};color:#fff;font-size:.68rem;"
+            f"font-weight:700;padding:2px 8px;border-radius:10px;'>{lbl}</span>"
+        )
+
+    if _ro_etapas:
+        # Não-gestor: read-only — vê etapas + % + situação, sem editar.
         if not _et_list:
-            st.markdown(
-                "<div style='border:1px dashed rgba(255,255,255,0.12);"
-                "border-radius:8px;padding:18px;text-align:center;"
-                "color:#6b7280;font-size:13px;'>"
-                "Nenhuma etapa cadastrada ainda.<br>"
-                "<small>Clique em <b>+ Adicionar Etapa</b> abaixo pra "
-                "começar.</small></div>",
-                unsafe_allow_html=True,
-            )
+            st.caption("Nenhuma etapa cadastrada.")
         else:
-            h0, h1, h2, h3, h4 = st.columns(_COLS_ET)
-            h0.markdown("<small style='color:#94a3b8'>Ord.</small>",
-                        unsafe_allow_html=True)
-            h1.markdown("<small style='color:#94a3b8'>Nome da Etapa</small>",
-                        unsafe_allow_html=True)
-            h2.markdown(
-                "<small style='color:#94a3b8'>Duração (dias)</small>",
-                unsafe_allow_html=True,
-            )
-            h3.markdown(
-                "<small style='color:#94a3b8'>"
-                "Início (dias após início do projeto)</small>",
-                unsafe_allow_html=True,
-            )
-            h4.markdown("<small style='color:#94a3b8'>Ação</small>",
-                        unsafe_allow_html=True)
-
             for i, et in enumerate(_et_list):
-                c0, c1, c2, c3, c4 = st.columns(_COLS_ET)
-                c0.markdown(
-                    f"<div style='padding-top:28px;text-align:center;"
-                    f"color:#64748b;font-weight:700;'>{i+1}</div>",
+                _lbl, _cor, _esp = _situacao_etapa(
+                    et.get("dias_offset", 0), et.get("duracao_dias", 1),
+                    et.get("percentual", 0),
+                )
+                _esp_txt = f" · esperado {_esp}%" if _esp is not None else ""
+                st.markdown(
+                    "<div style='display:flex;justify-content:space-between;"
+                    "align-items:center;border:1px solid "
+                    "rgba(255,255,255,0.08);border-radius:8px;padding:8px 12px;"
+                    "margin-bottom:6px;'>"
+                    f"<span><b>{i+1}. {et.get('nome', '—')}</b> "
+                    f"<small style='color:#94a3b8'>· "
+                    f"{int(et.get('percentual', 0) or 0)}% concl.{_esp_txt}"
+                    "</small></span>"
+                    f"{_badge_sit(_lbl, _cor)}</div>",
                     unsafe_allow_html=True,
                 )
-                n = c1.text_input("Nome", value=str(et.get("nome", "")),
-                                  label_visibility="collapsed",
-                                  key=f"etn_{id_ed}_{i}")
-                d = c2.number_input("Dur",
-                                    value=int(et.get("duracao_dias", 1)),
-                                    min_value=1,
-                                    label_visibility="collapsed",
-                                    key=f"etd_{id_ed}_{i}")
-                o = c3.number_input("Off",
-                                    value=int(et.get("dias_offset", 0)),
-                                    min_value=0,
-                                    label_visibility="collapsed",
-                                    key=f"eto_{id_ed}_{i}")
-                if c4.form_submit_button(f"🗑 #{i+1}",
-                                         use_container_width=True):
-                    _del_et = i
-                novas_etapas.append({
-                    "nome": n, "duracao_dias": d,
-                    "dias_offset": o, "ordem": i,
-                })
+        st.caption("🔒 Edição das etapas é exclusiva do Gestor.")
+    else:
+        _COLS_ET = [0.4, 2.1, 1.0, 1.3, 1.0, 1.5, 0.6]
 
-        btn_add, btn_salvar_et = st.columns(2)
-        _add_et = btn_add.form_submit_button("➕ Adicionar Etapa",
-                                             use_container_width=True)
-        _salv_et = btn_salvar_et.form_submit_button(
-            "💾 Salvar Etapas",
-            use_container_width=True,
-            disabled=not _et_list,
-            help=(
-                "Disponível quando há etapas pra salvar"
-                if not _et_list else None
-            ),
-        )
+        with st.form(f"form_etapas_{id_ed}"):
+            novas_etapas = []
+            _del_et = None
 
-    if _del_et is not None:
-        st.session_state[_key_et].pop(_del_et)
-        acum = 0
-        for et in st.session_state[_key_et]:
-            et["dias_offset"] = acum
-            acum += et["duracao_dias"]
-        st.rerun()
+            if not _et_list:
+                st.markdown(
+                    "<div style='border:1px dashed rgba(255,255,255,0.12);"
+                    "border-radius:8px;padding:18px;text-align:center;"
+                    "color:#6b7280;font-size:13px;'>"
+                    "Nenhuma etapa cadastrada ainda.<br>"
+                    "<small>Clique em <b>+ Adicionar Etapa</b> abaixo pra "
+                    "começar.</small></div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                _h = st.columns(_COLS_ET)
+                for _col, _txt in zip(_h, [
+                    "Ord.", "Nome da Etapa", "Duração", "Início (offset)",
+                    "% concl.", "Situação", "Ação",
+                ]):
+                    _col.markdown(
+                        f"<small style='color:#94a3b8'>{_txt}</small>",
+                        unsafe_allow_html=True,
+                    )
 
-    if _add_et:
-        _ult = (
-            st.session_state[_key_et][-1] if st.session_state[_key_et]
-            else {"dias_offset": 0, "duracao_dias": 0}
-        )
-        st.session_state[_key_et].append({
-            "nome": f"Etapa {len(st.session_state[_key_et])+1}",
-            "duracao_dias": 5,
-            "dias_offset": _ult["dias_offset"] + _ult["duracao_dias"],
-            "ordem": len(st.session_state[_key_et]),
-        })
-        st.rerun()
+                for i, et in enumerate(_et_list):
+                    c0, c1, c2, c3, c4, c5, c6 = st.columns(_COLS_ET)
+                    c0.markdown(
+                        f"<div style='padding-top:28px;text-align:center;"
+                        f"color:#64748b;font-weight:700;'>{i+1}</div>",
+                        unsafe_allow_html=True,
+                    )
+                    n = c1.text_input("Nome", value=str(et.get("nome", "")),
+                                      label_visibility="collapsed",
+                                      key=f"etn_{id_ed}_{i}")
+                    d = c2.number_input("Dur",
+                                        value=int(et.get("duracao_dias", 1)),
+                                        min_value=1,
+                                        label_visibility="collapsed",
+                                        key=f"etd_{id_ed}_{i}")
+                    o = c3.number_input("Off",
+                                        value=int(et.get("dias_offset", 0)),
+                                        min_value=0,
+                                        label_visibility="collapsed",
+                                        key=f"eto_{id_ed}_{i}")
+                    pc = c4.number_input(
+                        "%", value=int(et.get("percentual", 0) or 0),
+                        min_value=0, max_value=100, step=5,
+                        label_visibility="collapsed",
+                        key=f"etp_{id_ed}_{i}",
+                    )
+                    _lbl, _cor, _esp = _situacao_etapa(o, d, pc)
+                    _esp_txt = (
+                        f" <small style='color:#94a3b8'>(esp. {_esp}%)</small>"
+                        if _esp is not None else ""
+                    )
+                    c5.markdown(
+                        f"<div style='padding-top:6px;'>"
+                        f"{_badge_sit(_lbl, _cor)}{_esp_txt}</div>",
+                        unsafe_allow_html=True,
+                    )
+                    if c6.form_submit_button(f"🗑 #{i+1}",
+                                             use_container_width=True):
+                        _del_et = i
+                    novas_etapas.append({
+                        "nome": n, "duracao_dias": d, "dias_offset": o,
+                        "percentual": pc, "ordem": i,
+                    })
 
-    if _salv_et:
-        with carregando("Salvando etapas..."):
-            db.salvar_etapas(
-                id_ed,
-                [e for e in novas_etapas if str(e["nome"]).strip()],
+            btn_add, btn_salvar_et = st.columns(2)
+            _add_et = btn_add.form_submit_button("➕ Adicionar Etapa",
+                                                 use_container_width=True)
+            _salv_et = btn_salvar_et.form_submit_button(
+                "💾 Salvar Etapas",
+                use_container_width=True,
+                disabled=not _et_list,
+                help=(
+                    "Disponível quando há etapas pra salvar"
+                    if not _et_list else None
+                ),
             )
-            st.session_state[_key_et] = db.listar_etapas(id_ed)
-        st.toast("✅ Etapas salvas!", icon="💾")
-        st.rerun()
+
+        if _del_et is not None:
+            st.session_state[_key_et].pop(_del_et)
+            acum = 0
+            for et in st.session_state[_key_et]:
+                et["dias_offset"] = acum
+                acum += et["duracao_dias"]
+            st.rerun()
+
+        if _add_et:
+            _ult = (
+                st.session_state[_key_et][-1] if st.session_state[_key_et]
+                else {"dias_offset": 0, "duracao_dias": 0}
+            )
+            st.session_state[_key_et].append({
+                "nome": f"Etapa {len(st.session_state[_key_et])+1}",
+                "duracao_dias": 5,
+                "dias_offset": _ult["dias_offset"] + _ult["duracao_dias"],
+                "percentual": 0,
+                "ordem": len(st.session_state[_key_et]),
+            })
+            st.rerun()
+
+        if _salv_et:
+            with carregando("Salvando etapas..."):
+                db.salvar_etapas(
+                    id_ed,
+                    [e for e in novas_etapas if str(e["nome"]).strip()],
+                )
+                st.session_state[_key_et] = db.listar_etapas(id_ed)
+            st.toast("✅ Etapas salvas!", icon="💾")
+            st.rerun()
 
     # Mini-Gantt das etapas
     _et_salvas = db.listar_etapas(id_ed)
