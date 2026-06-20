@@ -15,6 +15,7 @@ from datetime import datetime
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as _stc
 
 import database as db
 
@@ -731,6 +732,8 @@ with col_form:
     if st.session_state.get("_ag_form_alvo") != _ag_alvo:
         st.session_state["_ag_form_alvo"] = _ag_alvo
         st.session_state.pop("_ag_faltam", None)
+        if _ed_row is not None:
+            st.session_state["_ag_scroll"] = True   # rolar até o form ao editar
         try:
             _di0 = (pd.to_datetime(_ed_row["data_inicio"]).date()
                     if _ed_row is not None else datetime.now().date())
@@ -754,6 +757,18 @@ with col_form:
             if _ed_row is not None else [])
         st.session_state["ag_obs"] = (
             str(_ed_row["descricao"]) if _ed_row is not None else "")
+
+    # Ao ABRIR a edição, rola a tela até o form (o usuário clica Editar lá
+    # embaixo na lista e o form fica no topo). Dispara 1x por abertura.
+    if st.session_state.pop("_ag_scroll", False):
+        st.markdown("<span id='agenda-form-top'></span>",
+                    unsafe_allow_html=True)
+        _stc.html(
+            "<script>setTimeout(function(){var a=window.parent.document."
+            "getElementById('agenda-form-top');if(a)a.scrollIntoView("
+            "{behavior:'smooth',block:'start'});},150);</script>",
+            height=0,
+        )
 
     _faltam = st.session_state.get("_ag_faltam", set())
 
@@ -884,6 +899,33 @@ if not df_agenda.empty:
 
     df_show = df_show.sort_values("data_inicio")
 
+    # Exclusão de compromisso em MODAL de confirmação (em vez de popover).
+    @st.dialog("Excluir compromisso")
+    def _dlg_excluir_evento(ev_id, titulo):
+        st.markdown(
+            "<div style='text-align:center;padding:2px 0 6px;'>"
+            "<div style='width:52px;height:52px;border-radius:50%;"
+            "background:rgba(239,68,68,.14);color:#ef4444;display:flex;"
+            "align-items:center;justify-content:center;margin:0 auto 12px;"
+            "font-size:25px;'>🗑️</div>"
+            f"<p style='margin:0 0 4px;font-weight:600;'>Excluir “{titulo}”?</p>"
+            "<p style='margin:0;color:#94a3b8;font-size:13.5px;'>Esta ação "
+            "<b>não pode ser desfeita</b>.</p></div>",
+            unsafe_allow_html=True,
+        )
+        _dc1, _dc2 = st.columns(2)
+        if _dc1.button("Cancelar", use_container_width=True,
+                       key=f"ag_delcanc_{ev_id}"):
+            st.rerun()
+        if _dc2.button("🗑️ Excluir", type="primary",
+                       use_container_width=True, key=f"ag_delok_{ev_id}"):
+            db.excluir_evento(int(ev_id))
+            db.log_aud(usuario_atual, "excluir", "agenda", int(ev_id),
+                       str(titulo))
+            confirmar_sucesso("Compromisso excluído",
+                              f"'{titulo}' foi removido da agenda.")
+            st.rerun()
+
     if df_show.empty:
         _empty_state(
             "🔍", "Nenhum compromisso encontrado",
@@ -962,19 +1004,9 @@ if not df_agenda.empty:
                              use_container_width=True):
                     st.session_state.agenda_edit_id = int(row["id"])
                     st.rerun()
-                with b2.popover("🗑️ Excluir", use_container_width=True):
-                    st.markdown(f"**Excluir '{row['titulo']}'?**")
-                    st.caption("Esta ação não pode ser desfeita.")
-                    if st.button(
-                        "✅ Sim, excluir",
-                        key=f"ag_del_conf_{row['id']}",
-                        type="primary", use_container_width=True,
-                    ):
-                        db.excluir_evento(int(row["id"]))
-                        db.log_aud(usuario_atual, "excluir", "agenda",
-                                   int(row["id"]), str(row["titulo"]))
-                        st.toast(f"'{row['titulo']}' removido.")
-                        st.rerun()
+                if b2.button("🗑️ Excluir", key=f"ag_del_{row['id']}",
+                             use_container_width=True):
+                    _dlg_excluir_evento(int(row["id"]), str(row["titulo"]))
 else:
     st.info(
         "📭 Agenda vazia — adicione o primeiro compromisso ao lado."
