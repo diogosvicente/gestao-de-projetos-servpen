@@ -25,6 +25,7 @@ Padrão de uso:
 
 from __future__ import annotations
 
+import html as _html
 import logging
 from contextlib import contextmanager
 from typing import Iterator
@@ -154,3 +155,61 @@ def _traduzir(exc: Exception) -> str:
 
     # Genérico
     return "ocorreu um erro inesperado"
+
+
+# ─── CONFIRMAÇÃO DE SUCESSO (modal "enterprise") ─────────────────────
+# Feedback de save/submit/update num modal verde centralizado (st.dialog).
+#
+# Fluxo:
+#   1. No handler de save: confirmar_sucesso("Projeto salvo", "..."), st.rerun()
+#   2. `_render_confirmacao_sucesso()` (no app.py, após pg.run()) detecta o
+#      flag na sessão e abre o modal.
+def confirmar_sucesso(titulo: str, detalhe: str = "") -> None:
+    """Agenda um modal de sucesso pra próxima renderização.
+
+    Use logo antes do `st.rerun()` após salvar/atualizar/enviar. Abre um modal
+    centralizado com check verde, a mensagem e um botão "Continuar".
+    """
+    st.session_state["_confirmacao_sucesso"] = {
+        "titulo": str(titulo or ""),
+        "detalhe": str(detalhe or ""),
+    }
+
+
+def _render_confirmacao_sucesso() -> None:
+    """Abre (1x) o MODAL de sucesso agendado por confirmar_sucesso(). Chamar
+    em todo run num ponto global (app.py, após pg.run()). No-op se nada
+    agendado. (Substitui o toast — preferência do usuário por modal.)"""
+    if "_confirmacao_sucesso" not in st.session_state:
+        return
+    dados = st.session_state.pop("_confirmacao_sucesso")
+    _titulo = dados.get("titulo") or "Tudo certo"
+    _detalhe = dados.get("detalhe") or ""
+
+    @st.dialog(_titulo)
+    def _dlg():
+        _corpo = (
+            "<div style='text-align:center;padding:4px 0 2px;'>"
+            "<div style='width:64px;height:64px;border-radius:50%;"
+            "background:rgba(34,197,94,.15);color:#22c55e;display:flex;"
+            "align-items:center;justify-content:center;margin:2px auto 14px;"
+            "font-size:34px;font-weight:700;"
+            "box-shadow:0 0 0 7px rgba(34,197,94,.08);"
+            "animation:cs-pop .45s cubic-bezier(.2,.8,.2,1) both;'>✓</div>"
+        )
+        if _detalhe:
+            _corpo += (
+                "<p style='margin:0;color:#94a3b8;font-size:14px;"
+                f"line-height:1.5;'>{_html.escape(_detalhe)}</p>"
+            )
+        _corpo += (
+            "</div>"
+            "<style>@keyframes cs-pop{from{transform:scale(0);}"
+            "70%{transform:scale(1.18);}to{transform:scale(1);}}</style>"
+        )
+        st.markdown(_corpo, unsafe_allow_html=True)
+        if st.button("Continuar", use_container_width=True, type="primary",
+                     key="_btn_confirmar_sucesso"):
+            st.rerun()
+
+    _dlg()

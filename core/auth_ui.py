@@ -18,7 +18,7 @@ import auth
 import database as db
 
 from core.data import _invalidar_dados
-from core.ui_feedback import carregando, erro_humano
+from core.ui_feedback import carregando, confirmar_sucesso, erro_humano
 
 
 # ─── AVATAR ──────────────────────────────────────────────────────────
@@ -183,7 +183,8 @@ def _dialog_meu_perfil():
         _invalidar_dados()
     # Toast em vez de success: o st.rerun() abaixo fecha o dialog e zera o
     # script — st.success piscaria por <200ms. O toast vive no overlay.
-    st.toast("✅ Perfil atualizado!", icon="👤")
+    confirmar_sucesso("Perfil atualizado",
+                      "Suas informações foram salvas.")
     st.rerun()
 
 

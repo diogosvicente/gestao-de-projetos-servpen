@@ -566,6 +566,7 @@ if _me_atual:
 from core.auth_ui import _avatar_circular_html, _dialog_meu_perfil
 from core.helpers import _pode_editar, _pode_gestor
 from core.notif import _global_notif
+from core.ui_feedback import _render_confirmacao_sucesso
 
 # Define as pages ANTES do sidebar pra poder renderizar os links manuais
 # na ordem que queremos (avatar → Meu Perfil → menu → Sair → tema → badges).
@@ -745,6 +746,10 @@ with st.sidebar:
 # sair → tema). O st.navigation aqui só faz o ROUTING.
 pg = st.navigation(pages, position="hidden")
 pg.run()
+
+# Modal de confirmação de sucesso (save/update) — agendado por
+# confirmar_sucesso(). Aberto DEPOIS da página renderizar, em qualquer view.
+_render_confirmacao_sucesso()
 
 
 # ═══════════════════════════════════════════════════════════════════════

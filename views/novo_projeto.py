@@ -18,7 +18,7 @@ from core.helpers import (
     _init_etapas,
     _pode_gestor,
 )
-from core.ui_feedback import carregando
+from core.ui_feedback import carregando, confirmar_sucesso
 
 
 # Item 1: criação de projeto é exclusiva do Gestor.
@@ -285,10 +285,9 @@ if submit_novo:
         if novo_id:
             # st.toast em vez de st.success: sobrevive ao st.rerun abaixo
             # (vive ~4s no overlay, fora do script run).
-            st.toast(
-                f"✅ Projeto **{f_nm}** criado! Está na coluna "
-                f"**Em Espera** do Kanban.",
-                icon="🎉",
+            confirmar_sucesso(
+                "Projeto criado",
+                f"{f_nm} entrou na coluna Em Espera do Kanban.",
             )
             st.rerun()
         else:

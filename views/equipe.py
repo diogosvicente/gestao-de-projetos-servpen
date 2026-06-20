@@ -14,7 +14,7 @@ import database as db
 from core.auth_ui import _avatar_circular_html
 from core.data import _invalidar_dados
 from core.helpers import _empty_state, _equipe_atual, _pode_gestor, _ve_tudo
-from core.ui_feedback import carregando
+from core.ui_feedback import carregando, confirmar_sucesso
 
 
 # Guard de perfil — Gestor-only
@@ -428,7 +428,7 @@ for _, u in df_membros.iterrows():
                     )
                     st.session_state[f"editor_u_{u['id']}"] = False
                     _invalidar_dados()
-                st.toast(_msg, icon="✅")
+                confirmar_sucesso(_msg)
                 st.rerun()
 
 st.markdown("<br>", unsafe_allow_html=True)

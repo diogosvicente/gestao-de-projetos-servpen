@@ -20,7 +20,7 @@ import database as db
 
 from core.data import _load_df_u
 from core.helpers import _empty_state, _equipe_atual, _pill_select, _ve_tudo
-from core.ui_feedback import carregando
+from core.ui_feedback import carregando, confirmar_sucesso
 
 
 usuario_atual = st.session_state.get("usuario", "")
@@ -801,14 +801,16 @@ with col_form:
                                _ed_id, titulo_ev)
                     if "agenda_edit_id" in st.session_state:
                         del st.session_state.agenda_edit_id
-                st.toast("📅 Compromisso atualizado!", icon="✅")
+                confirmar_sucesso("Compromisso atualizado",
+                                  "A agenda foi atualizada.")
             else:
                 with carregando("Registrando compromisso..."):
                     db.salvar_evento(titulo_ev, tipo_ev, d_ini, d_fim,
                                      resp_ev, obs_ev, local_ev)
                     db.log_aud(usuario_atual, "criar", "agenda", None,
                                titulo_ev)
-                st.toast("📅 Compromisso registrado!", icon="✅")
+                confirmar_sucesso("Compromisso registrado",
+                                  "Novo compromisso adicionado à agenda.")
             st.rerun()
         else:
             st.warning("Título e Envolvidos são obrigatórios.")

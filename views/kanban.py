@@ -12,6 +12,7 @@ from datetime import datetime
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+import streamlit.components.v1 as _stc
 
 import database as db
 
@@ -27,7 +28,7 @@ from core.helpers import (
     _render_tag_chips,
     _ve_tudo,
 )
-from core.ui_feedback import carregando, erro_humano
+from core.ui_feedback import carregando, confirmar_sucesso, erro_humano
 
 
 usuario = st.session_state.usuario
@@ -604,6 +605,61 @@ visao = _pill_select(
     label_visibility="collapsed",
 ) or "Kanban"
 
+
+# Ações do card em MODAL (em vez de popover): clicar "⚙️ Ações" abre um
+# st.dialog; cada ação dá st.rerun(), que FECHA o modal — resolve o "popover
+# que ficava aberto após mudar de coluna".
+@st.dialog("Ações do projeto")
+def _acoes_card(pid, status_db, nome):
+    st.markdown(f"**{nome}**")
+
+    if st.button("🔍 Abrir detalhes / editar", key=f"dlg_ver_{pid}",
+                 use_container_width=True):
+        st.session_state.projeto_em_edicao = pid
+        st.rerun()
+
+    if not _pode_gestor():
+        return
+
+    def _muda(novo, aud=None):
+        db.atualizar_campo_projeto(pid, "status", novo)
+        if aud:
+            db.log_aud(usuario, "status", "projeto", pid, aud)
+        _invalidar_dados()
+        st.rerun()
+
+    st.divider()
+    if status_db == "Em Espera":
+        if st.button("▶️ Mover para Em Execução", key=f"dlg_ativ_{pid}",
+                     use_container_width=True):
+            _muda("Ativo", "Em Espera → Ativo")
+        if st.button("❌ Cancelar projeto", key=f"dlg_cesp_{pid}",
+                     use_container_width=True):
+            _muda("Cancelado")
+    elif status_db == "Ativo":
+        if st.button("⏸️ Pausar projeto", key=f"dlg_pause_{pid}",
+                     use_container_width=True):
+            _muda("🛑 Parado")
+        if st.button("✅ Concluir projeto", key=f"dlg_concl_{pid}",
+                     use_container_width=True):
+            _muda("Concluído")
+    elif status_db == "🛑 Parado":
+        if st.button("▶️ Retomar → Em Execução", key=f"dlg_ret_{pid}",
+                     use_container_width=True):
+            _muda("Ativo")
+        if st.button("❌ Cancelar", key=f"dlg_canc_{pid}",
+                     use_container_width=True):
+            _muda("Cancelado")
+    elif status_db == "Cancelado":
+        if st.button("🔓 Reativar → Em Espera", key=f"dlg_reat_{pid}",
+                     use_container_width=True):
+            _muda("Em Espera")
+    elif status_db == "Concluído":
+        if st.button("🔓 Reabrir → Em Execução", key=f"dlg_reab_{pid}",
+                     use_container_width=True):
+            _muda("Ativo")
+
+
 if visao == "Lista":
     _render_lista_kanban(df_kanban, df_d)
 elif visao == "Resumo":
@@ -798,107 +854,13 @@ else:
                     )
                     st.markdown(card_html, unsafe_allow_html=True)
 
-                    # Ações em popover único
+                    # Ações do card num MODAL (item: o popover ficava aberto
+                    # após mudar de coluna; o @st.dialog fecha no st.rerun).
                     status_db = cfg["status_db"]
-                    with st.popover("⚙️", use_container_width=True,
-                                    help="Ações e detalhes"):
-                        if st.button(
-                            "🔍 Abrir detalhes / editar",
-                            key=f"ver_{p['id']}",
-                            use_container_width=True,
-                        ):
-                            st.session_state.projeto_em_edicao = p["id"]
-                            st.rerun()
-
-                        if _pode_gestor():
-                            st.divider()
-                            if status_db == "Em Espera":
-                                if st.button(
-                                    "▶️ Mover para Em Execução",
-                                    key=f"ativ_{p['id']}",
-                                    use_container_width=True,
-                                ):
-                                    db.atualizar_campo_projeto(
-                                        p["id"], "status", "Ativo"
-                                    )
-                                    db.log_aud(usuario, "status", "projeto",
-                                               p["id"], "Em Espera → Ativo")
-                                    _invalidar_dados()
-                                    st.rerun()
-                                if st.button(
-                                    "❌ Cancelar projeto",
-                                    key=f"canc_esp_{p['id']}",
-                                    use_container_width=True,
-                                ):
-                                    db.atualizar_campo_projeto(
-                                        p["id"], "status", "Cancelado"
-                                    )
-                                    _invalidar_dados()
-                                    st.rerun()
-                            elif status_db == "Ativo":
-                                if st.button(
-                                    "⏸️ Pausar projeto",
-                                    key=f"p_{p['id']}",
-                                    use_container_width=True,
-                                ):
-                                    db.atualizar_campo_projeto(
-                                        p["id"], "status", "🛑 Parado"
-                                    )
-                                    _invalidar_dados()
-                                    st.rerun()
-                                if st.button(
-                                    "✅ Concluir projeto",
-                                    key=f"f_{p['id']}",
-                                    use_container_width=True,
-                                ):
-                                    db.atualizar_campo_projeto(
-                                        p["id"], "status", "Concluído"
-                                    )
-                                    _invalidar_dados()
-                                    st.rerun()
-                            elif status_db == "🛑 Parado":
-                                if st.button(
-                                    "▶️ Retomar → Em Execução",
-                                    key=f"r_{p['id']}",
-                                    use_container_width=True,
-                                ):
-                                    db.atualizar_campo_projeto(
-                                        p["id"], "status", "Ativo"
-                                    )
-                                    _invalidar_dados()
-                                    st.rerun()
-                                if st.button(
-                                    "❌ Cancelar",
-                                    key=f"c_{p['id']}",
-                                    use_container_width=True,
-                                ):
-                                    db.atualizar_campo_projeto(
-                                        p["id"], "status", "Cancelado"
-                                    )
-                                    _invalidar_dados()
-                                    st.rerun()
-                            elif status_db == "Cancelado":
-                                if st.button(
-                                    "🔓 Reativar → Em Espera",
-                                    key=f"re_{p['id']}",
-                                    use_container_width=True,
-                                ):
-                                    db.atualizar_campo_projeto(
-                                        p["id"], "status", "Em Espera"
-                                    )
-                                    _invalidar_dados()
-                                    st.rerun()
-                            elif status_db == "Concluído":
-                                if st.button(
-                                    "🔓 Reabrir → Em Execução",
-                                    key=f"reabrir_{p['id']}",
-                                    use_container_width=True,
-                                ):
-                                    db.atualizar_campo_projeto(
-                                        p["id"], "status", "Ativo"
-                                    )
-                                    _invalidar_dados()
-                                    st.rerun()
+                    if st.button("⚙️ Ações", key=f"acoes_{p['id']}",
+                                 use_container_width=True,
+                                 help="Abrir detalhes / mudar status"):
+                        _acoes_card(int(p["id"]), status_db, p["projeto"])
 
 # ══════════════════════════════════════════════════════════════════════
 # CENTRAL DE EDIÇÃO (com todo o detalhamento)
@@ -919,6 +881,19 @@ if "projeto_em_edicao" in st.session_state:
         st.rerun()
 
     dados = _df_ed.fillna("").iloc[0]
+
+    # Rola a tela até o form ao ABRIR a edição (1x por projeto, não a cada
+    # rerun) — antes a tela ficava no topo e o form aparecia lá embaixo.
+    if st.session_state.get("_kanban_scroll_edit") != id_ed:
+        st.session_state["_kanban_scroll_edit"] = id_ed
+        st.markdown("<span id='kanban-edit-top'></span>",
+                    unsafe_allow_html=True)
+        _stc.html(
+            "<script>setTimeout(function(){var a=window.parent.document."
+            "getElementById('kanban-edit-top');if(a)a.scrollIntoView("
+            "{behavior:'smooth',block:'start'});},150);</script>",
+            height=0,
+        )
 
     st.subheader(f"📝 Detalhamento e Edição: {dados['projeto']}")
     st.markdown(_badge_status(dados.get("status", "")),
@@ -1115,10 +1090,6 @@ if "projeto_em_edicao" in st.session_state:
                                                use_container_width=True)
             _fechar = f_c4.form_submit_button("❌ Fechar",
                                               use_container_width=True)
-            confirmar_del = st.checkbox(
-                f"⚠️ Confirmo EXCLUIR permanentemente '{dados['projeto']}'",
-                key=f"conf_del_{id_ed}",
-            )
 
     # ── Ações dos botões ─────────────────────────────────────
     if _salvar:
@@ -1219,22 +1190,44 @@ if "projeto_em_edicao" in st.session_state:
         # st.toast sobrevive ao st.rerun (vive no overlay, fora do script
         # run). st.success aqui apareceria por <300ms antes do rerun zerar
         # — efeito "pisca" reclamado pelo user.
-        st.toast(f"💾 Projeto **{ed_nm}** salvo.", icon="✅")
+        confirmar_sucesso("Projeto salvo",
+                          f"{ed_nm} — alterações registradas no histórico.")
         st.rerun()
 
-    if _excluir:
-        if not confirmar_del:
-            st.warning("Marque a caixa de confirmação antes de excluir.")
-        else:
-            _nome_excl = dados["projeto"]
-            with carregando(f"Excluindo projeto '{_nome_excl}'..."):
+    # Ação crítica: confirmação em MODAL (@st.dialog) em vez de checkbox.
+    @st.dialog("Excluir projeto")
+    def _dlg_excluir_projeto():
+        _nome = dados["projeto"]
+        st.markdown(
+            "<div style='text-align:center;padding:2px 0 6px;'>"
+            "<div style='width:54px;height:54px;border-radius:50%;"
+            "background:rgba(239,68,68,.14);color:#ef4444;display:flex;"
+            "align-items:center;justify-content:center;margin:0 auto 12px;"
+            "font-size:26px;'>🗑️</div>"
+            f"<p style='margin:0 0 4px;font-weight:600;font-size:15px;'>"
+            f"Excluir “{_nome}”?</p>"
+            "<p style='margin:0;color:#94a3b8;font-size:13.5px;'>Esta ação é "
+            "<b>irreversível</b> — o projeto e seu histórico serão removidos."
+            "</p></div>",
+            unsafe_allow_html=True,
+        )
+        _dc1, _dc2 = st.columns(2)
+        if _dc1.button("Cancelar", use_container_width=True,
+                       key=f"dlg_canc_{id_ed}"):
+            st.rerun()
+        if _dc2.button("🗑️ Excluir definitivamente", type="primary",
+                       use_container_width=True, key=f"dlg_conf_{id_ed}"):
+            with carregando(f"Excluindo projeto '{_nome}'..."):
                 db.excluir_projeto(id_ed)
                 db.log_aud(usuario, "excluir", "projeto", id_ed,
-                           f"nome='{_nome_excl}'")
+                           f"nome='{_nome}'")
                 del st.session_state.projeto_em_edicao
                 _invalidar_dados()
-            st.toast(f"🗑️ Projeto **{_nome_excl}** excluído.", icon="✅")
+            confirmar_sucesso("Projeto excluído", f"'{_nome}' foi removido.")
             st.rerun()
+
+    if _excluir:
+        _dlg_excluir_projeto()
 
     if _clonar:
         with carregando(f"Clonando '{dados['projeto']}'..."):
@@ -1247,9 +1240,9 @@ if "projeto_em_edicao" in st.session_state:
                 _invalidar_dados()
         if novo_id:
             # st.toast em vez de st.success — sobrevive ao rerun abaixo.
-            st.toast(
-                f"📋 Projeto clonado (id={novo_id}). Abrindo edição.",
-                icon="✅",
+            confirmar_sucesso(
+                "Projeto clonado",
+                f"Cópia criada (id {novo_id}). Abrindo a edição.",
             )
             st.session_state.projeto_em_edicao = int(novo_id)
             st.rerun()
@@ -1453,7 +1446,8 @@ if "projeto_em_edicao" in st.session_state:
                     [e for e in novas_etapas if str(e["nome"]).strip()],
                 )
                 st.session_state[_key_et] = db.listar_etapas(id_ed)
-            st.toast("✅ Etapas salvas!", icon="💾")
+            confirmar_sucesso("Etapas salvas",
+                              "Cronograma do projeto atualizado.")
             st.rerun()
 
     # Mini-Gantt das etapas
@@ -1695,5 +1689,6 @@ if "projeto_em_edicao" in st.session_state:
                         )
                     _c.commit()
                     _c.close()
-                st.toast("📈 Evolução salva!", icon="✅")
+                confirmar_sucesso("Evolução salva",
+                                  "Progresso das disciplinas atualizado.")
                 st.rerun()

@@ -28,7 +28,7 @@ from core.mencoes import (
     _processar_mencoes_diario,
     _render_mencoes_html,
 )
-from core.ui_feedback import carregando, erro_humano
+from core.ui_feedback import carregando, confirmar_sucesso, erro_humano
 
 
 usuario = st.session_state.usuario
@@ -525,7 +525,8 @@ if _pode_editar():
                         )
 
                     _invalidar_dados()
-                    st.toast("📝 Registro salvo!", icon="✅")
+                    confirmar_sucesso("Registro salvo",
+                                      "Seu relato foi adicionado ao diário.")
                     st.rerun()
                 except Exception as exc:
                     erro_humano(

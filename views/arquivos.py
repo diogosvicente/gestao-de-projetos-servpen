@@ -11,7 +11,7 @@ import streamlit as st
 import database as db
 
 from core.data import _load_df_p
-from core.ui_feedback import erro_humano
+from core.ui_feedback import confirmar_sucesso, erro_humano
 
 
 usuario = st.session_state.usuario
@@ -237,7 +237,8 @@ else:
                             db.excluir_arquivo(arq_id)
                             db.log_aud(usuario, "excluir", "arquivo", arq_id,
                                        f"nome='{nome_original}'")
-                            st.toast(
-                                f"Arquivo '{nome_original}' removido."
+                            confirmar_sucesso(
+                                "Arquivo removido",
+                                f"'{nome_original}' foi excluído.",
                             )
                             st.rerun()
