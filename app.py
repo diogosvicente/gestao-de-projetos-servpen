@@ -191,20 +191,24 @@ if not os.path.exists("anexos"):
 # 6. ALERTAS DA AGENDA DO DIA (toast)
 # ═══════════════════════════════════════════════════════════════════════
 try:
-    df_agenda_boot = pd.read_sql("SELECT * FROM agenda", db.get_engine())
     hoje = datetime.now().date()
-    if not df_agenda_boot.empty:
-        df_agenda_boot["data_inicio_dt"] = pd.to_datetime(
-            df_agenda_boot["data_inicio"],
-        ).dt.date
-        alertas_hoje = df_agenda_boot[
-            df_agenda_boot["data_inicio_dt"] == hoje
-        ]
-        for _, alerta in alertas_hoje.iterrows():
-            st.toast(
-                f"🔔 **HOJE:** {alerta['titulo']} ({alerta['tipo']})",
-                icon="📅",
-            )
+    # Mostra os alertas de hoje UMA vez por sessão (não a cada troca de
+    # página). Antes reaparecia em todo carregamento de página — virava spam.
+    if st.session_state.get("_alertas_agenda_dia") != hoje:
+        st.session_state["_alertas_agenda_dia"] = hoje
+        df_agenda_boot = pd.read_sql("SELECT * FROM agenda", db.get_engine())
+        if not df_agenda_boot.empty:
+            df_agenda_boot["data_inicio_dt"] = pd.to_datetime(
+                df_agenda_boot["data_inicio"],
+            ).dt.date
+            alertas_hoje = df_agenda_boot[
+                df_agenda_boot["data_inicio_dt"] == hoje
+            ]
+            for _, alerta in alertas_hoje.iterrows():
+                st.toast(
+                    f"🔔 **HOJE:** {alerta['titulo']} ({alerta['tipo']})",
+                    icon="📅",
+                )
 except Exception:
     # Sem agenda, sem alertas. Não trava o app.
     pass

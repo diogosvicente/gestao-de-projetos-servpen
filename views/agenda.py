@@ -719,62 +719,65 @@ with col_form:
         df_u["nome"].tolist() if not df_u.empty else [usuario_atual]
     )
 
-    with st.form("form_agenda_nova", clear_on_submit=True):
-        titulo_ev = st.text_input(
-            "Título / Motivo",
-            value=str(_ed_row["titulo"]) if _ed_row is not None else "",
-        )
-        _categorias = ["Visita Técnica", "Reunião", "Férias",
-                       "Licença", "Folga", "Outros"]
-        tipo_ev = st.selectbox(
-            "Categoria",
-            _categorias,
-            index=(
-                _categorias.index(str(_ed_row["tipo"]))
-                if _ed_row is not None and str(_ed_row["tipo"]) in _categorias
-                else 0
-            ),
-        )
-        local_ev = st.text_input(
-            "Local (opcional)",
-            value=(
-                str(_ed_row.get("local", "")) if _ed_row is not None else ""
-            ),
-        )
+    _categorias = ["Visita Técnica", "Reunião", "Férias",
+                   "Licença", "Folga", "Outros"]
 
+    # ── Estado do form (reseta SÓ quando deve) ───────────────────
+    # `_ag_form_alvo` = id do evento em edição, ou "_novo". Quando o alvo MUDA
+    # (abriu edição / voltou pra novo / sucesso ao salvar), re-popula os campos.
+    # Numa FALHA de validação o alvo NÃO muda → o que foi digitado é preservado
+    # (campos com `key=` mantêm o estado). Resolve o "form apagava tudo".
+    _ag_alvo = _ed_id if _ed_row is not None else "_novo"
+    if st.session_state.get("_ag_form_alvo") != _ag_alvo:
+        st.session_state["_ag_form_alvo"] = _ag_alvo
+        st.session_state.pop("_ag_faltam", None)
         try:
-            _d_ini_def = (
-                pd.to_datetime(_ed_row["data_inicio"]).date()
-                if _ed_row is not None else datetime.now().date()
-            )
-            _d_fim_def = (
-                pd.to_datetime(_ed_row["data_fim"]).date()
-                if _ed_row is not None else datetime.now().date()
-            )
+            _di0 = (pd.to_datetime(_ed_row["data_inicio"]).date()
+                    if _ed_row is not None else datetime.now().date())
+            _dfim0 = (pd.to_datetime(_ed_row["data_fim"]).date()
+                      if _ed_row is not None else datetime.now().date())
         except Exception:
-            _d_ini_def = _d_fim_def = datetime.now().date()
-
-        c_d1, c_d2 = st.columns(2)
-        d_ini = c_d1.date_input("Início", value=_d_ini_def,
-                                format="DD/MM/YYYY")
-        d_fim = c_d2.date_input("Término", value=_d_fim_def,
-                                format="DD/MM/YYYY")
-
-        _def_resp = (
+            _di0 = _dfim0 = datetime.now().date()
+        st.session_state["ag_titulo"] = (
+            str(_ed_row["titulo"]) if _ed_row is not None else "")
+        st.session_state["ag_tipo"] = (
+            str(_ed_row["tipo"]) if (_ed_row is not None
+                                     and str(_ed_row["tipo"]) in _categorias)
+            else "Visita Técnica")
+        st.session_state["ag_local"] = (
+            str(_ed_row.get("local", "")) if _ed_row is not None else "")
+        st.session_state["ag_dini"] = _di0
+        st.session_state["ag_dfim"] = _dfim0
+        st.session_state["ag_resp"] = (
             [r.strip() for r in str(_ed_row["responsaveis"]).split(",")
              if r.strip() in equipe_lista]
-            if _ed_row is not None else []
-        )
-        resp_ev = st.multiselect("Envolvidos", equipe_lista,
-                                 default=_def_resp)
+            if _ed_row is not None else [])
+        st.session_state["ag_obs"] = (
+            str(_ed_row["descricao"]) if _ed_row is not None else "")
 
-        obs_ev = st.text_area(
-            "Observações",
-            value=(
-                str(_ed_row["descricao"]) if _ed_row is not None else ""
-            ),
-            height=90,
+    _faltam = st.session_state.get("_ag_faltam", set())
+
+    with st.form("form_agenda_nova", clear_on_submit=False):
+        # Rótulo VERMELHO quando o obrigatório ficou em branco no último envio.
+        titulo_ev = st.text_input(
+            ":red[Título / Motivo *]" if "titulo" in _faltam
+            else "Título / Motivo *",
+            key="ag_titulo",
         )
+        tipo_ev = st.selectbox("Categoria", _categorias, key="ag_tipo")
+        local_ev = st.text_input("Local (opcional)", key="ag_local")
+
+        c_d1, c_d2 = st.columns(2)
+        d_ini = c_d1.date_input("Início", format="DD/MM/YYYY", key="ag_dini")
+        d_fim = c_d2.date_input("Término", format="DD/MM/YYYY", key="ag_dfim")
+
+        resp_ev = st.multiselect(
+            ":red[Envolvidos *]" if "envolvidos" in _faltam
+            else "Envolvidos *",
+            equipe_lista, key="ag_resp",
+        )
+
+        obs_ev = st.text_area("Observações", height=90, key="ag_obs")
 
         cols_btn = st.columns(2)
         submit_ok = cols_btn[0].form_submit_button(
@@ -785,12 +788,34 @@ with col_form:
             "✖ Cancelar", use_container_width=True,
         )
 
-    if submit_cancel and "agenda_edit_id" in st.session_state:
-        del st.session_state.agenda_edit_id
+    # Aviso específico dos faltantes (sem apagar o que já foi digitado).
+    if _faltam:
+        _ns = [n for k, n in (("titulo", "Título"),
+                              ("envolvidos", "Envolvidos")) if k in _faltam]
+        st.markdown(
+            ":red[⚠️ Falta preencher: **" + "**, **".join(_ns) + "**.]"
+        )
+
+    if submit_cancel:
+        st.session_state.pop("_ag_faltam", None)
+        st.session_state.pop("_ag_form_alvo", None)
+        if "agenda_edit_id" in st.session_state:
+            del st.session_state.agenda_edit_id
         st.rerun()
 
     if submit_ok:
-        if titulo_ev and resp_ev:
+        _falt = set()
+        if not (titulo_ev or "").strip():
+            _falt.add("titulo")
+        if not resp_ev:
+            _falt.add("envolvidos")
+        if _falt:
+            # NÃO salva e NÃO apaga — só marca os faltantes e re-renderiza
+            # (rótulos vermelhos + aviso). O alvo não muda → campos preservados.
+            st.session_state["_ag_faltam"] = _falt
+            st.rerun()
+        else:
+            st.session_state.pop("_ag_faltam", None)
             if _ed_row is not None:
                 with carregando("Atualizando compromisso..."):
                     db.atualizar_evento(
@@ -811,9 +836,9 @@ with col_form:
                                titulo_ev)
                 confirmar_sucesso("Compromisso registrado",
                                   "Novo compromisso adicionado à agenda.")
+            # Reseta o form pro próximo (reseed vazio no próximo run).
+            st.session_state.pop("_ag_form_alvo", None)
             st.rerun()
-        else:
-            st.warning("Título e Envolvidos são obrigatórios.")
 
 # ════════════════════════════════════════════════════════════
 #  TABELA DE COMPROMISSOS
