@@ -98,7 +98,7 @@ with st.expander("➕ Cadastrar Novo Colaborador"):
         )
 
         if st.form_submit_button("Finalizar Cadastro",
-                                 use_container_width=True):
+                                 width="stretch"):
             if n_nome and n_senha:
                 conn = db.conectar()
                 c = conn.cursor()
@@ -268,7 +268,7 @@ for _, u in df_membros.iterrows():
         # Ações
         ca1, ca2, _ca3 = st.columns([0.28, 0.30, 0.42])
         if ca1.button("✏️ Editar", key=f"ed_u_{u['id']}",
-                      use_container_width=True,
+                      width="stretch",
                       disabled=not _pode_gerenciar_alvo,
                       help=(None if _pode_gerenciar_alvo else
                             "Só o Gestor Geral edita Gestores.")):
@@ -276,7 +276,7 @@ for _, u in df_membros.iterrows():
                 f"editor_u_{u['id']}", False
             )
 
-        with ca2.popover("🗑️ Remover", use_container_width=True):
+        with ca2.popover("🗑️ Remover", width="stretch"):
             if u["nome"] == usuario:
                 st.error("Não é possível excluir o próprio usuário logado.")
             elif not _pode_gerenciar_alvo:
@@ -289,7 +289,7 @@ for _, u in df_membros.iterrows():
                 )
                 if st.button(
                     "✅ Sim, remover", key=f"yes_del_u_{u['id']}",
-                    type="primary", use_container_width=True,
+                    type="primary", width="stretch",
                 ):
                     conn = db.conectar()
                     c = conn.cursor()
@@ -377,7 +377,7 @@ for _, u in df_membros.iterrows():
             )
 
             if st.button("💾 Salvar Alterações", key=f"sv_u_{u['id']}",
-                         use_container_width=True):
+                         width="stretch"):
                 with carregando(f"Salvando dados de {u['nome']}..."):
                     # Senha: vazio mantém, preenchido hasheia
                     if up_senha.strip():

@@ -63,7 +63,7 @@ with st.expander("⬆️ Anexar Novo Arquivo", expanded=False):
                      "(config em .streamlit/config.toml).",
             )
             submit_upload = st.form_submit_button(
-                "📤 Enviar arquivos", use_container_width=True,
+                "📤 Enviar arquivos", width="stretch",
             )
 
         if submit_upload:
@@ -214,7 +214,7 @@ else:
                             data=f,
                             file_name=nome_original,
                             key=f"dl_arq_{arq_id}",
-                            use_container_width=True,
+                            width="stretch",
                         )
                 else:
                     st.warning("Arquivo perdido", icon="⚠️")
@@ -222,7 +222,7 @@ else:
                 # Apenas Gestor ou autor pode excluir
                 pode_excluir = (perfil == "Gestor" or autor == usuario)
                 if pode_excluir:
-                    with st.popover("🗑️ Excluir", use_container_width=True):
+                    with st.popover("🗑️ Excluir", width="stretch"):
                         st.markdown(
                             f"**Excluir `{nome_original}` permanentemente?**"
                         )
@@ -232,7 +232,7 @@ else:
                         )
                         if st.button(
                             "✅ Sim, excluir", key=f"yes_del_arq_{arq_id}",
-                            type="primary", use_container_width=True,
+                            type="primary", width="stretch",
                         ):
                             db.excluir_arquivo(arq_id)
                             db.log_aud(usuario, "excluir", "arquivo", arq_id,

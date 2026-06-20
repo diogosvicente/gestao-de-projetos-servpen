@@ -156,18 +156,18 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
                     "📎", _f,
                     file_name=os.path.basename(_anexo),
                     key=f"dl_{d['id']}",
-                    use_container_width=True,
+                    width="stretch",
                 )
 
         _pode_del = (perfil == "Gestor" or d.get("autor") == autor_logado)
         if _pode_del:
             if bc2.button("🗑️", key=f"del_{d['id']}",
-                          use_container_width=True, help="Excluir registro"):
+                          width="stretch", help="Excluir registro"):
                 db.excluir_registro_diario(d["id"])
                 st.rerun(scope="fragment")
 
         if bc3.button("✍️ Responder / Interagir", key=f"btn_resp_{d['id']}",
-                      use_container_width=True):
+                      width="stretch"):
             _k = f"editor_{d['id']}"
             st.session_state[_k] = not st.session_state.get(_k, False)
             st.rerun(scope="fragment")
@@ -175,7 +175,7 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
         if perfil == "Gestor":
             if not d["resolvido"]:
                 if bc4.button("✅ Resolver", key=f"btn_res_{d['id']}",
-                              use_container_width=True):
+                              width="stretch"):
                     with db.conectar() as conn:
                         _c = conn.cursor()
                         _c.execute("UPDATE diario SET resolvido=1 WHERE id=%s",
@@ -184,7 +184,7 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
                     st.rerun(scope="fragment")
             else:
                 if bc4.button("🔓 Reabrir", key=f"btn_reap_{d['id']}",
-                              use_container_width=True):
+                              width="stretch"):
                     with db.conectar() as conn:
                         _c = conn.cursor()
                         _c.execute("UPDATE diario SET resolvido=0 WHERE id=%s",
@@ -223,7 +223,7 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
             )
 
             if st.button("📤 Enviar", key=f"env_{d['id']}",
-                         use_container_width=True):
+                         width="stretch"):
                 if nova_orient.strip():
                     data_hora = datetime.now().strftime("%d/%m/%Y %H:%M")
                     linha_comentario = (
@@ -284,7 +284,7 @@ if _mencoes_lista:
         if _hd2.button(
             "Limpar todos", key="btn_disp_todas_men",
             help="Marca todas as menções como vistas e remove do painel.",
-            use_container_width=True,
+            width="stretch",
         ):
             db.dispensar_todas_mencoes(usuario)
             st.rerun()
@@ -322,7 +322,7 @@ if _mencoes_lista:
                 )
                 if _cb.button(
                     "Ver", key=f"men_ver_{mn_id}",
-                    use_container_width=True,
+                    width="stretch",
                     help="Abre o projeto e o relato correspondente abaixo.",
                 ):
                     st.session_state["_diario_abrir_proj"] = int(_proj_id)
@@ -332,7 +332,7 @@ if _mencoes_lista:
                     st.rerun()
                 if _cc.button(
                     "✕", key=f"men_disp_{mn_id}",
-                    use_container_width=True,
+                    width="stretch",
                     help="Marca como visto e remove do painel.",
                 ):
                     db.dispensar_mencao(mn_id)
@@ -470,7 +470,7 @@ if _pode_editar():
             key="diario_upload",
         )
 
-        if st.button("💾 Salvar Registro", use_container_width=True,
+        if st.button("💾 Salvar Registro", width="stretch",
                      key="diario_salvar"):
             if r_rel and p_sel != "-":
                 try:
@@ -554,7 +554,7 @@ _proj_rel_sel = _col_rp1.selectbox(
 )
 
 if _col_rp2.button("📄 Gerar PDF", key="btn_gerar_rel_diario",
-                   use_container_width=True):
+                   width="stretch"):
     if _proj_rel_sel != "— Selecione —":
         _proj_info = df_p[df_p["projeto"] == _proj_rel_sel]
         if not _proj_info.empty:
@@ -598,7 +598,7 @@ if st.session_state.get("_pdf_diario_bytes"):
             f"{datetime.now().strftime('%d%m%Y')}.pdf"
         ),
         mime="application/pdf",
-        use_container_width=True,
+        width="stretch",
         key="dl_pdf_diario",
     )
     if st.button("✖ Limpar", key="limpar_pdf_diario"):

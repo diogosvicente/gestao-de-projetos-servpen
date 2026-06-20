@@ -216,7 +216,7 @@ def _empty_state(icone, titulo, mensagem="", cta_label=None, cta_key=None,
     )
     if cta_label and cta_key:
         c1, c2, c3 = st.columns([1, 2, 1])
-        return bool(c2.button(cta_label, key=cta_key, use_container_width=True))
+        return bool(c2.button(cta_label, key=cta_key, width="stretch"))
     return False
 
 

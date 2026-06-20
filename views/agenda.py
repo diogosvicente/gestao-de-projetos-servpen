@@ -255,14 +255,14 @@ with col_cal:
             st.session_state.agenda_mes = datetime.now().month
 
         nav1, nav2, nav3 = st.columns([1, 2, 1])
-        if nav1.button("◀ Anterior", use_container_width=True,
+        if nav1.button("◀ Anterior", width="stretch",
                        key="cal_prev"):
             if st.session_state.agenda_mes == 1:
                 st.session_state.agenda_mes = 12
                 st.session_state.agenda_ano -= 1
             else:
                 st.session_state.agenda_mes -= 1
-        if nav3.button("Próximo ▶", use_container_width=True,
+        if nav3.button("Próximo ▶", width="stretch",
                        key="cal_next"):
             if st.session_state.agenda_mes == 12:
                 st.session_state.agenda_mes = 1
@@ -401,13 +401,13 @@ with col_cal:
 
         navs1, navs2, navs3 = st.columns([1, 2, 1])
         if navs1.button("◀ Anterior", key="sem_prev",
-                        use_container_width=True):
+                        width="stretch"):
             st.session_state.agenda_semana_offset -= 1
         if navs3.button("Próxima ▶", key="sem_next",
-                        use_container_width=True):
+                        width="stretch"):
             st.session_state.agenda_semana_offset += 1
         if navs2.button("Hoje", key="sem_hoje",
-                        use_container_width=True):
+                        width="stretch"):
             st.session_state.agenda_semana_offset = 0
 
         _hoje_sem = datetime.now().date()
@@ -542,7 +542,7 @@ with col_cal:
                 placeholder="Selecione um evento pra editar...",
             )
             if _ed_c2.button("📝 Abrir", key="sem_editar_btn",
-                             use_container_width=True):
+                             width="stretch"):
                 if _esc_sem:
                     st.session_state["agenda_edit_id"] = (
                         _opcoes_sem[_esc_sem]
@@ -640,7 +640,7 @@ with col_cal:
                     c_ev1.markdown(_ev_html, unsafe_allow_html=True)
                     if c_ev2.button("🔍", key=f"res_ab_{_ev['id']}",
                                     help="Abrir no formulário",
-                                    use_container_width=True):
+                                    width="stretch"):
                         st.session_state["agenda_edit_id"] = int(_ev["id"])
                         st.rerun()
 
@@ -797,10 +797,10 @@ with col_form:
         cols_btn = st.columns(2)
         submit_ok = cols_btn[0].form_submit_button(
             "💾 Salvar" if _ed_row is not None else "📌 Agendar",
-            use_container_width=True,
+            width="stretch",
         )
         submit_cancel = cols_btn[1].form_submit_button(
-            "✖ Cancelar", use_container_width=True,
+            "✖ Cancelar", width="stretch",
         )
 
     # Aviso específico dos faltantes (sem apagar o que já foi digitado).
@@ -914,11 +914,11 @@ if not df_agenda.empty:
             unsafe_allow_html=True,
         )
         _dc1, _dc2 = st.columns(2)
-        if _dc1.button("Cancelar", use_container_width=True,
+        if _dc1.button("Cancelar", width="stretch",
                        key=f"ag_delcanc_{ev_id}"):
             st.rerun()
         if _dc2.button("🗑️ Excluir", type="primary",
-                       use_container_width=True, key=f"ag_delok_{ev_id}"):
+                       width="stretch", key=f"ag_delok_{ev_id}"):
             db.excluir_evento(int(ev_id))
             db.log_aud(usuario_atual, "excluir", "agenda", int(ev_id),
                        str(titulo))
@@ -1001,11 +1001,11 @@ if not df_agenda.empty:
             if _pode_mexer:
                 b1, b2, _bspc = st.columns([1, 1, 5])
                 if b1.button("✏️ Editar", key=f"ag_ed_{row['id']}",
-                             use_container_width=True):
+                             width="stretch"):
                     st.session_state.agenda_edit_id = int(row["id"])
                     st.rerun()
                 if b2.button("🗑️ Excluir", key=f"ag_del_{row['id']}",
-                             use_container_width=True):
+                             width="stretch"):
                     _dlg_excluir_evento(int(row["id"]), str(row["titulo"]))
 else:
     st.info(

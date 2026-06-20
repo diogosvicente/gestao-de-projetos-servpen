@@ -62,7 +62,7 @@ def _popover_mencionar(text_key, nomes_disponiveis, *, label="@ Mencionar",
     if not opcoes:
         return
 
-    with st.popover(label, use_container_width=False):
+    with st.popover(label, width="content"):
         st.caption("Selecione um membro pra inserir `@\"Nome\"` no fim do texto.")
         st.selectbox(
             "Membro",
@@ -75,7 +75,7 @@ def _popover_mencionar(text_key, nomes_disponiveis, *, label="@ Mencionar",
         # callback já dispara o rerun sozinho (sem st.rerun explícito).
         st.button(
             "➕ Inserir menção", key=f"{pop_key}_btn",
-            use_container_width=True,
+            width="stretch",
             on_click=_inserir_mencao_cb,
             args=(text_key, selecionado_key),
         )

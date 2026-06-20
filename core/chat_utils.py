@@ -270,11 +270,11 @@ def _render_chat_messages(usuario, contato_nome, is_grupo=False):
                 with cm_act:
                     with st.popover("⋯", help="Ações da mensagem"):
                         if st.button("✏️ Editar", key=f"ed_{_kfx}",
-                                     use_container_width=True):
+                                     width="stretch"):
                             st.session_state[f"edit_mode_{_msg_id}"] = True
                             st.rerun(scope="fragment")
                         if st.button("🗑️ Apagar", key=f"del_{_kfx}",
-                                     use_container_width=True):
+                                     width="stretch"):
                             db.excluir_mensagem_chat(_msg_id)
                             st.rerun(scope="fragment")
             else:
@@ -291,12 +291,12 @@ def _render_chat_messages(usuario, contato_nome, is_grupo=False):
                     )
                     ec1, ec2 = st.columns(2)
                     if ec1.button("✅ Salvar", key=f"sv_{_kfx}",
-                                  use_container_width=True):
+                                  width="stretch"):
                         db.editar_mensagem_chat(_msg_id, _novo_txt)
                         st.session_state[f"edit_mode_{_msg_id}"] = False
                         st.rerun(scope="fragment")
                     if ec2.button("✖ Cancelar", key=f"cn_{_kfx}",
-                                  use_container_width=True):
+                                  width="stretch"):
                         st.session_state[f"edit_mode_{_msg_id}"] = False
                         st.rerun(scope="fragment")
 

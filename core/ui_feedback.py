@@ -225,7 +225,7 @@ def _render_confirmacao_sucesso() -> None:
             "</style>"
         )
         st.markdown(_corpo, unsafe_allow_html=True)
-        if st.button("Continuar", use_container_width=True,
+        if st.button("Continuar", width="stretch",
                      key="_btn_confirmar_sucesso"):
             st.rerun()
 

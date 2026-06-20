@@ -63,7 +63,7 @@ else:
             col_b.caption(
                 f"Concedido por **{por}** em {_tempo_relativo(em)}"
             )
-            with col_c.popover("🗑️ Revogar", use_container_width=True):
+            with col_c.popover("🗑️ Revogar", width="stretch"):
                 st.warning(
                     f"Revogar acesso de **{usuario}** ao projeto "
                     f"**{proj_nome or proj_id}**?"
@@ -74,7 +74,7 @@ else:
                 )
                 if st.button(
                     "✅ Sim, revogar", key=f"rev_mn_{mn_id}",
-                    type="primary", use_container_width=True,
+                    type="primary", width="stretch",
                 ):
                     db.revogar_mencao(mn_id)
                     db.log_aud(

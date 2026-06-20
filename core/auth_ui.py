@@ -122,7 +122,7 @@ def _dialog_meu_perfil():
 
         _enviado = st.form_submit_button("💾 Salvar alterações",
                                          type="primary",
-                                         use_container_width=True)
+                                         width="stretch")
 
     if not _enviado:
         return
@@ -345,7 +345,7 @@ def tela_login():
     with st.form("login_form", clear_on_submit=False, border=False):
         u = st.text_input("Usuário", placeholder="Nome completo, como cadastrado")
         s = st.text_input("Senha", type="password", placeholder="••••••••")
-        submit = st.form_submit_button("ACESSAR", use_container_width=True)
+        submit = st.form_submit_button("ACESSAR", width="stretch")
 
     if submit:
         # Envolve em spinner — bcrypt verify é o gargalo (200-400ms em
@@ -402,7 +402,7 @@ def tela_login():
                 rec_nova2 = st.text_input("Repita a nova senha",
                                           key="rec_nova2", type="password")
                 if st.button("Redefinir senha", key="rec_btn",
-                             use_container_width=True):
+                             width="stretch"):
                     if not rec_resp.strip():
                         st.warning("Responda a pergunta secreta.")
                     elif not rec_nova or rec_nova != rec_nova2:

@@ -228,7 +228,7 @@ if not df_p_limpo.empty:
                         margin=dict(l=10, r=10, t=60, b=40),
                     )
                     _estiliza_plotly(fig_gantt)
-                    st.plotly_chart(fig_gantt, use_container_width=True)
+                    st.plotly_chart(fig_gantt, width="stretch")
                 else:
                     _empty_state(
                         "🏁", "Sem etapas nos projetos escolhidos",
@@ -276,7 +276,7 @@ if not df_p_limpo.empty:
                     margin=dict(l=10, r=10, t=60, b=40),
                 )
                 _estiliza_plotly(fig_gantt)
-                st.plotly_chart(fig_gantt, use_container_width=True)
+                st.plotly_chart(fig_gantt, width="stretch")
             else:
                 st.info(
                     "Nenhum projeto com datas válidas para exibir no Gantt."
@@ -404,7 +404,7 @@ if not df_p_limpo.empty and not df_u.empty:
                     margin=dict(l=20, r=160, t=30, b=30),
                 )
                 _estiliza_plotly(fig_pizza)
-                st.plotly_chart(fig_pizza, use_container_width=True)
+                st.plotly_chart(fig_pizza, width="stretch")
 
                 # Cards resumo abaixo da pizza
                 cols_resumo = st.columns(min(len(contagem), 5))
@@ -571,7 +571,7 @@ try:
                                autorange="reversed"),
                 )
                 _estiliza_plotly(fig_disc)
-                st.plotly_chart(fig_disc, use_container_width=True)
+                st.plotly_chart(fig_disc, width="stretch")
 
             # ── BARRAS POR PROJETO (subplots arrumados) ───────
             elif _modo_viz == "Barras":
@@ -673,7 +673,7 @@ try:
                         bargap=0.25,
                     )
                     _estiliza_plotly(fig_disc)
-                    st.plotly_chart(fig_disc, use_container_width=True)
+                    st.plotly_chart(fig_disc, width="stretch")
 
             # ── TABELA (pivot HTML compacto) ──────────────────
             else:  # Tabela
@@ -884,7 +884,7 @@ with c_r1:
             data=dados_ex,
             file_name=f"projetos_servpen_{datetime.now().strftime('%d_%m_%Y')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
+            width="stretch",
             help="Abas: Projetos · Etapas · Progresso Técnico",
         )
     except Exception as exc:
@@ -911,7 +911,7 @@ with c_r2:
                 data=dados_pdf,
                 file_name=f"relatorio_servpen_{datetime.now().strftime('%d_%m_%Y')}.pdf",
                 mime="application/pdf",
-                use_container_width=True,
+                width="stretch",
                 help=(
                     "Ficha detalhada de cada projeto + etapas + progresso"
                 ),
@@ -937,7 +937,7 @@ with c_r3:
                 data=dados_gantt,
                 file_name=f"gantt_servpen_{datetime.now().strftime('%d_%m_%Y')}.pdf",
                 mime="application/pdf",
-                use_container_width=True,
+                width="stretch",
                 help=(
                     "Cronograma visual de todas as etapas em paisagem A4"
                 ),

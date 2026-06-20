@@ -199,9 +199,9 @@ with st.form("form_novo_projeto_v2", clear_on_submit=False):
     # Botão de adicionar etapa (dentro do form usando form_submit_button)
     c_add, c_sub = st.columns([1, 3])
     _add_etapa = c_add.form_submit_button("➕ Adicionar Etapa",
-                                          use_container_width=True)
+                                          width="stretch")
     submit_novo = c_sub.form_submit_button("🔨 Registrar Projeto",
-                                           use_container_width=True)
+                                           width="stretch")
 
 # Aviso dos obrigatórios faltando (os rótulos acima já ficam vermelhos).
 if _np_faltam:
@@ -345,5 +345,5 @@ if st.session_state.get("etapas_form") and len(st.session_state.etapas_form) > 0
             _fig_prev.update_layout(height=250, showlegend=False,
                                     margin=dict(l=5, r=5, t=20, b=10))
             _estiliza_plotly(_fig_prev)
-            st.plotly_chart(_fig_prev, use_container_width=True)
+            st.plotly_chart(_fig_prev, width="stretch")
             st.caption("ℹ️ Datas calculadas a partir de hoje como referência.")

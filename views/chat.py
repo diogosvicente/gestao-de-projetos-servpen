@@ -198,7 +198,7 @@ with st.form("f_chat_v3_final", border=False):
         key="chat_msg_draft",
     )
     _enviar = in_c2.form_submit_button(
-        "➤", use_container_width=True, help="Enviar mensagem",
+        "➤", width="stretch", help="Enviar mensagem",
     )
     st.markdown("</div>", unsafe_allow_html=True)
     if _enviar:

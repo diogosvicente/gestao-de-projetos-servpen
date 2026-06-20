@@ -62,7 +62,7 @@ if linhas:
     col_m2.download_button(
         "📥 Exportar CSV", _buf.getvalue().encode("utf-8"),
         file_name=f"auditoria_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-        mime="text/csv", use_container_width=True,
+        mime="text/csv", width="stretch",
     )
     st.divider()
 
@@ -147,7 +147,7 @@ if not _df_alt.empty:
                   f"{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument."
              "spreadsheetml.sheet",
-        use_container_width=True,
+        width="stretch",
     )
 
     _linhas_alt = []

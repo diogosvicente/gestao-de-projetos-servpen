@@ -181,10 +181,10 @@ def _render_lista_kanban(df_kanban, df_d):
                     ),
                 )
                 _aplicar = bc3.form_submit_button(
-                    "✅ Aplicar", use_container_width=True,
+                    "✅ Aplicar", width="stretch",
                 )
                 _limpar = bc4.form_submit_button(
-                    "✖ Limpar", use_container_width=True,
+                    "✖ Limpar", width="stretch",
                 )
 
             if _aplicar:
@@ -498,7 +498,7 @@ def _render_resumo_kanban(df_kanban, df_d):
                     xaxis_title=None, yaxis_title=None,
                 )
                 _estiliza_plotly(fig)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
             except Exception:
                 st.info(
                     "Distribuição: "
@@ -657,7 +657,7 @@ def _acoes_card(pid, status_db, nome):
     st.markdown(f"**{nome}**")
 
     if st.button("🔍 Abrir detalhes / editar", key=f"dlg_ver_{pid}",
-                 use_container_width=True):
+                 width="stretch"):
         st.session_state.projeto_em_edicao = pid
         st.rerun()
 
@@ -676,32 +676,32 @@ def _acoes_card(pid, status_db, nome):
     st.divider()
     if status_db == "Em Espera":
         if st.button("▶️ Mover para Em Execução", key=f"dlg_ativ_{pid}",
-                     use_container_width=True):
+                     width="stretch"):
             _pedir("Ativo", "mover para Em Execução", "Em Espera → Ativo")
         if st.button("❌ Cancelar projeto", key=f"dlg_cesp_{pid}",
-                     use_container_width=True):
+                     width="stretch"):
             _pedir("Cancelado", "cancelar")
     elif status_db == "Ativo":
         if st.button("⏸️ Pausar projeto", key=f"dlg_pause_{pid}",
-                     use_container_width=True):
+                     width="stretch"):
             _pedir("🛑 Parado", "pausar")
         if st.button("✅ Concluir projeto", key=f"dlg_concl_{pid}",
-                     use_container_width=True):
+                     width="stretch"):
             _pedir("Concluído", "concluir")
     elif status_db == "🛑 Parado":
         if st.button("▶️ Retomar → Em Execução", key=f"dlg_ret_{pid}",
-                     use_container_width=True):
+                     width="stretch"):
             _pedir("Ativo", "retomar")
         if st.button("❌ Cancelar", key=f"dlg_canc_{pid}",
-                     use_container_width=True):
+                     width="stretch"):
             _pedir("Cancelado", "cancelar")
     elif status_db == "Cancelado":
         if st.button("🔓 Reativar → Em Espera", key=f"dlg_reat_{pid}",
-                     use_container_width=True):
+                     width="stretch"):
             _pedir("Em Espera", "reativar")
     elif status_db == "Concluído":
         if st.button("🔓 Reabrir → Em Execução", key=f"dlg_reab_{pid}",
-                     use_container_width=True):
+                     width="stretch"):
             _pedir("Ativo", "reabrir")
 
 
@@ -734,11 +734,11 @@ if st.session_state.get("_kb_acao_req"):
         )
         _q1, _q2 = st.columns(2)
         if _q1.button("Voltar", key="kb_acao_volta",
-                      use_container_width=True):
+                      width="stretch"):
             st.session_state.pop("_kb_acao_req", None)
             st.rerun()
         if _q2.button("✅ Confirmar", type="primary",
-                      key="kb_acao_ok", use_container_width=True):
+                      key="kb_acao_ok", width="stretch"):
             st.session_state.pop("_kb_acao_req", None)
             db.atualizar_campo_projeto(_a["pid"], "status", _a["novo"])
             if _a["aud"]:
@@ -949,7 +949,7 @@ else:
                     # após mudar de coluna; o @st.dialog fecha no st.rerun).
                     status_db = cfg["status_db"]
                     if st.button("⚙️ Ações", key=f"acoes_{p['id']}",
-                                 use_container_width=True,
+                                 width="stretch",
                                  help="Abrir detalhes / mudar status"):
                         _acoes_card(int(p["id"]), status_db, p["projeto"])
 
@@ -1169,23 +1169,23 @@ if "projeto_em_edicao" in st.session_state:
                 "marcar seu progresso."
             )
             _fechar = st.form_submit_button("❌ Fechar",
-                                            use_container_width=True)
+                                            width="stretch")
         else:
             f_c1, f_c2, f_c3, f_c4 = st.columns(4)
             _salvar = f_c1.form_submit_button("💾 Salvar e Sair",
-                                              use_container_width=True)
+                                              width="stretch")
             _clonar = f_c2.form_submit_button(
                 "📋 Clonar projeto",
-                use_container_width=True,
+                width="stretch",
                 help=(
                     "Cria um novo projeto copiando dados básicos + estrutura "
                     "de etapas. Não copia diário, arquivos nem progresso."
                 ),
             )
             _excluir = f_c3.form_submit_button("🗑️ Excluir Projeto",
-                                               use_container_width=True)
+                                               width="stretch")
             _fechar = f_c4.form_submit_button("❌ Fechar",
-                                              use_container_width=True)
+                                              width="stretch")
 
     # ── Ações dos botões ─────────────────────────────────────
     if _salvar:
@@ -1308,11 +1308,11 @@ if "projeto_em_edicao" in st.session_state:
             unsafe_allow_html=True,
         )
         _dc1, _dc2 = st.columns(2)
-        if _dc1.button("Cancelar", use_container_width=True,
+        if _dc1.button("Cancelar", width="stretch",
                        key=f"dlg_canc_{id_ed}"):
             st.rerun()
         if _dc2.button("🗑️ Excluir definitivamente", type="primary",
-                       use_container_width=True, key=f"dlg_conf_{id_ed}"):
+                       width="stretch", key=f"dlg_conf_{id_ed}"):
             with carregando(f"Excluindo projeto '{_nome}'..."):
                 db.excluir_projeto(id_ed)
                 db.log_aud(usuario, "excluir", "projeto", id_ed,
@@ -1493,7 +1493,7 @@ if "projeto_em_edicao" in st.session_state:
                         unsafe_allow_html=True,
                     )
                     if c6.form_submit_button(f"🗑 #{i+1}",
-                                             use_container_width=True):
+                                             width="stretch"):
                         _del_et = i
                     novas_etapas.append({
                         "nome": n, "duracao_dias": d, "dias_offset": o,
@@ -1502,10 +1502,10 @@ if "projeto_em_edicao" in st.session_state:
 
             btn_add, btn_salvar_et = st.columns(2)
             _add_et = btn_add.form_submit_button("➕ Adicionar Etapa",
-                                                 use_container_width=True)
+                                                 width="stretch")
             _salv_et = btn_salvar_et.form_submit_button(
                 "💾 Salvar Etapas",
-                use_container_width=True,
+                width="stretch",
                 disabled=not _et_list,
                 help=(
                     "Disponível quando há etapas pra salvar"
@@ -1570,7 +1570,7 @@ if "projeto_em_edicao" in st.session_state:
                 margin=dict(l=5, r=5, t=15, b=10),
             )
             _estiliza_plotly(_fig_g2)
-            st.plotly_chart(_fig_g2, use_container_width=True)
+            st.plotly_chart(_fig_g2, width="stretch")
         except Exception:
             pass
 
@@ -1773,7 +1773,7 @@ if "projeto_em_edicao" in st.session_state:
                     st.success("🎉 CONCLUÍDO!")
 
             if st.form_submit_button("🔄 Atualizar Progresso",
-                                     use_container_width=True):
+                                     width="stretch"):
                 with carregando("Salvando evolução..."):
                     _c = db.conectar()
                     _cu = _c.cursor()

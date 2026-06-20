@@ -631,7 +631,7 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-    if st.button("👤 Meu Perfil", use_container_width=True,
+    if st.button("👤 Meu Perfil", width="stretch",
                  key="btn_meu_perfil"):
         _dialog_meu_perfil()
 
@@ -642,12 +642,12 @@ with st.sidebar:
     # listamos as páginas como page_links pra controlar ordem (perfil
     # fica acima). Cada page_link respeita o `icon=` definido no st.Page.
     for _pg in pages:
-        st.page_link(_pg, use_container_width=True)
+        st.page_link(_pg, width="stretch")
 
     st.divider()
 
     # ── BOTÃO SAIR + TEMA ───────────────────────────────────────
-    if st.button("🔴 Sair do Sistema", use_container_width=True,
+    if st.button("🔴 Sair do Sistema", width="stretch",
                  key="btn_sair"):
         # Logout 100% no servidor + st.rerun() — sai de uma vez só.
         # (A versão antiga tentava redirecionar via JS no iframe, que é
@@ -672,7 +672,7 @@ with st.sidebar:
         "☀️ Mudar para Tema Claro" if not _eh_tema_claro()
         else "🌙 Mudar para Tema Escuro"
     )
-    if st.button(_label_botao_tema, use_container_width=True,
+    if st.button(_label_botao_tema, width="stretch",
                  key="btn_tema"):
         st.session_state.tema = (
             "light" if st.session_state.tema == "dark" else "dark"
