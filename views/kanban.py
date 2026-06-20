@@ -611,39 +611,6 @@ visao = _pill_select(
 # que ficava aberto após mudar de coluna".
 @st.dialog("Ações do projeto")
 def _acoes_card(pid, status_db, nome):
-    _ck = f"_kb_cancelar_{pid}"
-
-    # Passo de confirmação do CANCELAMENTO (dentro do mesmo modal — Streamlit
-    # não abre modal dentro de modal). Os botões NÃO chamam st.rerun() (isso
-    # fecharia o dialog); o rerun natural do clique re-renderiza o passo.
-    if st.session_state.get(_ck):
-        st.markdown(
-            "<div style='text-align:center;padding:2px 0 6px;'>"
-            "<div style='width:52px;height:52px;border-radius:50%;"
-            "background:rgba(239,68,68,.14);color:#ef4444;display:flex;"
-            "align-items:center;justify-content:center;margin:0 auto 12px;"
-            "font-size:25px;'>❌</div>"
-            f"<p style='margin:0 0 4px;font-weight:600;'>Cancelar “{nome}”?</p>"
-            "<p style='margin:0;color:#94a3b8;font-size:13.5px;'>O projeto vai "
-            "para a coluna <b>Cancelado</b>.</p></div>",
-            unsafe_allow_html=True,
-        )
-        _v1, _v2 = st.columns(2)
-        if _v1.button("Voltar", key=f"dlg_cvolta_{pid}",
-                      use_container_width=True):
-            st.session_state.pop(_ck, None)   # volta às ações (sem fechar)
-        if _v2.button("❌ Confirmar cancelamento", type="primary",
-                      key=f"dlg_cok_{pid}", use_container_width=True):
-            st.session_state.pop(_ck, None)
-            db.atualizar_campo_projeto(pid, "status", "Cancelado")
-            db.log_aud(usuario, "status", "projeto", pid,
-                       f"{status_db} → Cancelado")
-            _invalidar_dados()
-            confirmar_sucesso("Projeto cancelado",
-                              f"'{nome}' foi para a coluna Cancelado.")
-            st.rerun()
-        return
-
     st.markdown(f"**{nome}**")
 
     if st.button("🔍 Abrir detalhes / editar", key=f"dlg_ver_{pid}",
@@ -661,6 +628,11 @@ def _acoes_card(pid, status_db, nome):
         _invalidar_dados()
         st.rerun()
 
+    def _pedir_cancelar():
+        # Fecha o modal de Ações e abre o de confirmação (tratado no board).
+        st.session_state["_kb_cancel_req"] = (pid, nome, status_db)
+        st.rerun()
+
     st.divider()
     if status_db == "Em Espera":
         if st.button("▶️ Mover para Em Execução", key=f"dlg_ativ_{pid}",
@@ -668,7 +640,7 @@ def _acoes_card(pid, status_db, nome):
             _muda("Ativo", "Em Espera → Ativo")
         if st.button("❌ Cancelar projeto", key=f"dlg_cesp_{pid}",
                      use_container_width=True):
-            st.session_state[_ck] = True   # abre o passo de confirmação
+            _pedir_cancelar()
     elif status_db == "Ativo":
         if st.button("⏸️ Pausar projeto", key=f"dlg_pause_{pid}",
                      use_container_width=True):
@@ -682,7 +654,7 @@ def _acoes_card(pid, status_db, nome):
             _muda("Ativo")
         if st.button("❌ Cancelar", key=f"dlg_canc_{pid}",
                      use_container_width=True):
-            st.session_state[_ck] = True   # abre o passo de confirmação
+            _pedir_cancelar()
     elif status_db == "Cancelado":
         if st.button("🔓 Reativar → Em Espera", key=f"dlg_reat_{pid}",
                      use_container_width=True):
@@ -691,6 +663,47 @@ def _acoes_card(pid, status_db, nome):
         if st.button("🔓 Reabrir → Em Execução", key=f"dlg_reab_{pid}",
                      use_container_width=True):
             _muda("Ativo")
+
+
+# ── Confirmação de CANCELAMENTO (modal próprio) ──────────────────────
+# Aberto DEPOIS que o modal de Ações fecha (via flag `_kb_cancel_req`). É
+# chamado a cada run enquanto o flag existe → o corpo roda e os botões
+# registram o clique de forma confiável (não depende de auto-rerun de dialog,
+# que se mostrou instável). Voltar/Confirmar limpam o flag e fecham.
+if st.session_state.get("_kb_cancel_req"):
+    _c_pid, _c_nome, _c_status = st.session_state["_kb_cancel_req"]
+
+    @st.dialog("Cancelar projeto")
+    def _dlg_cancelar_projeto():
+        st.markdown(
+            "<div style='text-align:center;padding:2px 0 6px;'>"
+            "<div style='width:52px;height:52px;border-radius:50%;"
+            "background:rgba(239,68,68,.14);color:#ef4444;display:flex;"
+            "align-items:center;justify-content:center;margin:0 auto 12px;"
+            "font-size:25px;'>❌</div>"
+            f"<p style='margin:0 0 4px;font-weight:600;'>Cancelar “{_c_nome}”?"
+            "</p>"
+            "<p style='margin:0;color:#94a3b8;font-size:13.5px;'>O projeto vai "
+            "para a coluna <b>Cancelado</b>.</p></div>",
+            unsafe_allow_html=True,
+        )
+        _cc1, _cc2 = st.columns(2)
+        if _cc1.button("Voltar", key="kb_cancel_volta",
+                       use_container_width=True):
+            st.session_state.pop("_kb_cancel_req", None)
+            st.rerun()
+        if _cc2.button("❌ Confirmar cancelamento", type="primary",
+                       key="kb_cancel_ok", use_container_width=True):
+            st.session_state.pop("_kb_cancel_req", None)
+            db.atualizar_campo_projeto(_c_pid, "status", "Cancelado")
+            db.log_aud(usuario, "status", "projeto", _c_pid,
+                       f"{_c_status} → Cancelado")
+            _invalidar_dados()
+            confirmar_sucesso("Projeto cancelado",
+                              f"'{_c_nome}' foi para a coluna Cancelado.")
+            st.rerun()
+
+    _dlg_cancelar_projeto()
 
 
 if visao == "Lista":
@@ -893,8 +906,6 @@ else:
                     if st.button("⚙️ Ações", key=f"acoes_{p['id']}",
                                  use_container_width=True,
                                  help="Abrir detalhes / mudar status"):
-                        # Começa sempre nas ações (limpa confirmação anterior).
-                        st.session_state.pop(f"_kb_cancelar_{p['id']}", None)
                         _acoes_card(int(p["id"]), status_db, p["projeto"])
 
 # ══════════════════════════════════════════════════════════════════════
@@ -926,7 +937,7 @@ if "projeto_em_edicao" in st.session_state:
         _stc.html(
             "<script>setTimeout(function(){var a=window.parent.document."
             "getElementById('kanban-edit-top');if(a)a.scrollIntoView("
-            "{behavior:'smooth',block:'start'});},150);</script>",
+            "{behavior:'smooth',block:'start'});},400);</script>",
             height=0,
         )
 
