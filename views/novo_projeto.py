@@ -52,6 +52,9 @@ with st.expander("⚙️ Gerenciar Disciplinas do Checklist"):
             st.toast("Essa disciplina já existe.", icon="ℹ️")
 
 # ── Formulário principal ──────────────────────────────────
+# Obrigatórios que faltaram no último envio (pra pintar o rótulo de vermelho).
+_np_faltam = st.session_state.get("_np_faltam", set())
+
 with st.form("form_novo_projeto_v2", clear_on_submit=False):
 
     st.markdown("#### 📌 Identificação")
@@ -62,7 +65,11 @@ with st.form("form_novo_projeto_v2", clear_on_submit=False):
         help="Código/número interno do projeto. Opcional; se preenchido, "
              "precisa ser único.",
     )
-    f_nm = rc02.text_input("Nome do Projeto / Cliente *")
+    f_nm = rc02.text_input(
+        ":red[Nome do Projeto / Cliente *]" if "nome" in _np_faltam
+        else "Nome do Projeto / Cliente *",
+        key="np_nome",
+    )
 
     r1c1, r1c2 = st.columns(2)
     f_sei = r1c1.text_input("Nº SEI / Documento",
@@ -93,8 +100,10 @@ with st.form("form_novo_projeto_v2", clear_on_submit=False):
     # de qualquer equipe). O projeto em si continua compartilhado.
     _opcoes_eq = df_u["nome"].tolist() if not df_u.empty else []
     f_eq = st.multiselect(
-        "Equipe Responsável *",
+        ":red[Equipe Responsável *]" if "equipe" in _np_faltam
+        else "Equipe Responsável *",
         _opcoes_eq,
+        key="np_eq",
     )
 
     r4c1, r4c2 = st.columns([1, 2])
@@ -194,6 +203,12 @@ with st.form("form_novo_projeto_v2", clear_on_submit=False):
     submit_novo = c_sub.form_submit_button("🔨 Registrar Projeto",
                                            use_container_width=True)
 
+# Aviso dos obrigatórios faltando (os rótulos acima já ficam vermelhos).
+if _np_faltam:
+    _ns = [n for k, n in (("nome", "Nome do Projeto"),
+                          ("equipe", "Equipe Responsável")) if k in _np_faltam]
+    st.markdown(":red[⚠️ Falta preencher: **" + "**, **".join(_ns) + "**.]")
+
 # ── Ações dos botões FORA do form ─────────────────────────
 if _to_delete is not None:
     st.session_state.etapas_form.pop(_to_delete)
@@ -226,6 +241,7 @@ if submit_novo:
             st.session_state.etapas_form[i].update(et)
 
     if f_nm and f_eq:
+        st.session_state.pop("_np_faltam", None)
         _cod = (f_cod or "").strip()
         _end = (f_ed or "").strip()
         if _cod and not db.codigo_disponivel(_cod):
@@ -293,7 +309,15 @@ if submit_novo:
         else:
             st.error("Erro técnico ao salvar no banco de dados.")
     else:
-        st.warning("⚠️ Campos **Nome** e **Equipe** são obrigatórios.")
+        # Obrigatórios faltando → marca em vermelho e re-renderiza (sem perder
+        # o que já foi digitado, graças ao clear_on_submit=False + key=).
+        _falt = set()
+        if not f_nm:
+            _falt.add("nome")
+        if not f_eq:
+            _falt.add("equipe")
+        st.session_state["_np_faltam"] = _falt
+        st.rerun()
 
 # ── Mini-preview do Gantt de etapas enquanto preenche ────
 if st.session_state.get("etapas_form") and len(st.session_state.etapas_form) > 0:
