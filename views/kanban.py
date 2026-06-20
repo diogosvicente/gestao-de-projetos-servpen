@@ -621,89 +621,91 @@ def _acoes_card(pid, status_db, nome):
     if not _pode_gestor():
         return
 
-    def _muda(novo, aud=None):
-        db.atualizar_campo_projeto(pid, "status", novo)
-        if aud:
-            db.log_aud(usuario, "status", "projeto", pid, aud)
-        _invalidar_dados()
-        st.rerun()
-
-    def _pedir_cancelar():
+    def _pedir(novo, label, aud=None):
         # Fecha o modal de Ações e abre o de confirmação (tratado no board).
-        st.session_state["_kb_cancel_req"] = (pid, nome, status_db)
+        # TODA ação de status passa por aqui → sempre confirma com o usuário.
+        st.session_state["_kb_acao_req"] = {
+            "pid": pid, "nome": nome, "novo": novo,
+            "label": label, "aud": aud,
+        }
         st.rerun()
 
     st.divider()
     if status_db == "Em Espera":
         if st.button("▶️ Mover para Em Execução", key=f"dlg_ativ_{pid}",
                      use_container_width=True):
-            _muda("Ativo", "Em Espera → Ativo")
+            _pedir("Ativo", "mover para Em Execução", "Em Espera → Ativo")
         if st.button("❌ Cancelar projeto", key=f"dlg_cesp_{pid}",
                      use_container_width=True):
-            _pedir_cancelar()
+            _pedir("Cancelado", "cancelar")
     elif status_db == "Ativo":
         if st.button("⏸️ Pausar projeto", key=f"dlg_pause_{pid}",
                      use_container_width=True):
-            _muda("🛑 Parado")
+            _pedir("🛑 Parado", "pausar")
         if st.button("✅ Concluir projeto", key=f"dlg_concl_{pid}",
                      use_container_width=True):
-            _muda("Concluído")
+            _pedir("Concluído", "concluir")
     elif status_db == "🛑 Parado":
         if st.button("▶️ Retomar → Em Execução", key=f"dlg_ret_{pid}",
                      use_container_width=True):
-            _muda("Ativo")
+            _pedir("Ativo", "retomar")
         if st.button("❌ Cancelar", key=f"dlg_canc_{pid}",
                      use_container_width=True):
-            _pedir_cancelar()
+            _pedir("Cancelado", "cancelar")
     elif status_db == "Cancelado":
         if st.button("🔓 Reativar → Em Espera", key=f"dlg_reat_{pid}",
                      use_container_width=True):
-            _muda("Em Espera")
+            _pedir("Em Espera", "reativar")
     elif status_db == "Concluído":
         if st.button("🔓 Reabrir → Em Execução", key=f"dlg_reab_{pid}",
                      use_container_width=True):
-            _muda("Ativo")
+            _pedir("Ativo", "reabrir")
 
 
-# ── Confirmação de CANCELAMENTO (modal próprio) ──────────────────────
-# Aberto DEPOIS que o modal de Ações fecha (via flag `_kb_cancel_req`). É
-# chamado a cada run enquanto o flag existe → o corpo roda e os botões
-# registram o clique de forma confiável (não depende de auto-rerun de dialog,
-# que se mostrou instável). Voltar/Confirmar limpam o flag e fecham.
-if st.session_state.get("_kb_cancel_req"):
-    _c_pid, _c_nome, _c_status = st.session_state["_kb_cancel_req"]
+# ── Confirmação de QUALQUER ação de status (modal próprio) ───────────
+# Aberto DEPOIS que o modal de Ações fecha (via flag `_kb_acao_req`). Chamado
+# a cada run enquanto o flag existe → o corpo roda e os botões registram o
+# clique de forma confiável (não depende de auto-rerun de dialog). Voltar/
+# Confirmar limpam o flag e fecham.
+if st.session_state.get("_kb_acao_req"):
+    _a = st.session_state["_kb_acao_req"]
+    _a_label = {
+        "Ativo": "Em Execução", "🛑 Parado": "Parado",
+        "Concluído": "Concluído", "Cancelado": "Cancelado",
+        "Em Espera": "Em Espera",
+    }.get(_a["novo"], _a["novo"])
 
-    @st.dialog("Cancelar projeto")
-    def _dlg_cancelar_projeto():
+    @st.dialog("Confirmar ação")
+    def _dlg_confirmar_acao():
         st.markdown(
             "<div style='text-align:center;padding:2px 0 6px;'>"
             "<div style='width:52px;height:52px;border-radius:50%;"
-            "background:rgba(239,68,68,.14);color:#ef4444;display:flex;"
+            "background:rgba(59,130,246,.14);color:#60a5fa;display:flex;"
             "align-items:center;justify-content:center;margin:0 auto 12px;"
-            "font-size:25px;'>❌</div>"
-            f"<p style='margin:0 0 4px;font-weight:600;'>Cancelar “{_c_nome}”?"
-            "</p>"
-            "<p style='margin:0;color:#94a3b8;font-size:13.5px;'>O projeto vai "
-            "para a coluna <b>Cancelado</b>.</p></div>",
+            "font-size:24px;'>❓</div>"
+            f"<p style='margin:0 0 4px;font-weight:600;'>Deseja <b>"
+            f"{_a['label']}</b> o projeto “{_a['nome']}”?</p>"
+            f"<p style='margin:0;color:#94a3b8;font-size:13.5px;'>Vai para a "
+            f"coluna <b>{_a_label}</b>.</p></div>",
             unsafe_allow_html=True,
         )
-        _cc1, _cc2 = st.columns(2)
-        if _cc1.button("Voltar", key="kb_cancel_volta",
-                       use_container_width=True):
-            st.session_state.pop("_kb_cancel_req", None)
+        _q1, _q2 = st.columns(2)
+        if _q1.button("Voltar", key="kb_acao_volta",
+                      use_container_width=True):
+            st.session_state.pop("_kb_acao_req", None)
             st.rerun()
-        if _cc2.button("❌ Confirmar cancelamento", type="primary",
-                       key="kb_cancel_ok", use_container_width=True):
-            st.session_state.pop("_kb_cancel_req", None)
-            db.atualizar_campo_projeto(_c_pid, "status", "Cancelado")
-            db.log_aud(usuario, "status", "projeto", _c_pid,
-                       f"{_c_status} → Cancelado")
+        if _q2.button("✅ Confirmar", type="primary",
+                      key="kb_acao_ok", use_container_width=True):
+            st.session_state.pop("_kb_acao_req", None)
+            db.atualizar_campo_projeto(_a["pid"], "status", _a["novo"])
+            if _a["aud"]:
+                db.log_aud(usuario, "status", "projeto", _a["pid"], _a["aud"])
             _invalidar_dados()
-            confirmar_sucesso("Projeto cancelado",
-                              f"'{_c_nome}' foi para a coluna Cancelado.")
+            confirmar_sucesso("Projeto atualizado",
+                              f"'{_a['nome']}' agora está em {_a_label}.")
             st.rerun()
 
-    _dlg_cancelar_projeto()
+    _dlg_confirmar_acao()
 
 
 if visao == "Lista":
@@ -911,6 +913,11 @@ else:
 # ══════════════════════════════════════════════════════════════════════
 # CENTRAL DE EDIÇÃO (com todo o detalhamento)
 # ══════════════════════════════════════════════════════════════════════
+# Edição fechada → zera o marcador de scroll (assim reabrir o MESMO projeto,
+# ex.: um "Em Espera", rola de novo até o form).
+if "projeto_em_edicao" not in st.session_state:
+    st.session_state.pop("_kb_edit_open_for", None)
+
 if "projeto_em_edicao" in st.session_state:
     st.divider()
     id_ed = st.session_state.projeto_em_edicao
@@ -928,10 +935,10 @@ if "projeto_em_edicao" in st.session_state:
 
     dados = _df_ed.fillna("").iloc[0]
 
-    # Rola a tela até o form ao ABRIR a edição (1x por projeto, não a cada
-    # rerun) — antes a tela ficava no topo e o form aparecia lá embaixo.
-    if st.session_state.get("_kanban_scroll_edit") != id_ed:
-        st.session_state["_kanban_scroll_edit"] = id_ed
+    # Rola até o form a CADA abertura. O marcador é zerado quando a edição
+    # fecha (acima), então reabrir o MESMO projeto (ex.: "Em Espera") rola.
+    if st.session_state.get("_kb_edit_open_for") != id_ed:
+        st.session_state["_kb_edit_open_for"] = id_ed
         st.markdown("<span id='kanban-edit-top'></span>",
                     unsafe_allow_html=True)
         _stc.html(
