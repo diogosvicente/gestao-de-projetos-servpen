@@ -7,6 +7,7 @@ técnica por disciplina). Os helpers `_render_lista_kanban` e
 
 from __future__ import annotations
 
+import time
 from datetime import datetime
 
 import pandas as pd
@@ -36,6 +37,48 @@ perfil = st.session_state.get("perfil", "Gestor")
 df_p = _load_df_p(usuario, perfil)
 df_u = _load_df_u()
 df_d = _load_df_d()
+
+
+# JS robusto de auto-scroll até o form de edição. Rola o SCROLLER REAL do
+# Streamlit (section[data-testid="stMain"], com fallbacks) via scrollTo com
+# behavior:"auto" (instantâneo, imune a cancelamento por scrollers aninhados),
+# num loop curto de retry (~3s) que RE-APLICA o scroll — vencendo o reset de
+# scrollTop=0 que o Streamlit faz ao fechar o @st.dialog (issue #14917) e o
+# render mais lento de colunas cheias. Antes (setTimeout único + scrollIntoView
+# smooth) só a coluna "Em Execução" rolava, por uma corrida de timing.
+# `__KB_NONCE__` é trocado a cada abertura pra forçar a reexecução do iframe.
+_KB_SCROLL_JS = """
+<script>
+(function () {
+  var NONCE = "__KB_NONCE__";
+  var doc = window.parent.document;
+  var tries = 0, MAX = 60, stable = 0;
+  function pickScroller() {
+    return doc.querySelector('section[data-testid="stMain"]')
+        || doc.querySelector('[data-testid="stAppViewContainer"]')
+        || doc.querySelector('section.main')
+        || doc.scrollingElement
+        || doc.documentElement;
+  }
+  function go() {
+    tries++;
+    var el = doc.getElementById("kanban-edit-top");
+    var sc = pickScroller();
+    if (el && sc) {
+      var r = el.getBoundingClientRect();
+      var rs = sc.getBoundingClientRect();
+      var delta = r.top - rs.top;
+      var target = sc.scrollTop + delta - 12;
+      sc.scrollTo({ top: Math.max(0, target), behavior: "auto" });
+      if (Math.abs(delta - 12) <= 4) { stable++; if (stable >= 2) return; }
+      else { stable = 0; }
+    }
+    if (tries < MAX) setTimeout(go, 50);
+  }
+  requestAnimationFrame(go);
+})();
+</script>
+"""
 
 
 def _data_br(valor):
@@ -935,18 +978,18 @@ if "projeto_em_edicao" in st.session_state:
 
     dados = _df_ed.fillna("").iloc[0]
 
-    # Rola até o form a CADA abertura. O marcador é zerado quando a edição
-    # fecha (acima), então reabrir o MESMO projeto (ex.: "Em Espera") rola.
+    # Rola até o form a CADA abertura (marcador zerado quando a edição fecha,
+    # acima — reabrir o MESMO projeto também rola). Âncora <div> estável +
+    # JS robusto (_KB_SCROLL_JS) que rola o scroller real em loop curto.
     if st.session_state.get("_kb_edit_open_for") != id_ed:
         st.session_state["_kb_edit_open_for"] = id_ed
-        st.markdown("<span id='kanban-edit-top'></span>",
-                    unsafe_allow_html=True)
-        _stc.html(
-            "<script>setTimeout(function(){var a=window.parent.document."
-            "getElementById('kanban-edit-top');if(a)a.scrollIntoView("
-            "{behavior:'smooth',block:'start'});},400);</script>",
-            height=0,
+        st.markdown(
+            "<div id='kanban-edit-top' "
+            "style='height:0;scroll-margin-top:12px;'></div>",
+            unsafe_allow_html=True,
         )
+        _nonce = f"{id_ed}-{int(time.time() * 1000)}"
+        _stc.html(_KB_SCROLL_JS.replace("__KB_NONCE__", _nonce), height=0)
 
     st.subheader(f"📝 Detalhamento e Edição: {dados['projeto']}")
     st.markdown(_badge_status(dados.get("status", "")),
