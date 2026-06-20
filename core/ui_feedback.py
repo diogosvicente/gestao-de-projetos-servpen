@@ -188,27 +188,44 @@ def _render_confirmacao_sucesso() -> None:
 
     @st.dialog(_titulo)
     def _dlg():
+        # `.ok-modal-mark` é só um marcador invisível: o CSS abaixo usa
+        # `:has(.ok-modal-mark)` pra aplicar o estilo SÓ neste modal de
+        # sucesso (não afeta o modal de excluir, que deve seguir vermelho).
         _corpo = (
-            "<div style='text-align:center;padding:4px 0 2px;'>"
-            "<div style='width:64px;height:64px;border-radius:50%;"
-            "background:rgba(34,197,94,.15);color:#22c55e;display:flex;"
-            "align-items:center;justify-content:center;margin:2px auto 14px;"
+            "<div class='ok-modal-mark'></div>"
+            "<div style='text-align:center;padding:6px 4px 2px;'>"
+            "<div style='width:68px;height:68px;border-radius:50%;"
+            "background:rgba(34,197,94,.14);"
+            "border:1px solid rgba(34,197,94,.45);color:#22c55e;display:flex;"
+            "align-items:center;justify-content:center;margin:2px auto 16px;"
             "font-size:34px;font-weight:700;"
-            "box-shadow:0 0 0 7px rgba(34,197,94,.08);"
-            "animation:cs-pop .45s cubic-bezier(.2,.8,.2,1) both;'>✓</div>"
+            "box-shadow:0 0 0 8px rgba(34,197,94,.06);"
+            "animation:okpop .45s cubic-bezier(.2,.8,.2,1) both;'>✓</div>"
         )
         if _detalhe:
             _corpo += (
-                "<p style='margin:0;color:#94a3b8;font-size:14px;"
+                "<p style='margin:0;color:#9aa6b2;font-size:14px;"
                 f"line-height:1.5;'>{_html.escape(_detalhe)}</p>"
             )
         _corpo += (
             "</div>"
-            "<style>@keyframes cs-pop{from{transform:scale(0);}"
-            "70%{transform:scale(1.18);}to{transform:scale(1);}}</style>"
+            "<style>"
+            "@keyframes okpop{from{transform:scale(0);}"
+            "70%{transform:scale(1.18);}to{transform:scale(1);}}"
+            # Eleva o modal do fundo (sombra + borda verde sutil) — só este.
+            "[role='dialog']:has(.ok-modal-mark){"
+            "border:1px solid rgba(34,197,94,.30)!important;"
+            "box-shadow:0 20px 60px rgba(0,0,0,.6)!important;}"
+            # Botão "Continuar" VERDE (em vez do vermelho do tema primary).
+            "[role='dialog']:has(.ok-modal-mark) .stButton button{"
+            "background:#16a34a!important;border:1px solid #16a34a!important;"
+            "color:#ffffff!important;font-weight:600!important;}"
+            "[role='dialog']:has(.ok-modal-mark) .stButton button:hover{"
+            "background:#15803d!important;border-color:#15803d!important;}"
+            "</style>"
         )
         st.markdown(_corpo, unsafe_allow_html=True)
-        if st.button("Continuar", use_container_width=True, type="primary",
+        if st.button("Continuar", use_container_width=True,
                      key="_btn_confirmar_sucesso"):
             st.rerun()
 
