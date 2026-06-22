@@ -238,6 +238,7 @@ def gerar_excel(df, df_etapas=None, df_progresso=None):
 
             COLUNAS = [
                 ('ID',                 'id',                 6),
+                ('Código',             'codigo',             14),
                 ('Nome do Projeto',    'projeto',            35),
                 ('Status',             'status',             14),
                 ('Prioridade',         'prioridade',         12),
@@ -245,6 +246,7 @@ def gerar_excel(df, df_etapas=None, df_progresso=None):
                 ('Solicitante',        'solicitante',        25),
                 ('Contato',            'contato',            22),
                 ('Endereço',           'endereco',           30),
+                ('Local',              'local',              22),
                 ('Nº SEI / Doc.',      'numero_sei',         18),
                 ('Recebimento',        'data_recebimento',   14),
                 ('Prev. Execução',     'previsao_execucao',  15),
@@ -480,31 +482,35 @@ def gerar_pdf(df, df_etapas=None, df_progresso=None):
         
         dem_rows = [[
             Paragraph('<b>ID</b>', st['cabecalho_tab']),
+            Paragraph('<b>CÓDIGO</b>', st['cabecalho_tab']),
             Paragraph('<b>NOME DO PROJETO</b>', st['cabecalho_tab']),
             Paragraph('<b>PROJETISTA</b>', st['cabecalho_tab']),
             Paragraph('<b>ENDEREÇO DA OBRA</b>', st['cabecalho_tab']),
+            Paragraph('<b>LOCAL</b>', st['cabecalho_tab']),
             Paragraph('<b>STATUS</b>', st['cabecalho_tab']),
             Paragraph('<b>RECEBIMENTO</b>', st['cabecalho_tab']),
         ]]
-        
+
         for _, proj in df.iterrows():
             dem_rows.append([
                 Paragraph(str(proj.get('id', '—')), st['celula']),
+                Paragraph(_txt(proj.get('codigo', '—')), st['celula']),
                 Paragraph(f"<b>{_txt(proj['projeto'])}</b>", st['celula']),
                 Paragraph(_txt(proj.get('projetista', '—')), st['celula']),
                 Paragraph(_txt(proj.get('endereco', '—')), st['celula']),
+                Paragraph(_txt(proj.get('local', '—')), st['celula']),
                 Paragraph(_txt(proj.get('status', '—')), st['celula']),
                 Paragraph(_data_fmt(proj.get('data_recebimento', ''))),
             ])
-            
+
         # Distribuição milimétrica das colunas para os 18cm úteis da página retrato
-        # ID(1.0cm), Nome(4.5cm), Projetista(2.5cm), Endereço(4.5cm), Status(2.5cm), Recebimento(3.0cm)
+        # ID(0.9) Código(2.0) Nome(3.6) Projetista(2.2) Endereço(3.3) Local(1.8) Status(1.9) Receb.(2.3)
         larguras_colunas = [
-            1.0 * cm, 4.5 * cm, 2.5 * cm, 4.5 * cm, 2.5 * cm, 3.0 * cm
+            0.9 * cm, 2.0 * cm, 3.6 * cm, 2.2 * cm, 3.3 * cm, 1.8 * cm, 1.9 * cm, 2.3 * cm
         ]
-        
+
         t_dem = Table(dem_rows, colWidths=larguras_colunas)
-        t_dem.setStyle(_tabela_estilo(6))
+        t_dem.setStyle(_tabela_estilo(8))
         story.append(t_dem)
         story.append(Spacer(1, 0.5 * cm))
 
@@ -572,11 +578,13 @@ def gerar_pdf(df, df_etapas=None, df_progresso=None):
 
             story.append(_secao('Identificação'))
             story.append(_par_campos([
+                ('Código do Projeto',     proj.get('codigo','')),
                 ('Nº SEI / Documento',   proj.get('numero_sei','')),
                 ('Projetista(s)',         proj.get('projetista','')),
                 ('Solicitante / Cliente', proj.get('solicitante','')),
                 ('Contato',               proj.get('contato','')),
                 ('Endereço da Obra',     proj.get('endereco','')),
+                ('Local',                 proj.get('local','')),
                 ('Link da Pasta',        proj.get('link_projeto','')),
             ]))
             story.append(Spacer(1, 0.2*cm))
