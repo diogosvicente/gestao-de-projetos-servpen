@@ -74,19 +74,32 @@ if _add:
 # ── Minhas tarefas (tabela editável) ──────────────────────────────────
 _minhas = db.listar_tarefas_de(usuario, incluir_privadas=True)
 _pend = sum(1 for t in _minhas if not t["concluida"])
-st.subheader(f"📋 Minhas tarefas — {_pend} pendente(s)")
+
+_ca, _cb = st.columns([0.68, 0.32], vertical_alignment="bottom")
+_ca.subheader(f"📋 Minhas tarefas — {_pend} pendente(s)")
+_so_hoje = _cb.toggle("📅 Só hoje", key="tarefa_so_hoje",
+                      help="Mostra só as tarefas com data de hoje.")
+
+# Aplica o filtro "Hoje" ANTES de montar a tabela — a lista filtrada (`_vis`)
+# alimenta o editor E o loop de salvar (índices precisam estar alinhados).
+_vis = [t for t in _minhas
+        if (not _so_hoje) or (t["data"] == date.today())]
 
 if not _minhas:
     st.info("Nenhuma tarefa ainda. Adicione a primeira no campo acima. 🚀")
+elif not _vis:
+    st.info("Nada para hoje. 🎉 Desmarque **Só hoje** pra ver todas.")
 else:
     _df_my = pd.DataFrame([{
         "Data": t["data"],
         "Nome": usuario,
         "Tarefa": t["descricao"],
         "Concluída": bool(t["concluida"]),
+        "✔ Feito em": _fmt_data(t["concluida_em"]) if t.get("concluida_em")
+                      else "",
         "🔒 Privada": bool(t["privada"]),
         "🗑️": False,
-    } for t in _minhas])
+    } for t in _vis])
     _df_my["Data"] = pd.to_datetime(_df_my["Data"], errors="coerce")
 
     # `key` versionado: depois de salvar, incrementamos a versão pra o editor
@@ -104,6 +117,9 @@ else:
             "Tarefa": st.column_config.TextColumn("📝 Tarefa", width="large"),
             "Concluída": st.column_config.CheckboxColumn("✅ Concluída",
                                                          width="medium"),
+            "✔ Feito em": st.column_config.TextColumn(
+                "✔ Feito em", disabled=True, width="small",
+                help="Data em que foi concluída."),
             "🔒 Privada": st.column_config.CheckboxColumn(
                 "🔒 Privada", width="medium",
                 help="Privada (só você). Desmarque pra o gestor ver."),
@@ -115,7 +131,7 @@ else:
 
     if st.button("💾 Salvar alterações", key="salvar_minhas", width="stretch"):
         _mudou = False
-        for i, t in enumerate(_minhas):
+        for i, t in enumerate(_vis):
             _r = _edit.iloc[i]
             if bool(_r["🗑️"]):
                 db.excluir_tarefa(t["id"]); _mudou = True
@@ -169,6 +185,8 @@ if _pode_gestor():
                     or "SERVPEN"
                 if db.criar_tarefa(_alvo, _d2, privada=False,
                                    criado_por=usuario, equipe=_eqa, data=_dt2):
+                    db.log_aud(usuario, "atribuir_tarefa", "tarefa", None,
+                               f"para {_alvo}: {_d2.strip()[:120]}")
                     confirmar_sucesso("Tarefa atribuída",
                                       f"“{_d2.strip()}” → {_alvo}")
                     st.rerun()

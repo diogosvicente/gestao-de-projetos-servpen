@@ -22,7 +22,7 @@ import database as db
 #
 # Dashboard NÃO entra aqui — é a página default, seu slug é "" (URL = base).
 _PAGE_SLUGS = [
-    "kanban", "novo_projeto", "diario", "arquivos",
+    "kanban", "novo_projeto", "diario", "tarefas", "arquivos",
     "equipe", "chat", "agenda", "auditoria", "acessos",
 ]
 _CHAT_SLUG = "chat"

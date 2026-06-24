@@ -1604,11 +1604,13 @@ def listar_tarefas_de(usuario, incluir_privadas=True):
     conn = conectar(); c = conn.cursor()
     try:
         sql = ("SELECT id, usuario, descricao, concluida, privada, criado_por, "
-               "COALESCE(data, criado_em::date) AS data "
+               "COALESCE(data, criado_em::date) AS data, concluida_em "
                "FROM tarefas WHERE usuario = %s")
         if not incluir_privadas:
             sql += " AND COALESCE(privada,0) = 0"
-        sql += " ORDER BY concluida ASC, id DESC"
+        # Pendentes primeiro, depois por data planejada (mais próxima no topo).
+        sql += (" ORDER BY concluida ASC, "
+                "COALESCE(data, criado_em::date) ASC, id DESC")
         c.execute(sql, (usuario,))
         cols = [d[0] for d in c.description]
         return [dict(zip(cols, r)) for r in c.fetchall()]

@@ -712,18 +712,16 @@ with st.sidebar:
     _qtd_nao_lidas_chat = db.contar_nao_lidas(st.session_state.usuario)
     _tarefas_novas = db.contar_tarefas_nao_vistas(st.session_state.usuario)
 
-    # Toast 1x por sessão enquanto houver tarefa atribuída não vista; ao zerar
-    # (abriu a aba Tarefas) o flag é limpo, então uma NOVA atribuição re-avisa.
-    if _tarefas_novas:
-        if not st.session_state.get("_toast_tarefas_visto"):
-            st.toast(
-                f"📌 Você tem {_tarefas_novas} nova(s) tarefa(s) atribuída(s) "
-                f"— veja na aba **Tarefas**.",
-                icon="✅",
-            )
-            st.session_state["_toast_tarefas_visto"] = True
-    else:
-        st.session_state.pop("_toast_tarefas_visto", None)
+    # Toast quando o nº de tarefas atribuídas não vistas AUMENTA (nova
+    # atribuição) — não dá spam a cada rerun e re-avisa a cada nova.
+    _ult_toast_tar = st.session_state.get("_toast_tarefas_n", 0)
+    if _tarefas_novas > _ult_toast_tar:
+        st.toast(
+            f"📌 Você tem {_tarefas_novas} nova(s) tarefa(s) atribuída(s) "
+            f"— veja na aba **Tarefas**.",
+            icon="✅",
+        )
+    st.session_state["_toast_tarefas_n"] = _tarefas_novas
 
     if _total_diario_badge or _qtd_nao_lidas_chat or _tarefas_novas:
         st.divider()
