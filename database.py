@@ -630,6 +630,7 @@ def _criar_tabelas_impl():
             criado_por TEXT,
             equipe TEXT DEFAULT 'SERVPEN',
             data DATE,
+            vista INT DEFAULT 1,
             criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             concluida_em TIMESTAMP
         )''')
@@ -892,6 +893,10 @@ def _criar_tabelas_impl():
             # Data planejada da tarefa (definida pelo usuário; NÃO é a data de
             # criação). Linhas antigas caem no COALESCE com criado_em::date.
             ("tarefas",               "data",               "DATE"),
+            # vista=0 marca tarefa ATRIBUÍDA por outra pessoa ainda não vista
+            # (alimenta badge/toast). DEFAULT 1 → linhas antigas já entram
+            # como vistas (não geram alarme retroativo).
+            ("tarefas",               "vista",              "INTEGER DEFAULT 1"),
         ]
         # PASSO 1: lê o schema atual via information_schema (SELECT, só
         # pega AccessShareLock — NÃO conflita com nada). Migrations cujo
@@ -1573,12 +1578,16 @@ def criar_tarefa(usuario, descricao, *, privada=False, criado_por=None,
     equipe = equipe or "SERVPEN"
     if criado_por != usuario:
         privada = False  # tarefa atribuída pelo gestor é sempre visível a ele
+    # Atribuída por OUTRA pessoa nasce "não vista" (gera badge/toast pro dono);
+    # criada pela própria pessoa já nasce vista.
+    vista = 0 if criado_por != usuario else 1
     conn = conectar(); c = conn.cursor()
     try:
         c.execute(
             "INSERT INTO tarefas (usuario, descricao, privada, criado_por, "
-            "equipe, data) VALUES (%s,%s,%s,%s,%s,%s)",
-            (usuario, descricao, 1 if privada else 0, criado_por, equipe, data),
+            "equipe, data, vista) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            (usuario, descricao, 1 if privada else 0, criado_por, equipe, data,
+             vista),
         )
         conn.commit()
         return True
@@ -1722,6 +1731,34 @@ def listar_tarefas_equipe(equipe):
                       "ORDER BY t.usuario, t.concluida, t.id DESC", (equipe,))
         cols = [d[0] for d in c.description]
         return [dict(zip(cols, r)) for r in c.fetchall()]
+    finally:
+        conn.close()
+
+
+def contar_tarefas_nao_vistas(usuario):
+    """Nº de tarefas atribuídas por OUTRA pessoa que o usuário ainda não viu
+    (alimenta o badge da sidebar e o toast). Tarefas que ele mesmo criou não
+    contam."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute(
+            "SELECT COUNT(*) FROM tarefas WHERE usuario = %s "
+            "AND COALESCE(vista,1) = 0 AND criado_por <> usuario",
+            (usuario,),
+        )
+        return int(c.fetchone()[0] or 0)
+    finally:
+        conn.close()
+
+
+def marcar_tarefas_vistas(usuario):
+    """Marca como vistas as tarefas do usuário (chamado ao abrir a aba Tarefas).
+    Zera o badge/toast de tarefas atribuídas."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("UPDATE tarefas SET vista = 1 WHERE usuario = %s "
+                  "AND COALESCE(vista,1) = 0", (usuario,))
+        conn.commit()
     finally:
         conn.close()
 

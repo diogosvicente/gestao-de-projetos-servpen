@@ -710,8 +710,22 @@ with st.sidebar:
     _mencoes_pend = db.contar_mencoes_pendentes(st.session_state.usuario)
     _total_diario_badge = _nao_lidos_diario + _mencoes_pend
     _qtd_nao_lidas_chat = db.contar_nao_lidas(st.session_state.usuario)
+    _tarefas_novas = db.contar_tarefas_nao_vistas(st.session_state.usuario)
 
-    if _total_diario_badge or _qtd_nao_lidas_chat:
+    # Toast 1x por sessão enquanto houver tarefa atribuída não vista; ao zerar
+    # (abriu a aba Tarefas) o flag é limpo, então uma NOVA atribuição re-avisa.
+    if _tarefas_novas:
+        if not st.session_state.get("_toast_tarefas_visto"):
+            st.toast(
+                f"📌 Você tem {_tarefas_novas} nova(s) tarefa(s) atribuída(s) "
+                f"— veja na aba **Tarefas**.",
+                icon="✅",
+            )
+            st.session_state["_toast_tarefas_visto"] = True
+    else:
+        st.session_state.pop("_toast_tarefas_visto", None)
+
+    if _total_diario_badge or _qtd_nao_lidas_chat or _tarefas_novas:
         st.divider()
         st.caption("📬 Pendências:")
         if _total_diario_badge:
@@ -726,8 +740,16 @@ with st.sidebar:
             st.markdown(
                 f"<div style='padding:6px 10px;background:rgba(239,68,68,0.10);"
                 f"border-left:3px solid #ef4444;border-radius:6px;"
-                f"font-size:.85rem;'>"
+                f"margin-bottom:4px;font-size:.85rem;'>"
                 f"💬 <b>{_qtd_nao_lidas_chat}</b> no Chat</div>",
+                unsafe_allow_html=True,
+            )
+        if _tarefas_novas:
+            st.markdown(
+                f"<div style='padding:6px 10px;background:rgba(245,158,11,0.12);"
+                f"border-left:3px solid #f59e0b;border-radius:6px;"
+                f"font-size:.85rem;'>"
+                f"📌 <b>{_tarefas_novas}</b> nova(s) em Tarefas</div>",
                 unsafe_allow_html=True,
             )
 

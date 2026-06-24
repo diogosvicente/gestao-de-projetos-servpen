@@ -27,6 +27,9 @@ from core.ui_feedback import confirmar_sucesso
 usuario = st.session_state.usuario
 equipe = st.session_state.get("equipe", "SERVPEN")
 
+# Abrir a aba marca como vistas as tarefas atribuídas → some o badge/toast.
+db.marcar_tarefas_vistas(usuario)
+
 
 def _fmt_data(v):
     """date/TIMESTAMP -> 'dd/mm/aaaa' (tolerante a None / texto)."""
