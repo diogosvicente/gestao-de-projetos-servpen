@@ -629,6 +629,7 @@ def _criar_tabelas_impl():
             privada INT DEFAULT 0,
             criado_por TEXT,
             equipe TEXT DEFAULT 'SERVPEN',
+            data DATE,
             criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             concluida_em TIMESTAMP
         )''')
@@ -888,6 +889,9 @@ def _criar_tabelas_impl():
             # % de conclusão por etapa (item 4): Gestor preenche; cruzado com
             # a data da etapa pra classificar atraso / no prazo / adiantado.
             ("etapas_projeto",        "percentual",         "INTEGER DEFAULT 0"),
+            # Data planejada da tarefa (definida pelo usuário; NÃO é a data de
+            # criação). Linhas antigas caem no COALESCE com criado_em::date.
+            ("tarefas",               "data",               "DATE"),
         ]
         # PASSO 1: lê o schema atual via information_schema (SELECT, só
         # pega AccessShareLock — NÃO conflita com nada). Migrations cujo
@@ -1558,9 +1562,10 @@ def salvar_usuario(nome, senha, perfil, cargo="Colaborador"):
 #  - Gestor vê as NÃO-privadas dos usuários da equipe (GERAL = todas) e
 #    pode atribuir novas (criado_por = gestor; atribuição nunca é privada).
 def criar_tarefa(usuario, descricao, *, privada=False, criado_por=None,
-                 equipe=None):
+                 equipe=None, data=None):
     """Cria uma tarefa para `usuario`. Se `criado_por` != `usuario`
-    (atribuição do gestor), a tarefa nunca é privada. Retorna True/False."""
+    (atribuição do gestor), a tarefa nunca é privada. `data` é a data
+    planejada (objeto date ou None). Retorna True/False."""
     descricao = (descricao or "").strip()
     if not descricao:
         return False
@@ -1572,8 +1577,8 @@ def criar_tarefa(usuario, descricao, *, privada=False, criado_por=None,
     try:
         c.execute(
             "INSERT INTO tarefas (usuario, descricao, privada, criado_por, "
-            "equipe) VALUES (%s,%s,%s,%s,%s)",
-            (usuario, descricao, 1 if privada else 0, criado_por, equipe),
+            "equipe, data) VALUES (%s,%s,%s,%s,%s,%s)",
+            (usuario, descricao, 1 if privada else 0, criado_por, equipe, data),
         )
         conn.commit()
         return True
@@ -1590,7 +1595,8 @@ def listar_tarefas_de(usuario, incluir_privadas=True):
     conn = conectar(); c = conn.cursor()
     try:
         sql = ("SELECT id, usuario, descricao, concluida, privada, criado_por, "
-               "criado_em FROM tarefas WHERE usuario = %s")
+               "COALESCE(data, criado_em::date) AS data "
+               "FROM tarefas WHERE usuario = %s")
         if not incluir_privadas:
             sql += " AND COALESCE(privada,0) = 0"
         sql += " ORDER BY concluida ASC, id DESC"
@@ -1688,13 +1694,25 @@ def atualizar_descricao_tarefa(id_tarefa, descricao):
         conn.close()
 
 
-def listar_tarefas_equipe(equipe):
-    """Tarefas NÃO privadas dos usuários da equipe (GERAL = todas), com o cargo
-    do dono — pra tabela do gestor. Pendentes primeiro, agrupadas por nome."""
+def atualizar_data_tarefa(id_tarefa, data):
+    """Define a data planejada da tarefa (objeto date ou None)."""
     conn = conectar(); c = conn.cursor()
     try:
-        base = ("SELECT t.id, t.usuario, COALESCE(u.cargo,'') AS cargo, "
-                "t.descricao, t.concluida, t.criado_por, t.criado_em "
+        c.execute("UPDATE tarefas SET data=%s WHERE id=%s",
+                  (data, int(id_tarefa)))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def listar_tarefas_equipe(equipe):
+    """Tarefas NÃO privadas dos usuários da equipe (GERAL = todas) — pra tabela
+    do gestor. Pendentes primeiro, agrupadas por nome. `data` = data planejada
+    (cai em criado_em::date nas linhas antigas)."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        base = ("SELECT t.id, t.usuario, t.descricao, t.concluida, "
+                "t.criado_por, COALESCE(t.data, t.criado_em::date) AS data "
                 "FROM tarefas t LEFT JOIN usuarios u ON u.nome = t.usuario "
                 "WHERE COALESCE(t.privada,0) = 0")
         if (equipe or "").upper() == "GERAL":
