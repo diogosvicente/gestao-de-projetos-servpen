@@ -94,17 +94,18 @@ else:
         width="stretch",
         column_config={
             "Data": st.column_config.DateColumn(
-                "Data", format="DD/MM/YYYY", width="small",
+                "📅 Data", format="DD/MM/YYYY", width="small",
                 help="Data planejada — pode mudar quando quiser."),
-            "Nome": st.column_config.TextColumn("Nome", disabled=True,
+            "Nome": st.column_config.TextColumn("👤 Nome", disabled=True,
                                                 width="small"),
-            "Tarefa": st.column_config.TextColumn("Tarefa", width="large"),
-            "Concluída": st.column_config.CheckboxColumn("✅", width="small"),
+            "Tarefa": st.column_config.TextColumn("📝 Tarefa", width="large"),
+            "Concluída": st.column_config.CheckboxColumn("✅ Concluída",
+                                                         width="medium"),
             "🔒 Privada": st.column_config.CheckboxColumn(
-                "🔒", width="small",
+                "🔒 Privada", width="medium",
                 help="Privada (só você). Desmarque pra o gestor ver."),
             "🗑️": st.column_config.CheckboxColumn(
-                "❌", width="small",
+                "❌ Excluir", width="medium",
                 help="Marque e clique em Salvar pra excluir."),
         },
     )
