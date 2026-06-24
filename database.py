@@ -1589,8 +1589,8 @@ def listar_tarefas_de(usuario, incluir_privadas=True):
     `incluir_privadas=False` omite as privadas — usado na visão do gestor."""
     conn = conectar(); c = conn.cursor()
     try:
-        sql = ("SELECT id, usuario, descricao, concluida, privada, criado_por "
-               "FROM tarefas WHERE usuario = %s")
+        sql = ("SELECT id, usuario, descricao, concluida, privada, criado_por, "
+               "criado_em FROM tarefas WHERE usuario = %s")
         if not incluir_privadas:
             sql += " AND COALESCE(privada,0) = 0"
         sql += " ORDER BY concluida ASC, id DESC"
@@ -1659,6 +1659,51 @@ def membros_para_gestor(equipe):
                       "WHERE COALESCE(equipe,'SERVPEN') = %s ORDER BY nome",
                       (equipe,))
         return [(r[0], r[1]) for r in c.fetchall()]
+    finally:
+        conn.close()
+
+
+def definir_privada_tarefa(id_tarefa, privada):
+    """Liga/desliga a privacidade da tarefa — pode trocar a qualquer momento."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("UPDATE tarefas SET privada=%s WHERE id=%s",
+                  (1 if privada else 0, int(id_tarefa)))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def atualizar_descricao_tarefa(id_tarefa, descricao):
+    """Edita o texto de uma tarefa (no-op se vazio)."""
+    descricao = (descricao or "").strip()
+    if not descricao:
+        return
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("UPDATE tarefas SET descricao=%s WHERE id=%s",
+                  (descricao, int(id_tarefa)))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def listar_tarefas_equipe(equipe):
+    """Tarefas NÃO privadas dos usuários da equipe (GERAL = todas), com o cargo
+    do dono — pra tabela do gestor. Pendentes primeiro, agrupadas por nome."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        base = ("SELECT t.id, t.usuario, COALESCE(u.cargo,'') AS cargo, "
+                "t.descricao, t.concluida, t.criado_por, t.criado_em "
+                "FROM tarefas t LEFT JOIN usuarios u ON u.nome = t.usuario "
+                "WHERE COALESCE(t.privada,0) = 0")
+        if (equipe or "").upper() == "GERAL":
+            c.execute(base + " ORDER BY t.usuario, t.concluida, t.id DESC")
+        else:
+            c.execute(base + " AND COALESCE(u.equipe,'SERVPEN') = %s "
+                      "ORDER BY t.usuario, t.concluida, t.id DESC", (equipe,))
+        cols = [d[0] for d in c.description]
+        return [dict(zip(cols, r)) for r in c.fetchall()]
     finally:
         conn.close()
 
