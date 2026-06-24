@@ -99,12 +99,12 @@ else:
             "Nome": st.column_config.TextColumn("Nome", disabled=True,
                                                 width="small"),
             "Tarefa": st.column_config.TextColumn("Tarefa", width="large"),
-            "Concluída": st.column_config.CheckboxColumn("✔", width="small"),
+            "Concluída": st.column_config.CheckboxColumn("✅", width="small"),
             "🔒 Privada": st.column_config.CheckboxColumn(
                 "🔒", width="small",
                 help="Privada (só você). Desmarque pra o gestor ver."),
             "🗑️": st.column_config.CheckboxColumn(
-                "🗑️", width="small",
+                "❌", width="small",
                 help="Marque e clique em Salvar pra excluir."),
         },
     )
