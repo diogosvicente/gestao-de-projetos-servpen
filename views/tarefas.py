@@ -48,14 +48,15 @@ st.caption(
 with st.form("form_nova_tarefa", clear_on_submit=True):
     _desc = st.text_input(
         "Nova tarefa", placeholder="O que você precisa fazer?",
-        label_visibility="collapsed", key="tarefa_nova_desc",
+        key="tarefa_nova_desc",
     )
-    fc1, fc2, fc3 = st.columns([0.40, 0.30, 0.30])
-    _dt = fc1.date_input("Data", value=date.today(), format="DD/MM/YYYY",
+    fc1, fc2 = st.columns(2, vertical_alignment="bottom")
+    _dt = fc1.date_input("📅 Data", value=date.today(), format="DD/MM/YYYY",
                          key="tarefa_nova_data")
-    _priv = fc2.checkbox("🔒 Privada", value=True, key="tarefa_nova_priv",
+    _priv = fc2.checkbox("🔒 Manter privada", value=True,
+                         key="tarefa_nova_priv",
                          help="Marcada por padrão. Desmarque pra o gestor ver.")
-    _add = fc3.form_submit_button("➕ Adicionar", width="stretch")
+    _add = st.form_submit_button("➕ Adicionar", width="stretch")
 if _add:
     if _desc.strip():
         if db.criar_tarefa(usuario, _desc, privada=_priv, criado_por=usuario,
@@ -154,12 +155,10 @@ if _pode_gestor():
                                  key="tarefa_gestor_alvo")
             _d2 = st.text_input("Tarefa",
                                 placeholder="Nova tarefa pra atribuir...",
-                                label_visibility="collapsed",
                                 key="tarefa_atrib_desc")
-            gc1, gc2 = st.columns([0.5, 0.5])
-            _dt2 = gc1.date_input("Data", value=date.today(),
-                                  format="DD/MM/YYYY", key="tarefa_atrib_data")
-            _go = gc2.form_submit_button("➕ Atribuir", width="stretch")
+            _dt2 = st.date_input("📅 Data", value=date.today(),
+                                 format="DD/MM/YYYY", key="tarefa_atrib_data")
+            _go = st.form_submit_button("➕ Atribuir", width="stretch")
         if _go:
             if _d2.strip():
                 _eqa = (db.obter_usuario(_alvo) or {}).get("equipe") \
