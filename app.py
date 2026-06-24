@@ -590,6 +590,8 @@ _pages_gerais = [
                url_path="novo_projeto")] if _pode_gestor() else []),
     st.Page("views/diario.py", title="Diário", icon="📝",
             url_path="diario"),
+    st.Page("views/tarefas.py", title="Tarefas", icon="✅",
+            url_path="tarefas"),
     st.Page("views/arquivos.py", title="Arquivos", icon="📁",
             url_path="arquivos"),
     st.Page("views/equipe.py", title="Equipe", icon="👥",

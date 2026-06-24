@@ -13,6 +13,7 @@ Inclui:
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime
 
 import pandas as pd
@@ -36,6 +37,72 @@ perfil = st.session_state.get("perfil", "Projetista")
 df_p = _load_df_p(usuario, perfil)
 df_u = _load_df_u()
 df_d = _load_df_d()
+
+
+# Regex do cabeçalho de cada interação gravada em `resposta_gestor`:
+#   "[DD/MM/AAAA HH:MM] Autor (Perfil): <texto>"
+# Serve pra quebrar o histórico (um TEXT acumulado) em comentários separados.
+_RE_INTERACAO = re.compile(
+    r"\[(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2})\]\s+(.+?)\s+\(([^)]*)\)\s*:\s*"
+)
+
+
+def _interacoes_para_html(bruto, usuarios, eu):
+    """Quebra o histórico de respostas em comentários e devolve (html, n).
+
+    Cada comentário vira um "balão" com cabeçalho (autor · perfil · data) e
+    corpo — separação visual clara de onde começa/termina cada um. Texto
+    legado sem cabeçalho vira um balão único. A string HTML NÃO tem quebras
+    de linha de propósito: 4+ espaços no início de linha viram bloco <pre>
+    no markdown do Streamlit (e o HTML apareceria literal).
+    """
+    bruto = str(bruto or "").strip()
+    if not bruto:
+        return "", 0
+
+    matches = list(_RE_INTERACAO.finditer(bruto))
+    itens = []  # (data, autor, perfil, corpo)
+    if not matches:
+        itens.append(("", "", "", bruto))
+    else:
+        if matches[0].start() > 0:
+            _pre = bruto[:matches[0].start()].strip()
+            if _pre:
+                itens.append(("", "", "", _pre))
+        for i, m in enumerate(matches):
+            ini = m.end()
+            fim = matches[i + 1].start() if i + 1 < len(matches) else len(bruto)
+            itens.append((m.group(1), m.group(2).strip(),
+                          m.group(3).strip(), bruto[ini:fim].strip()))
+
+    baloes = []
+    for (data, autor, perfil_c, corpo) in itens:
+        corpo_html = _render_mencoes_html(
+            corpo.replace("\n", "<br>"), usuarios, eu_mesmo=eu,
+        )
+        _eh_gestor = perfil_c.lower().startswith("gestor")
+        _accent = "#f5b301" if _eh_gestor else "#38bdf8"
+        _icone = "👑" if _eh_gestor else "💬"
+        _cab = (
+            (f'<div style="display:flex;justify-content:space-between;'
+             f'align-items:center;gap:8px;margin-bottom:5px;">'
+             f'<span style="font-size:12px;font-weight:700;color:{_accent};">'
+             f'{_icone} {autor}'
+             f'<span style="opacity:.6;font-weight:400;"> · {perfil_c}</span>'
+             f'</span>'
+             f'<span style="opacity:.55;font-size:11px;white-space:nowrap;">'
+             f'{data}</span></div>')
+            if autor else ""
+        )
+        baloes.append(
+            f'<div style="background:rgba(255,255,255,0.05);'
+            f'border:1px solid rgba(255,255,255,0.08);'
+            f'border-left:3px solid {_accent};border-radius:8px;'
+            f'padding:9px 12px;margin-top:8px;">{_cab}'
+            f'<div style="font-size:13px;line-height:1.55;color:#e9e9e9;">'
+            f'{corpo_html}</div></div>'
+        )
+    return "".join(baloes), len(itens)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -90,9 +157,8 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
         texto_exibicao = _render_mencoes_html(
             texto_exibicao, usuarios_para_render, eu_mesmo=autor_logado,
         )
-        resposta_limpa_html = _render_mencoes_html(
-            str(d.get("resposta_gestor") or "").replace("\n", "<br>"),
-            usuarios_para_render, eu_mesmo=autor_logado,
+        _interacoes_html, _n_interacoes = _interacoes_para_html(
+            d.get("resposta_gestor"), usuarios_para_render, autor_logado,
         )
         _anexo = d.get("anexo")
 
@@ -140,9 +206,7 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
             </div>
             <div style="background:#1E1E1E;color:#EEE;padding:14px 15px;border:1px solid {cor_topo};border-top:none;border-radius:0 0 10px 10px;font-size:13px;line-height:1.6;margin-bottom:4px;">
             {texto_exibicao}
-            {f'''<div style="background:rgba(255,255,255,0.05);padding:10px;margin-top:10px;border-left:3px solid {cor_topo};border-radius:4px;">
-                <b style="color:{cor_topo}">💡 ORIENTAÇÃO / INTERAÇÕES:</b><br>{resposta_limpa_html}
-                </div>''' if d.get('resposta_gestor') else ''}
+            {f'<div style="margin-top:12px;"><div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:{cor_topo};margin-bottom:4px;">💬 Interações · {_n_interacoes}</div>{_interacoes_html}</div>' if d.get('resposta_gestor') else ''}
             </div>
             {_wrap_post}
         """, unsafe_allow_html=True)

@@ -620,6 +620,19 @@ def _criar_tabelas_impl():
             cargo TEXT
         )''')
 
+        # ── TAREFAS (to-do pessoal + atribuição pelo gestor) ──
+        c.execute('''CREATE TABLE IF NOT EXISTS tarefas (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            usuario TEXT NOT NULL,
+            descricao TEXT NOT NULL,
+            concluida INT DEFAULT 0,
+            privada INT DEFAULT 0,
+            criado_por TEXT,
+            equipe TEXT DEFAULT 'SERVPEN',
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            concluida_em TIMESTAMP
+        )''')
+
         # ── DIÁRIO ──
         c.execute('''CREATE TABLE IF NOT EXISTS diario (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -1534,6 +1547,118 @@ def salvar_usuario(nome, senha, perfil, cargo="Colaborador"):
     except Exception:
         conn.rollback()
         return False
+    finally:
+        conn.close()
+
+
+# ─── TAREFAS (to-do pessoal + atribuição pelo gestor) ─────
+# Visibilidade:
+#  - dono (`usuario`) vê e gere TODAS as suas (inclui privadas).
+#  - `privada=1` → ninguém além do dono vê (nem o gestor).
+#  - Gestor vê as NÃO-privadas dos usuários da equipe (GERAL = todas) e
+#    pode atribuir novas (criado_por = gestor; atribuição nunca é privada).
+def criar_tarefa(usuario, descricao, *, privada=False, criado_por=None,
+                 equipe=None):
+    """Cria uma tarefa para `usuario`. Se `criado_por` != `usuario`
+    (atribuição do gestor), a tarefa nunca é privada. Retorna True/False."""
+    descricao = (descricao or "").strip()
+    if not descricao:
+        return False
+    criado_por = criado_por or usuario
+    equipe = equipe or "SERVPEN"
+    if criado_por != usuario:
+        privada = False  # tarefa atribuída pelo gestor é sempre visível a ele
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute(
+            "INSERT INTO tarefas (usuario, descricao, privada, criado_por, "
+            "equipe) VALUES (%s,%s,%s,%s,%s)",
+            (usuario, descricao, 1 if privada else 0, criado_por, equipe),
+        )
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+
+def listar_tarefas_de(usuario, incluir_privadas=True):
+    """Tarefas cujo dono é `usuario` (pendentes primeiro, mais novas no topo).
+    `incluir_privadas=False` omite as privadas — usado na visão do gestor."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        sql = ("SELECT id, usuario, descricao, concluida, privada, criado_por "
+               "FROM tarefas WHERE usuario = %s")
+        if not incluir_privadas:
+            sql += " AND COALESCE(privada,0) = 0"
+        sql += " ORDER BY concluida ASC, id DESC"
+        c.execute(sql, (usuario,))
+        cols = [d[0] for d in c.description]
+        return [dict(zip(cols, r)) for r in c.fetchall()]
+    finally:
+        conn.close()
+
+
+def alternar_tarefa(id_tarefa, concluida):
+    """Marca/desmarca concluída (grava ou zera `concluida_em`)."""
+    val = 1 if concluida else 0
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute(
+            "UPDATE tarefas SET concluida=%s, "
+            "concluida_em = CASE WHEN %s=1 THEN CURRENT_TIMESTAMP ELSE NULL END "
+            "WHERE id=%s",
+            (val, val, int(id_tarefa)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def excluir_tarefa(id_tarefa):
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("DELETE FROM tarefas WHERE id=%s", (int(id_tarefa),))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def obter_tarefa(id_tarefa):
+    """Dict da tarefa (ou None) — pra checar dono/privada antes de uma ação."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute(
+            "SELECT id, usuario, descricao, concluida, privada, criado_por "
+            "FROM tarefas WHERE id=%s",
+            (int(id_tarefa),),
+        )
+        r = c.fetchone()
+        if not r:
+            return None
+        cols = ["id", "usuario", "descricao", "concluida", "privada",
+                "criado_por"]
+        return dict(zip(cols, r))
+    finally:
+        conn.close()
+
+
+def membros_para_gestor(equipe):
+    """[(nome, equipe)] dos usuários que um gestor de `equipe` gerencia.
+    'GERAL' → todos; senão → usuarios.equipe == equipe (mesma regra de
+    visibilidade por equipe do resto do app)."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        if (equipe or "").upper() == "GERAL":
+            c.execute("SELECT nome, COALESCE(equipe,'SERVPEN') FROM usuarios "
+                      "ORDER BY nome")
+        else:
+            c.execute("SELECT nome, COALESCE(equipe,'SERVPEN') FROM usuarios "
+                      "WHERE COALESCE(equipe,'SERVPEN') = %s ORDER BY nome",
+                      (equipe,))
+        return [(r[0], r[1]) for r in c.fetchall()]
     finally:
         conn.close()
 
