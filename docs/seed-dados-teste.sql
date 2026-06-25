@@ -30,6 +30,20 @@ DELETE FROM tarefas WHERE usuario IN
   ('Marcos Andrade','Carla Ribeiro','João Mendes','Patrícia Souza',
    'Rafael Lima','Beatriz Costa');
 DELETE FROM projetos WHERE codigo LIKE 'SP-2026-%';
+DELETE FROM agenda WHERE titulo IN (
+  'Reunião de abertura - Reforma Elétrica',
+  'Visita técnica - Pavilhão João Lyra Filho',
+  'Reunião de cronograma (sexta)',
+  'Folga - Rafael Lima',
+  'Visita técnica - CFTV Campus',
+  'Apresentação do projeto HVAC',
+  'Férias - João Mendes');
+DELETE FROM chat WHERE remetente IN
+  ('Marcos Andrade','Carla Ribeiro','João Mendes','Patrícia Souza',
+   'Rafael Lima','Beatriz Costa')
+  OR destinatario IN
+  ('Marcos Andrade','Carla Ribeiro','João Mendes','Patrícia Souza',
+   'Rafael Lima','Beatriz Costa');
 
 -- ── USUÁRIOS (senha = Teste@123456) ─────────────────────────────────────
 INSERT INTO usuarios (nome, senha, perfil, cargo, equipe) VALUES
@@ -168,6 +182,63 @@ VALUES
  ('Carla Ribeiro', 'Apresentar o cronograma na reunião de sexta', 0, 0,
   'Marcos Andrade', 'SERVPEN', DATE '2026-06-27', 0, NULL, 'nenhuma', NULL);
 
+-- ── AGENDA (eventos coerentes; o 1º é HOJE p/ disparar o aviso do dia) ──
+INSERT INTO agenda
+  (titulo, tipo, data_inicio, data_fim, responsaveis, descricao, local)
+VALUES
+ ('Reunião de abertura - Reforma Elétrica', 'Reunião',
+  DATE '2026-06-25', DATE '2026-06-25', 'Marcos Andrade, Carla Ribeiro',
+  'Kickoff da obra elétrica do pavilhão.', 'Sala de reuniões da ServPen'),
+ ('Visita técnica - Pavilhão João Lyra Filho', 'Visita Técnica',
+  DATE '2026-06-26', DATE '2026-06-26', 'Carla Ribeiro, Marcos Andrade',
+  'Vistoria dos quadros elétricos antes da intervenção.',
+  'Pavilhão João Lyra Filho, 5º andar'),
+ ('Reunião de cronograma (sexta)', 'Reunião',
+  DATE '2026-06-27', DATE '2026-06-27',
+  'Marcos Andrade, Carla Ribeiro, Rafael Lima, Patrícia Souza',
+  'Alinhamento do cronograma dos projetos em execução.',
+  'Sala de reuniões da ServPen'),
+ ('Folga - Rafael Lima', 'Folga',
+  DATE '2026-06-29', DATE '2026-06-29', 'Rafael Lima',
+  'Compensação de horas.', ''),
+ ('Visita técnica - CFTV Campus', 'Visita Técnica',
+  DATE '2026-06-30', DATE '2026-06-30', 'Rafael Lima',
+  'Conferência das eletrocalhas e dos pontos de câmera.',
+  'Campus Maracanã, blocos A e B'),
+ ('Apresentação do projeto HVAC', 'Reunião',
+  DATE '2026-07-03', DATE '2026-07-03', 'Patrícia Souza, Marcos Andrade',
+  'Apresentação da solução VRF para a direção da biblioteca.',
+  'Biblioteca do CTC'),
+ ('Férias - João Mendes', 'Férias',
+  DATE '2026-07-07', DATE '2026-07-18', 'João Mendes',
+  'Férias programadas.', '');
+
+-- ── CHAT (grupos @grupo:* + diretas; ficam como NÃO LIDAS → badges) ─────
+INSERT INTO chat (remetente, destinatario, mensagem, data) VALUES
+ ('Marcos Andrade', '@grupo:TODOS',
+  'Pessoal, reunião de cronograma na sexta às 10h. Confirmem presença.',
+  '24/06/2026 09:00'),
+ ('Carla Ribeiro', '@grupo:TODOS', 'Confirmado!', '24/06/2026 09:05'),
+ ('Rafael Lima', '@grupo:TODOS', 'Presença confirmada.', '24/06/2026 09:12'),
+ ('Marcos Andrade', '@grupo:SERVPEN',
+  'Carla e João, prioridade total na Reforma Elétrica esta semana.',
+  '24/06/2026 14:00'),
+ ('Carla Ribeiro', '@grupo:SERVPEN', 'Ok, o memorial do QDF sai hoje.',
+  '24/06/2026 14:10'),
+ ('Marcos Andrade', '@grupo:SERVPAR',
+  'Patrícia e Rafael, foco no levantamento de campo dos dois projetos.',
+  '24/06/2026 15:00'),
+ ('Rafael Lima', '@grupo:SERVPAR', 'Combinado.', '24/06/2026 15:03'),
+ ('Marcos Andrade', 'Carla Ribeiro',
+  'Carla, conseguiu a autorização de desligamento do circuito?',
+  '24/06/2026 16:00'),
+ ('Carla Ribeiro', 'Marcos Andrade',
+  'Ainda não, a prefeitura do campus retorna na segunda.',
+  '24/06/2026 16:20'),
+ ('João Mendes', 'Carla Ribeiro',
+  'Carla, me passa o contato do fornecedor de cabos quando puder?',
+  '24/06/2026 17:00');
+
 COMMIT;
 
 -- ════════════════════════════════════════════════════════════════════════
@@ -183,6 +254,18 @@ COMMIT;
 --    ('Marcos Andrade','Carla Ribeiro','João Mendes','Patrícia Souza',
 --     'Rafael Lima','Beatriz Costa');
 --  DELETE FROM projetos WHERE codigo LIKE 'SP-2026-%';
+--  DELETE FROM agenda WHERE titulo IN
+--    ('Reunião de abertura - Reforma Elétrica',
+--     'Visita técnica - Pavilhão João Lyra Filho',
+--     'Reunião de cronograma (sexta)','Folga - Rafael Lima',
+--     'Visita técnica - CFTV Campus','Apresentação do projeto HVAC',
+--     'Férias - João Mendes');
+--  DELETE FROM chat WHERE remetente IN
+--    ('Marcos Andrade','Carla Ribeiro','João Mendes','Patrícia Souza',
+--     'Rafael Lima','Beatriz Costa')
+--    OR destinatario IN
+--    ('Marcos Andrade','Carla Ribeiro','João Mendes','Patrícia Souza',
+--     'Rafael Lima','Beatriz Costa');
 --  DELETE FROM usuarios WHERE nome IN
 --    ('Marcos Andrade','Carla Ribeiro','João Mendes','Patrícia Souza',
 --     'Rafael Lima','Beatriz Costa');
