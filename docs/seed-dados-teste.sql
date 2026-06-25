@@ -27,6 +27,8 @@ DELETE FROM progresso_disciplinas WHERE projeto_id IN (SELECT id FROM projetos
                                          WHERE codigo LIKE 'SP-2026-%');
 DELETE FROM etapas_projeto WHERE projeto_id IN (SELECT id FROM projetos
                                          WHERE codigo LIKE 'SP-2026-%');
+DELETE FROM arquivos WHERE projeto_id IN (SELECT id FROM projetos
+                                         WHERE codigo LIKE 'SP-2026-%');
 DELETE FROM tarefas WHERE usuario IN
   ('Marcos Andrade','Carla Ribeiro','João Mendes','Patrícia Souza',
    'Rafael Lima','Beatriz Costa')
@@ -302,6 +304,9 @@ COMMIT;
 --    (SELECT id FROM projetos WHERE codigo LIKE 'SP-2026-%');
 --  DELETE FROM etapas_projeto WHERE projeto_id IN
 --    (SELECT id FROM projetos WHERE codigo LIKE 'SP-2026-%');
+--  DELETE FROM arquivos WHERE projeto_id IN
+--    (SELECT id FROM projetos WHERE codigo LIKE 'SP-2026-%');
+--  (os arquivos físicos em anexos/<id>/ saem com docs/seed_arquivos.py)
 --  DELETE FROM projetos WHERE codigo LIKE 'SP-2026-%';
 --  DELETE FROM agenda WHERE titulo IN
 --    ('Reunião de abertura - Reforma Elétrica',
