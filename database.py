@@ -1729,6 +1729,31 @@ def atualizar_data_tarefa(id_tarefa, data):
         conn.close()
 
 
+def atualizar_projeto_tarefa(id_tarefa, projeto_id):
+    """Vincula/desvincula a tarefa de um projeto (projeto_id ou None)."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("UPDATE tarefas SET projeto_id=%s WHERE id=%s",
+                  (int(projeto_id) if projeto_id is not None else None,
+                   int(id_tarefa)))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def atualizar_recorrencia_tarefa(id_tarefa, recorrencia):
+    """Altera/para a recorrência ('nenhuma' = para de repetir)."""
+    if recorrencia not in ("nenhuma", "diaria", "semanal", "mensal"):
+        recorrencia = "nenhuma"
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("UPDATE tarefas SET recorrencia=%s WHERE id=%s",
+                  (recorrencia, int(id_tarefa)))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def listar_tarefas_equipe(equipe):
     """Tarefas NÃO privadas dos usuários da equipe (GERAL = todas) — pra tabela
     do gestor. Pendentes primeiro, agrupadas por nome. `data` = data planejada
@@ -1796,7 +1821,8 @@ def criar_proxima_ocorrencia(id_tarefa):
             "     WHEN 'semanal' THEN INTERVAL '7 days' "
             "     WHEN 'mensal' THEN INTERVAL '1 month' "
             "     ELSE INTERVAL '0 day' END))::date, "
-            "  1, projeto_id, recorrencia "
+            "  CASE WHEN criado_por <> usuario THEN 0 ELSE 1 END, "
+            "  projeto_id, recorrencia "
             "FROM tarefas "
             "WHERE id = %s AND COALESCE(recorrencia,'nenhuma') <> 'nenhuma'",
             (int(id_tarefa),),

@@ -44,6 +44,14 @@ _REC_LABEL = {"Não repetir": "nenhuma", "Diária": "diaria",
               "Semanal": "semanal", "Mensal": "mensal"}
 _REC_NOME = {"nenhuma": "—", "diaria": "🔁 Diária", "semanal": "🔁 Semanal",
              "mensal": "🔁 Mensal"}
+_REC_LABEL_INV = {v: k for k, v in _REC_LABEL.items()}  # código -> rótulo
+
+
+def _proj_label(t):
+    """Rótulo do projeto da tarefa (nome se visível p/ mim, senão Nenhum) —
+    usado pra exibir E comparar na hora de salvar."""
+    _pn = t.get("projeto_nome")
+    return _pn if _pn in _PROJ_MAP else "— Nenhum —"
 
 
 def _fmt_data(v):
@@ -117,10 +125,13 @@ else:
         "Data": t["data"],
         "Nome": usuario,
         "Tarefa": t["descricao"],
+        "📁 Projeto": _proj_label(t),
         "Concluída": bool(t["concluida"]),
         "✔ Feito em": _fmt_data(t["concluida_em"]) if t.get("concluida_em")
                       else "",
         "🔒 Privada": bool(t["privada"]),
+        "🔁 Repete": _REC_LABEL_INV.get(t.get("recorrencia", "nenhuma"),
+                                        "Não repetir"),
         "🗑️": False,
     } for t in _vis])
     _df_my["Data"] = pd.to_datetime(_df_my["Data"], errors="coerce")
@@ -138,6 +149,9 @@ else:
             "Nome": st.column_config.TextColumn("👤 Nome", disabled=True,
                                                 width="small"),
             "Tarefa": st.column_config.TextColumn("📝 Tarefa", width="large"),
+            "📁 Projeto": st.column_config.SelectboxColumn(
+                "📁 Projeto", options=_PROJ_NOMES, width="medium",
+                help="Vincular a um projeto (aparece no Kanban)."),
             "Concluída": st.column_config.CheckboxColumn("✅ Concluída",
                                                          width="medium"),
             "✔ Feito em": st.column_config.TextColumn(
@@ -146,6 +160,9 @@ else:
             "🔒 Privada": st.column_config.CheckboxColumn(
                 "🔒 Privada", width="medium",
                 help="Privada (só você). Desmarque pra o gestor ver."),
+            "🔁 Repete": st.column_config.SelectboxColumn(
+                "🔁 Repete", options=list(_REC_LABEL.keys()), width="small",
+                help="Recorrência. 'Não repetir' = para de repetir."),
             "🗑️": st.column_config.CheckboxColumn(
                 "❌ Excluir", width="medium",
                 help="Marque e clique em Salvar pra excluir."),
@@ -176,6 +193,16 @@ else:
             _nd = _nd.date() if pd.notna(_nd) else None
             if _nd != t["data"]:
                 db.atualizar_data_tarefa(t["id"], _nd)
+                _mudou = True
+            _np_lbl = str(_r["📁 Projeto"])
+            if _np_lbl != _proj_label(t):
+                db.atualizar_projeto_tarefa(t["id"], _PROJ_MAP.get(_np_lbl))
+                _mudou = True
+            _nr_lbl = str(_r["🔁 Repete"])
+            if _nr_lbl != _REC_LABEL_INV.get(t.get("recorrencia", "nenhuma"),
+                                             "Não repetir"):
+                db.atualizar_recorrencia_tarefa(
+                    t["id"], _REC_LABEL.get(_nr_lbl, "nenhuma"))
                 _mudou = True
         st.session_state["_ed_minhas_ver"] = _ver + 1  # reinicia o editor
         if _mudou:
@@ -243,15 +270,24 @@ if _pode_gestor():
             _d2 = st.text_input("Tarefa",
                                 placeholder="Nova tarefa pra atribuir...",
                                 key="tarefa_atrib_desc")
-            _dt2 = st.date_input("📅 Data", value=date.today(),
-                                 format="DD/MM/YYYY", key="tarefa_atrib_data")
+            gc1, gc2 = st.columns(2, vertical_alignment="bottom")
+            _dt2 = gc1.date_input("📅 Data", value=date.today(),
+                                  format="DD/MM/YYYY", key="tarefa_atrib_data")
+            _rep2 = gc2.selectbox("🔁 Repetir",
+                                  ["Não repetir", "Diária", "Semanal",
+                                   "Mensal"], key="tarefa_atrib_rep")
+            _proj2 = st.selectbox("📁 Projeto (opcional)", _PROJ_NOMES,
+                                  key="tarefa_atrib_proj")
             _go = st.form_submit_button("➕ Atribuir", width="stretch")
         if _go:
             if _d2.strip():
                 _eqa = (db.obter_usuario(_alvo) or {}).get("equipe") \
                     or "SERVPEN"
                 if db.criar_tarefa(_alvo, _d2, privada=False,
-                                   criado_por=usuario, equipe=_eqa, data=_dt2):
+                                   criado_por=usuario, equipe=_eqa, data=_dt2,
+                                   projeto_id=_PROJ_MAP.get(_proj2),
+                                   recorrencia=_REC_LABEL.get(_rep2,
+                                                              "nenhuma")):
                     db.log_aud(usuario, "atribuir_tarefa", "tarefa", None,
                                f"para {_alvo}: {_d2.strip()[:120]}")
                     confirmar_sucesso("Tarefa atribuída",

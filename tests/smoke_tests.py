@@ -103,10 +103,64 @@ def db_tarefas():
     _limpa()
 
 
+def db_tarefas_proj_rec():
+    print("Projeto + Recorrência:")
+    nm = "ZZsmoke_pr"
+    conn = db.conectar(); c = conn.cursor()
+    c.execute("DELETE FROM tarefas WHERE usuario=%s", (nm,))
+    c.execute("INSERT INTO projetos (projetista,projeto,status) "
+              "VALUES (%s,%s,%s) RETURNING id",
+              ("ZZsmoke", "ZZ Smoke Proj", "Ativo"))
+    pid = c.fetchone()[0]
+    conn.commit(); conn.close()
+
+    db.criar_tarefa(nm, "vinc+rec", privada=False, criado_por=nm,
+                    data=date(2026, 7, 1), projeto_id=pid,
+                    recorrencia="semanal")
+    _t = db.listar_tarefas_de(nm)[0]
+    _check("vinculo: projeto_nome retornado",
+           _t.get("projeto_nome") == "ZZ Smoke Proj")
+    _check("vinculo aparece em listar_tarefas_por_projeto",
+           len(db.listar_tarefas_por_projeto(pid)) == 1)
+
+    db.atualizar_projeto_tarefa(_t["id"], None)
+    _check("desvincular projeto",
+           db.listar_tarefas_de(nm)[0].get("projeto_nome") is None)
+
+    db.atualizar_recorrencia_tarefa(_t["id"], "nenhuma")
+    db.alternar_tarefa(_t["id"], True)
+    db.criar_proxima_ocorrencia(_t["id"])
+    _check("recorrencia parada NAO gera proxima",
+           len(db.listar_tarefas_de(nm)) == 1)
+
+    db.criar_tarefa(nm, "rec-ativa", privada=False, criado_por=nm,
+                    data=date(2026, 8, 1), recorrencia="mensal")
+    _ra = [x for x in db.listar_tarefas_de(nm)
+           if x["descricao"] == "rec-ativa"][0]
+    db.alternar_tarefa(_ra["id"], True)
+    db.criar_proxima_ocorrencia(_ra["id"])
+    _prox = [x for x in db.listar_tarefas_de(nm)
+             if x["descricao"] == "rec-ativa" and not x["concluida"]]
+    _check("recorrencia ativa gera proxima (01/09)",
+           bool(_prox) and str(_prox[0]["data"]) == "2026-09-01")
+
+    conn = db.conectar(); c = conn.cursor()
+    c.execute("DELETE FROM tarefas WHERE usuario=%s", (nm,))
+    c.execute("DELETE FROM projetos WHERE id=%s", (pid,))
+    conn.commit(); conn.close()
+
+
 def main():
     db.criar_tabelas()
     db_tarefas()
+    db_tarefas_proj_rec()
+    # 1 tarefa pro usuário das views, pra exercitar o data_editor de Tarefas.
+    db.criar_tarefa("ZZsmoke_gestor", "render check", privada=True,
+                    criado_por="ZZsmoke_gestor", data=date.today())
     render_views()
+    _cc = db.conectar(); _cx = _cc.cursor()
+    _cx.execute("DELETE FROM tarefas WHERE usuario=%s", ("ZZsmoke_gestor",))
+    _cc.commit(); _cc.close()
     print()
     if _FALHAS:
         print(f"FALHOU: {len(_FALHAS)} item(ns) -> {_FALHAS}")
