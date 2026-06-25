@@ -47,42 +47,68 @@ _RE_INTERACAO = re.compile(
 )
 
 
-def _interacoes_para_html(bruto, usuarios, eu):
-    """Quebra o histórico de respostas em comentários e devolve (html, n).
+def _strip_editado(txt):
+    """Remove o sufixo ' (editado)' do corpo (pra pré-preencher a edição e
+    pra renderizar a tag '· editado' separada do texto)."""
+    t = str(txt or "").rstrip()
+    for suf in (" (editado)", "(editado)"):
+        if t.endswith(suf):
+            t = t[: -len(suf)].rstrip()
+    return t
 
-    Cada comentário vira um "balão" com cabeçalho (autor · perfil · data) e
-    corpo — separação visual clara de onde começa/termina cada um. Texto
-    legado sem cabeçalho vira um balão único. A string HTML NÃO tem quebras
-    de linha de propósito: 4+ espaços no início de linha viram bloco <pre>
-    no markdown do Streamlit (e o HTML apareceria literal).
-    """
+
+def _parse_interacoes(bruto):
+    """Quebra resposta_gestor em [(data, autor, perfil, corpo), ...]. Texto
+    legado sem cabeçalho vira um item com autor/data vazios."""
     bruto = str(bruto or "").strip()
     if not bruto:
-        return "", 0
-
+        return []
     matches = list(_RE_INTERACAO.finditer(bruto))
-    itens = []  # (data, autor, perfil, corpo)
+    itens = []
     if not matches:
-        itens.append(("", "", "", bruto))
-    else:
-        if matches[0].start() > 0:
-            _pre = bruto[:matches[0].start()].strip()
-            if _pre:
-                itens.append(("", "", "", _pre))
-        for i, m in enumerate(matches):
-            ini = m.end()
-            fim = matches[i + 1].start() if i + 1 < len(matches) else len(bruto)
-            itens.append((m.group(1), m.group(2).strip(),
-                          m.group(3).strip(), bruto[ini:fim].strip()))
+        return [("", "", "", bruto)]
+    if matches[0].start() > 0:
+        _pre = bruto[:matches[0].start()].strip()
+        if _pre:
+            itens.append(("", "", "", _pre))
+    for i, m in enumerate(matches):
+        ini = m.end()
+        fim = matches[i + 1].start() if i + 1 < len(matches) else len(bruto)
+        itens.append((m.group(1), m.group(2).strip(),
+                      m.group(3).strip(), bruto[ini:fim].strip()))
+    return itens
 
+
+def _montar_interacoes(itens):
+    """Reconstrói o campo resposta_gestor a partir da lista parseada."""
+    linhas = []
+    for (data, autor, perfil_c, corpo) in itens:
+        if data and autor:
+            linhas.append(f"[{data}] {autor} ({perfil_c}): {corpo}")
+        elif corpo:
+            linhas.append(corpo)
+    return "\n".join(linhas)
+
+
+def _interacoes_para_html(bruto, usuarios, eu):
+    """Renderiza as interações em "balões" separados; devolve (html, n).
+    Cada balão tem cabeçalho (autor · perfil · data) e corpo. Corpo terminado
+    em ' (editado)' vira a tag discreta '· editado'. A string HTML NÃO tem
+    quebras de linha de propósito (4+ espaços viram bloco <pre> no markdown)."""
+    itens = _parse_interacoes(bruto)
+    if not itens:
+        return "", 0
     baloes = []
     for (data, autor, perfil_c, corpo) in itens:
+        _foi_editado = _strip_editado(corpo) != str(corpo or "").rstrip()
         corpo_html = _render_mencoes_html(
-            corpo.replace("\n", "<br>"), usuarios, eu_mesmo=eu,
+            _strip_editado(corpo).replace("\n", "<br>"), usuarios, eu_mesmo=eu,
         )
         _eh_gestor = perfil_c.lower().startswith("gestor")
         _accent = "#f5b301" if _eh_gestor else "#38bdf8"
         _icone = "👑" if _eh_gestor else "💬"
+        _ed = ('<span style="opacity:.55;font-style:italic;"> · editado</span>'
+               if _foi_editado else "")
         _cab = (
             (f'<div style="display:flex;justify-content:space-between;'
              f'align-items:center;gap:8px;margin-bottom:5px;">'
@@ -91,7 +117,7 @@ def _interacoes_para_html(bruto, usuarios, eu):
              f'<span style="opacity:.6;font-weight:400;"> · {perfil_c}</span>'
              f'</span>'
              f'<span style="opacity:.55;font-size:11px;white-space:nowrap;">'
-             f'{data}</span></div>')
+             f'{data}{_ed}</span></div>')
             if autor else ""
         )
         baloes.append(
@@ -192,6 +218,7 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
             f'<span title="{d["data"]}">{_tempo_relativo(d["data"])}</span>'
             f'</span>'
         )
+        _ed_relato = " · editado" if d.get("editado_em") else ""
 
         st.markdown(f"""
             {_wrap_pre}
@@ -202,7 +229,7 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
             <div style="font-size:16px;font-weight:700;margin-top:6px;">
                 {d['disciplina'] if d['disciplina'] else 'Geral'}
             </div>
-            <div style="font-size:11px;opacity:.85;">Por: {d['autor']}</div>
+            <div style="font-size:11px;opacity:.85;">Por: {d['autor']}{_ed_relato}</div>
             </div>
             <div style="background:#1E1E1E;color:#EEE;padding:14px 15px;border:1px solid {cor_topo};border-top:none;border-radius:0 0 10px 10px;font-size:13px;line-height:1.6;margin-bottom:4px;">
             {texto_exibicao}
@@ -212,7 +239,7 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
         """, unsafe_allow_html=True)
 
         # ── Barra de comandos dos cards ───────────────────────
-        bc1, bc2, bc3, bc4 = st.columns([0.15, 0.15, 0.35, 0.35])
+        bc1, bc2, bc3, bc4, bc5 = st.columns([0.10, 0.10, 0.16, 0.34, 0.30])
 
         if isinstance(_anexo, str) and _anexo.strip() and os.path.exists(_anexo):
             with open(_anexo, "rb") as _f:
@@ -229,8 +256,13 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
                           width="stretch", help="Excluir registro"):
                 db.excluir_registro_diario(d["id"])
                 st.rerun(scope="fragment")
+            if bc3.button("✏️", key=f"btn_edit_{d['id']}",
+                          width="stretch", help="Editar o relato"):
+                _ke = f"edit_relato_{d['id']}"
+                st.session_state[_ke] = not st.session_state.get(_ke, False)
+                st.rerun(scope="fragment")
 
-        if bc3.button("✍️ Responder / Interagir", key=f"btn_resp_{d['id']}",
+        if bc4.button("✍️ Responder / Interagir", key=f"btn_resp_{d['id']}",
                       width="stretch"):
             _k = f"editor_{d['id']}"
             st.session_state[_k] = not st.session_state.get(_k, False)
@@ -238,7 +270,7 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
 
         if perfil == "Gestor":
             if not d["resolvido"]:
-                if bc4.button("✅ Resolver", key=f"btn_res_{d['id']}",
+                if bc5.button("✅ Resolver", key=f"btn_res_{d['id']}",
                               width="stretch"):
                     with db.conectar() as conn:
                         _c = conn.cursor()
@@ -247,7 +279,7 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
                         conn.commit()
                     st.rerun(scope="fragment")
             else:
-                if bc4.button("🔓 Reabrir", key=f"btn_reap_{d['id']}",
+                if bc5.button("🔓 Reabrir", key=f"btn_reap_{d['id']}",
                               width="stretch"):
                     with db.conectar() as conn:
                         _c = conn.cursor()
@@ -255,6 +287,64 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
                                    (d["id"],))
                         conn.commit()
                     st.rerun(scope="fragment")
+
+        # ── Editar o RELATO (autor do relato ou gestor) ───────
+        if _pode_del and st.session_state.get(f"edit_relato_{d['id']}"):
+            _mp = re.match(r"^(\[[^\]]*\]\s*)(.*)$", texto_completo, re.DOTALL)
+            _pref = _mp.group(1) if _mp else ""
+            _txt_atual = _mp.group(2) if _mp else texto_completo
+            _novo_relato = st.text_area(
+                "Editar o relato:", value=_txt_atual,
+                key=f"area_edit_{d['id']}",
+            )
+            _ce1, _ce2 = st.columns(2)
+            if _ce1.button("💾 Salvar edição", key=f"save_edit_{d['id']}",
+                           width="stretch"):
+                if _novo_relato.strip():
+                    db.editar_relato_diario(
+                        d["id"], _pref + _novo_relato.strip())
+                    st.session_state[f"edit_relato_{d['id']}"] = False
+                    st.rerun(scope="fragment")
+                else:
+                    st.warning("O relato não pode ficar vazio.")
+            if _ce2.button("Cancelar", key=f"cancel_edit_{d['id']}",
+                           width="stretch"):
+                st.session_state[f"edit_relato_{d['id']}"] = False
+                st.rerun(scope="fragment")
+
+        # ── Editar uma INTERAÇÃO (balão) — quem escreveu ou gestor ──
+        _itens_int = _parse_interacoes(d.get("resposta_gestor"))
+        _editaveis = [
+            (idx, it) for idx, it in enumerate(_itens_int)
+            if it[1] and (perfil == "Gestor" or it[1] == autor_logado)
+        ]
+        if _editaveis:
+            with st.expander("✏️ Editar uma interação"):
+                _labels = {
+                    f"{idx + 1}. {it[1]}: {_strip_editado(it[3])[:45]}": idx
+                    for idx, it in _editaveis
+                }
+                _sel = st.selectbox("Interação", list(_labels.keys()),
+                                    key=f"selint_{d['id']}")
+                _idx = _labels[_sel]
+                _novo_int = st.text_area(
+                    "Texto da interação:",
+                    value=_strip_editado(_itens_int[_idx][3]),
+                    key=f"txtint_{d['id']}_{_idx}",
+                )
+                if st.button("💾 Salvar interação", key=f"saveint_{d['id']}",
+                             width="stretch"):
+                    if _novo_int.strip():
+                        _o = _itens_int[_idx]
+                        _itens_int[_idx] = (
+                            _o[0], _o[1], _o[2],
+                            _strip_editado(_novo_int.strip()) + " (editado)",
+                        )
+                        db.atualizar_resposta_gestor_diario(
+                            d["id"], _montar_interacoes(_itens_int))
+                        st.rerun(scope="fragment")
+                    else:
+                        st.warning("A interação não pode ficar vazia.")
 
         if st.session_state.get(f"editor_{d['id']}"):
             try:

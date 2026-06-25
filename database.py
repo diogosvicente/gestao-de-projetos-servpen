@@ -880,6 +880,8 @@ def _criar_tabelas_impl():
             ("diario",                "resposta_gestor",    "TEXT"),
             ("diario",                "anexo",              "TEXT"),
             ("diario",                "resolvido",          "INTEGER DEFAULT 0"),
+            # Marca quando o relato foi editado — UI mostra "· editado".
+            ("diario",                "editado_em",         "TIMESTAMP"),
             ("chat",                  "lido_em",            "TIMESTAMP"),
             # Marca quando a mensagem foi editada — UI mostra "(editado)"
             # do lado do horário, no estilo WhatsApp/Telegram.
@@ -1395,6 +1397,36 @@ def excluir_registro_diario(id_relato):
     conn = conectar(); c = conn.cursor()
     try:
         c.execute("DELETE FROM diario WHERE id = %s", (id_relato,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def editar_relato_diario(id_relato, novo_executado):
+    """Edita o texto do relato e marca `editado_em` (UI mostra '· editado').
+    Espelha o `editar_mensagem_chat` do chat."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute(
+            "UPDATE diario SET executado = %s, editado_em = CURRENT_TIMESTAMP "
+            "WHERE id = %s",
+            (novo_executado, int(id_relato)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def atualizar_resposta_gestor_diario(id_relato, nova_resposta):
+    """Reescreve o histórico de interações (resposta_gestor). Usado ao editar
+    uma interação específica — o '(editado)' fica no texto da própria
+    interação, então NÃO mexe no `editado_em` do relato."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute(
+            "UPDATE diario SET resposta_gestor = %s WHERE id = %s",
+            (nova_resposta, int(id_relato)),
+        )
         conn.commit()
     finally:
         conn.close()
