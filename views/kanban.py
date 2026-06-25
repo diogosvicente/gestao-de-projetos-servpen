@@ -995,6 +995,25 @@ if "projeto_em_edicao" in st.session_state:
     st.markdown(_badge_status(dados.get("status", "")),
                 unsafe_allow_html=True)
 
+    # Tarefas (não privadas) vinculadas a este projeto — somente leitura.
+    _tks_proj = db.listar_tarefas_por_projeto(int(id_ed))
+    if _tks_proj:
+        _pend_tk = sum(1 for _tk in _tks_proj if not _tk["concluida"])
+        with st.expander(
+            f"📋 Tarefas vinculadas — {_pend_tk} pendente(s) de "
+            f"{len(_tks_proj)}"
+        ):
+            for _tk in _tks_proj:
+                _ic = "✅" if _tk["concluida"] else "⬜"
+                _dtk = (_tk["data"].strftime("%d/%m/%Y")
+                        if _tk.get("data") else "—")
+                st.markdown(
+                    f"{_ic} {_tk['descricao']}  "
+                    f"<span style='opacity:.6;font-size:.85em'>· "
+                    f"{_tk['usuario']} · {_dtk}</span>",
+                    unsafe_allow_html=True,
+                )
+
     def _parse_d(val):
         for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%Y-%m-%d %H:%M:%S"):
             try:

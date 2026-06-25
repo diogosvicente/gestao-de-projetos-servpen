@@ -631,6 +631,8 @@ def _criar_tabelas_impl():
             equipe TEXT DEFAULT 'SERVPEN',
             data DATE,
             vista INT DEFAULT 1,
+            projeto_id BIGINT,
+            recorrencia TEXT DEFAULT 'nenhuma',
             criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             concluida_em TIMESTAMP
         )''')
@@ -897,6 +899,10 @@ def _criar_tabelas_impl():
             # (alimenta badge/toast). DEFAULT 1 → linhas antigas já entram
             # como vistas (não geram alarme retroativo).
             ("tarefas",               "vista",              "INTEGER DEFAULT 1"),
+            # Vínculo opcional a um projeto (aparece no Kanban) + recorrência
+            # (ao concluir, gera a próxima ocorrência com a data deslocada).
+            ("tarefas",               "projeto_id",         "BIGINT"),
+            ("tarefas",               "recorrencia",        "TEXT DEFAULT 'nenhuma'"),
         ]
         # PASSO 1: lê o schema atual via information_schema (SELECT, só
         # pega AccessShareLock — NÃO conflita com nada). Migrations cujo
@@ -1567,10 +1573,11 @@ def salvar_usuario(nome, senha, perfil, cargo="Colaborador"):
 #  - Gestor vê as NÃO-privadas dos usuários da equipe (GERAL = todas) e
 #    pode atribuir novas (criado_por = gestor; atribuição nunca é privada).
 def criar_tarefa(usuario, descricao, *, privada=False, criado_por=None,
-                 equipe=None, data=None):
+                 equipe=None, data=None, projeto_id=None, recorrencia="nenhuma"):
     """Cria uma tarefa para `usuario`. Se `criado_por` != `usuario`
-    (atribuição do gestor), a tarefa nunca é privada. `data` é a data
-    planejada (objeto date ou None). Retorna True/False."""
+    (atribuição do gestor), a tarefa nunca é privada. `data` = data planejada
+    (date ou None). `projeto_id` = vínculo opcional a um projeto. `recorrencia`
+    ∈ {nenhuma, diaria, semanal, mensal}. Retorna True/False."""
     descricao = (descricao or "").strip()
     if not descricao:
         return False
@@ -1581,13 +1588,16 @@ def criar_tarefa(usuario, descricao, *, privada=False, criado_por=None,
     # Atribuída por OUTRA pessoa nasce "não vista" (gera badge/toast pro dono);
     # criada pela própria pessoa já nasce vista.
     vista = 0 if criado_por != usuario else 1
+    if recorrencia not in ("nenhuma", "diaria", "semanal", "mensal"):
+        recorrencia = "nenhuma"
     conn = conectar(); c = conn.cursor()
     try:
         c.execute(
             "INSERT INTO tarefas (usuario, descricao, privada, criado_por, "
-            "equipe, data, vista) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            "equipe, data, vista, projeto_id, recorrencia) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (usuario, descricao, 1 if privada else 0, criado_por, equipe, data,
-             vista),
+             vista, projeto_id, recorrencia),
         )
         conn.commit()
         return True
@@ -1603,14 +1613,17 @@ def listar_tarefas_de(usuario, incluir_privadas=True):
     `incluir_privadas=False` omite as privadas — usado na visão do gestor."""
     conn = conectar(); c = conn.cursor()
     try:
-        sql = ("SELECT id, usuario, descricao, concluida, privada, criado_por, "
-               "COALESCE(data, criado_em::date) AS data, concluida_em "
-               "FROM tarefas WHERE usuario = %s")
+        sql = ("SELECT t.id, t.usuario, t.descricao, t.concluida, t.privada, "
+               "t.criado_por, COALESCE(t.data, t.criado_em::date) AS data, "
+               "t.concluida_em, t.projeto_id, p.projeto AS projeto_nome, "
+               "COALESCE(t.recorrencia,'nenhuma') AS recorrencia "
+               "FROM tarefas t LEFT JOIN projetos p ON p.id = t.projeto_id "
+               "WHERE t.usuario = %s")
         if not incluir_privadas:
-            sql += " AND COALESCE(privada,0) = 0"
+            sql += " AND COALESCE(t.privada,0) = 0"
         # Pendentes primeiro, depois por data planejada (mais próxima no topo).
-        sql += (" ORDER BY concluida ASC, "
-                "COALESCE(data, criado_em::date) ASC, id DESC")
+        sql += (" ORDER BY t.concluida ASC, "
+                "COALESCE(t.data, t.criado_em::date) ASC, t.id DESC")
         c.execute(sql, (usuario,))
         cols = [d[0] for d in c.description]
         return [dict(zip(cols, r)) for r in c.fetchall()]
@@ -1723,8 +1736,11 @@ def listar_tarefas_equipe(equipe):
     conn = conectar(); c = conn.cursor()
     try:
         base = ("SELECT t.id, t.usuario, t.descricao, t.concluida, "
-                "t.criado_por, COALESCE(t.data, t.criado_em::date) AS data "
-                "FROM tarefas t LEFT JOIN usuarios u ON u.nome = t.usuario "
+                "t.criado_por, COALESCE(t.data, t.criado_em::date) AS data, "
+                "p.projeto AS projeto_nome "
+                "FROM tarefas t "
+                "LEFT JOIN usuarios u ON u.nome = t.usuario "
+                "LEFT JOIN projetos p ON p.id = t.projeto_id "
                 "WHERE COALESCE(t.privada,0) = 0")
         if (equipe or "").upper() == "GERAL":
             c.execute(base + " ORDER BY t.usuario, t.concluida, t.id DESC")
@@ -1761,6 +1777,50 @@ def marcar_tarefas_vistas(usuario):
         c.execute("UPDATE tarefas SET vista = 1 WHERE usuario = %s "
                   "AND COALESCE(vista,1) = 0", (usuario,))
         conn.commit()
+    finally:
+        conn.close()
+
+
+def criar_proxima_ocorrencia(id_tarefa):
+    """Se a tarefa for recorrente, cria a PRÓXIMA ocorrência (mesma descrição/
+    projeto/privacidade) com a data deslocada pelo intervalo. Chamado ao
+    concluir uma tarefa. No-op se recorrencia = 'nenhuma'."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute(
+            "INSERT INTO tarefas (usuario, descricao, privada, criado_por, "
+            "equipe, data, vista, projeto_id, recorrencia) "
+            "SELECT usuario, descricao, privada, criado_por, equipe, "
+            "  (COALESCE(data, CURRENT_DATE) + (CASE recorrencia "
+            "     WHEN 'diaria' THEN INTERVAL '1 day' "
+            "     WHEN 'semanal' THEN INTERVAL '7 days' "
+            "     WHEN 'mensal' THEN INTERVAL '1 month' "
+            "     ELSE INTERVAL '0 day' END))::date, "
+            "  1, projeto_id, recorrencia "
+            "FROM tarefas "
+            "WHERE id = %s AND COALESCE(recorrencia,'nenhuma') <> 'nenhuma'",
+            (int(id_tarefa),),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def listar_tarefas_por_projeto(projeto_id):
+    """Tarefas NÃO privadas vinculadas a um projeto (pra mostrar no Kanban).
+    Pendentes primeiro."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute(
+            "SELECT id, usuario, descricao, concluida, "
+            "COALESCE(data, criado_em::date) AS data "
+            "FROM tarefas WHERE projeto_id = %s AND COALESCE(privada,0) = 0 "
+            "ORDER BY concluida ASC, COALESCE(data, criado_em::date) ASC, "
+            "id DESC",
+            (int(projeto_id),),
+        )
+        cols = [d[0] for d in c.description]
+        return [dict(zip(cols, r)) for r in c.fetchall()]
     finally:
         conn.close()
 

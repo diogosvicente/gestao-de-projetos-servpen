@@ -15,20 +15,35 @@ st.data_editor — rola na horizontal no celular, melhor que colunas espremidas)
 
 from __future__ import annotations
 
+import html as _html
 from datetime import date
 
 import pandas as pd
 import streamlit as st
 
 import database as db
+from core.data import _load_df_p
 from core.helpers import _pode_gestor
 from core.ui_feedback import confirmar_sucesso
 
 usuario = st.session_state.usuario
+perfil = st.session_state.get("perfil", "Projetista")
 equipe = st.session_state.get("equipe", "SERVPEN")
 
 # Abrir a aba marca como vistas as tarefas atribuídas → some o badge/toast.
 db.marcar_tarefas_vistas(usuario)
+
+# Projetos visíveis pro vínculo opcional "📁 Projeto": {nome: id}.
+_df_proj_tar = _load_df_p(usuario, perfil)
+_PROJ_MAP = ({} if _df_proj_tar.empty else {
+    str(r["projeto"]): int(r["id"]) for _, r in _df_proj_tar.iterrows()
+    if str(r.get("projeto") or "").strip()
+})
+_PROJ_NOMES = ["— Nenhum —"] + sorted(_PROJ_MAP.keys())
+_REC_LABEL = {"Não repetir": "nenhuma", "Diária": "diaria",
+              "Semanal": "semanal", "Mensal": "mensal"}
+_REC_NOME = {"nenhuma": "—", "diaria": "🔁 Diária", "semanal": "🔁 Semanal",
+             "mensal": "🔁 Mensal"}
 
 
 def _fmt_data(v):
@@ -56,14 +71,22 @@ with st.form("form_nova_tarefa", clear_on_submit=True):
     fc1, fc2 = st.columns(2, vertical_alignment="bottom")
     _dt = fc1.date_input("📅 Data", value=date.today(), format="DD/MM/YYYY",
                          key="tarefa_nova_data")
-    _priv = fc2.checkbox("🔒 Manter privada", value=True,
+    _rep = fc2.selectbox("🔁 Repetir",
+                         ["Não repetir", "Diária", "Semanal", "Mensal"],
+                         key="tarefa_nova_rep")
+    fc3, fc4 = st.columns(2, vertical_alignment="bottom")
+    _proj_sel = fc3.selectbox("📁 Projeto (opcional)", _PROJ_NOMES,
+                              key="tarefa_nova_proj")
+    _priv = fc4.checkbox("🔒 Manter privada", value=True,
                          key="tarefa_nova_priv",
                          help="Marcada por padrão. Desmarque pra o gestor ver.")
     _add = st.form_submit_button("➕ Adicionar", width="stretch")
 if _add:
     if _desc.strip():
         if db.criar_tarefa(usuario, _desc, privada=_priv, criado_por=usuario,
-                           equipe=equipe, data=_dt):
+                           equipe=equipe, data=_dt,
+                           projeto_id=_PROJ_MAP.get(_proj_sel),
+                           recorrencia=_REC_LABEL.get(_rep, "nenhuma")):
             confirmar_sucesso("Tarefa adicionada", _desc.strip())
             st.rerun()
         else:
@@ -139,6 +162,9 @@ else:
             if bool(_r["Concluída"]) != bool(t["concluida"]):
                 db.alternar_tarefa(t["id"], bool(_r["Concluída"]))
                 _mudou = True
+                # Recorrência: ao concluir, gera a próxima ocorrência.
+                if bool(_r["Concluída"]):
+                    db.criar_proxima_ocorrencia(t["id"])
             if bool(_r["🔒 Privada"]) != bool(t["privada"]):
                 db.definir_privada_tarefa(t["id"], bool(_r["🔒 Privada"]))
                 _mudou = True
@@ -158,6 +184,47 @@ else:
 
     st.caption("Edite a data/o texto, marque ✔ / 🔒 / 🗑️ e clique em "
                "**Salvar alterações**.")
+
+    # Visão "planilha" só-leitura com cabeçalhos CENTRALIZADOS e coloridos (o
+    # data_editor acima é canvas e não permite centralizar). Mostra também
+    # Projeto / Recorrência / Feito em.
+    with st.expander("🖥️ Ver como planilha (cabeçalhos centralizados)"):
+        _th = ("padding:7px 8px;text-align:center;font-weight:700;"
+               "font-size:12px;color:#fff;background:#0f766e;"
+               "border:1px solid rgba(255,255,255,.12);")
+        _td = ("padding:6px 8px;border:1px solid rgba(255,255,255,.08);"
+               "font-size:13px;")
+        _linhas = ""
+        for t in _vis:
+            _stt = "✅ Concluída" if t["concluida"] else "⬜ Pendente"
+            _linhas += (
+                "<tr>"
+                f"<td style='{_td}text-align:center'>{_fmt_data(t['data'])}</td>"
+                f"<td style='{_td}'>{_html.escape(str(t['descricao']))}</td>"
+                f"<td style='{_td}text-align:center'>"
+                f"{_html.escape(str(t.get('projeto_nome') or '—'))}</td>"
+                f"<td style='{_td}text-align:center'>{_stt}</td>"
+                f"<td style='{_td}text-align:center'>"
+                f"{'🔒' if t['privada'] else '—'}</td>"
+                f"<td style='{_td}text-align:center'>"
+                f"{_REC_NOME.get(t.get('recorrencia', 'nenhuma'), '—')}</td>"
+                f"<td style='{_td}text-align:center'>"
+                f"{_fmt_data(t['concluida_em']) if t.get('concluida_em') else '—'}"
+                "</td></tr>"
+            )
+        st.markdown(
+            "<table style='width:100%;border-collapse:collapse;'>"
+            "<thead><tr>"
+            f"<th style='{_th}'>📅 Data</th>"
+            f"<th style='{_th}'>📝 Tarefa</th>"
+            f"<th style='{_th}'>📁 Projeto</th>"
+            f"<th style='{_th}'>✅ Status</th>"
+            f"<th style='{_th}'>🔒 Privada</th>"
+            f"<th style='{_th}'>🔁 Repete</th>"
+            f"<th style='{_th}'>✔ Feito em</th>"
+            "</tr></thead><tbody>" + _linhas + "</tbody></table>",
+            unsafe_allow_html=True,
+        )
 
 # ── GESTOR: tabela da equipe + atribuição ─────────────────────────────
 if _pode_gestor():
@@ -206,6 +273,7 @@ if _pode_gestor():
             "Data": _fmt_data(t["data"]),
             "Nome": t["usuario"],
             "Tarefa": t["descricao"],
+            "Projeto": t.get("projeto_nome") or "—",
             "Status": "✅ Concluída" if t["concluida"] else "⬜ Pendente",
             "Atribuída por": ("você" if t.get("criado_por") == usuario
                               else (t.get("criado_por") or "—")),
