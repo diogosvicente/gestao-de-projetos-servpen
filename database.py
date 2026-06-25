@@ -1656,6 +1656,33 @@ def excluir_tarefa(id_tarefa):
         conn.close()
 
 
+def excluir_tarefas_concluidas(usuario):
+    """Remove TODAS as tarefas concluídas do usuário (botão 'Limpar')."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("DELETE FROM tarefas WHERE usuario=%s AND concluida=1",
+                  (usuario,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def contar_tarefas_atrasadas(usuario):
+    """Nº de tarefas PENDENTES cuja data (planejada, ou de criação se sem data)
+    já passou — alimenta o aviso/badge de atrasadas."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute(
+            "SELECT COUNT(*) FROM tarefas WHERE usuario=%s "
+            "AND COALESCE(concluida,0)=0 "
+            "AND COALESCE(data, criado_em::date) < CURRENT_DATE",
+            (usuario,),
+        )
+        return int(c.fetchone()[0] or 0)
+    finally:
+        conn.close()
+
+
 def obter_tarefa(id_tarefa):
     """Dict da tarefa (ou None) — pra checar dono/privada antes de uma ação."""
     conn = conectar(); c = conn.cursor()

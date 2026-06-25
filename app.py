@@ -711,6 +711,7 @@ with st.sidebar:
     _total_diario_badge = _nao_lidos_diario + _mencoes_pend
     _qtd_nao_lidas_chat = db.contar_nao_lidas(st.session_state.usuario)
     _tarefas_novas = db.contar_tarefas_nao_vistas(st.session_state.usuario)
+    _tarefas_atrasadas = db.contar_tarefas_atrasadas(st.session_state.usuario)
 
     # Toast quando o nº de tarefas atribuídas não vistas AUMENTA (nova
     # atribuição) — não dá spam a cada rerun e re-avisa a cada nova.
@@ -723,7 +724,8 @@ with st.sidebar:
         )
     st.session_state["_toast_tarefas_n"] = _tarefas_novas
 
-    if _total_diario_badge or _qtd_nao_lidas_chat or _tarefas_novas:
+    if (_total_diario_badge or _qtd_nao_lidas_chat or _tarefas_novas
+            or _tarefas_atrasadas):
         st.divider()
         st.caption("📬 Pendências:")
         if _total_diario_badge:
@@ -748,6 +750,14 @@ with st.sidebar:
                 f"border-left:3px solid #f59e0b;border-radius:6px;"
                 f"font-size:.85rem;'>"
                 f"📌 <b>{_tarefas_novas}</b> nova(s) em Tarefas</div>",
+                unsafe_allow_html=True,
+            )
+        if _tarefas_atrasadas:
+            st.markdown(
+                f"<div style='padding:6px 10px;background:rgba(239,68,68,0.12);"
+                f"border-left:3px solid #ef4444;border-radius:6px;"
+                f"margin-top:4px;font-size:.85rem;'>"
+                f"⏰ <b>{_tarefas_atrasadas}</b> atrasada(s) em Tarefas</div>",
                 unsafe_allow_html=True,
             )
 

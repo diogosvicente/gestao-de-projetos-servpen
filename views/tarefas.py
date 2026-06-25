@@ -111,6 +111,13 @@ _ca.subheader(f"📋 Minhas tarefas — {_pend} pendente(s)")
 _so_hoje = _cb.toggle("📅 Só hoje", key="tarefa_so_hoje",
                       help="Mostra só as tarefas com data de hoje.")
 
+# Aviso de atrasadas: pendentes com data (planejada/efetiva) já passada.
+_atrasadas = [t for t in _minhas
+              if not t["concluida"] and t["data"] and t["data"] < date.today()]
+if _atrasadas:
+    st.warning(f"⏰ Você tem **{len(_atrasadas)}** tarefa(s) **atrasada(s)** "
+               "(data passou e ainda não concluída).")
+
 # Aplica o filtro "Hoje" ANTES de montar a tabela — a lista filtrada (`_vis`)
 # alimenta o editor E o loop de salvar (índices precisam estar alinhados).
 _vis = [t for t in _minhas
@@ -123,16 +130,12 @@ elif not _vis:
 else:
     _df_my = pd.DataFrame([{
         "Data": t["data"],
-        "Nome": usuario,
         "Tarefa": t["descricao"],
         "📁 Projeto": _proj_label(t),
         "Concluída": bool(t["concluida"]),
-        "✔ Feito em": _fmt_data(t["concluida_em"]) if t.get("concluida_em")
-                      else "",
         "🔒 Privada": bool(t["privada"]),
         "🔁 Repete": _REC_LABEL_INV.get(t.get("recorrencia", "nenhuma"),
                                         "Não repetir"),
-        "🗑️": False,
     } for t in _vis])
     _df_my["Data"] = pd.to_datetime(_df_my["Data"], errors="coerce")
 
@@ -146,26 +149,18 @@ else:
             "Data": st.column_config.DateColumn(
                 "📅 Data", format="DD/MM/YYYY", width="small",
                 help="Data planejada — pode mudar quando quiser."),
-            "Nome": st.column_config.TextColumn("👤 Nome", disabled=True,
-                                                width="small"),
             "Tarefa": st.column_config.TextColumn("📝 Tarefa", width="large"),
             "📁 Projeto": st.column_config.SelectboxColumn(
                 "📁 Projeto", options=_PROJ_NOMES, width="medium",
                 help="Vincular a um projeto (aparece no Kanban)."),
             "Concluída": st.column_config.CheckboxColumn("✅ Concluída",
                                                          width="medium"),
-            "✔ Feito em": st.column_config.TextColumn(
-                "✔ Feito em", disabled=True, width="small",
-                help="Data em que foi concluída."),
             "🔒 Privada": st.column_config.CheckboxColumn(
                 "🔒 Privada", width="medium",
                 help="Privada (só você). Desmarque pra o gestor ver."),
             "🔁 Repete": st.column_config.SelectboxColumn(
                 "🔁 Repete", options=list(_REC_LABEL.keys()), width="small",
                 help="Recorrência. 'Não repetir' = para de repetir."),
-            "🗑️": st.column_config.CheckboxColumn(
-                "❌ Excluir", width="medium",
-                help="Marque e clique em Salvar pra excluir."),
         },
     )
 
@@ -173,9 +168,6 @@ else:
         _mudou = False
         for i, t in enumerate(_vis):
             _r = _edit.iloc[i]
-            if bool(_r["🗑️"]):
-                db.excluir_tarefa(t["id"]); _mudou = True
-                continue
             if bool(_r["Concluída"]) != bool(t["concluida"]):
                 db.alternar_tarefa(t["id"], bool(_r["Concluída"]))
                 _mudou = True
@@ -209,8 +201,8 @@ else:
             confirmar_sucesso("Tarefas atualizadas", "")
         st.rerun()
 
-    st.caption("Edite a data/o texto, marque ✔ / 🔒 / 🗑️ e clique em "
-               "**Salvar alterações**.")
+    st.caption("Edite e clique em **Salvar alterações**. Para excluir, use o "
+               "🗑️ abaixo (mesmo padrão da equipe).")
 
     # Visão "planilha" só-leitura com cabeçalhos CENTRALIZADOS e coloridos (o
     # data_editor acima é canvas e não permite centralizar). Mostra também
@@ -224,9 +216,13 @@ else:
         _linhas = ""
         for t in _vis:
             _stt = "✅ Concluída" if t["concluida"] else "⬜ Pendente"
+            _atr = (not t["concluida"] and t["data"]
+                    and t["data"] < date.today())
+            _dcor = "color:#ef4444;font-weight:700;" if _atr else ""
             _linhas += (
                 "<tr>"
-                f"<td style='{_td}text-align:center'>{_fmt_data(t['data'])}</td>"
+                f"<td style='{_td}text-align:center;{_dcor}'>"
+                f"{_fmt_data(t['data'])}</td>"
                 f"<td style='{_td}'>{_html.escape(str(t['descricao']))}</td>"
                 f"<td style='{_td}text-align:center'>"
                 f"{_html.escape(str(t.get('projeto_nome') or '—'))}</td>"
@@ -252,6 +248,41 @@ else:
             "</tr></thead><tbody>" + _linhas + "</tbody></table>",
             unsafe_allow_html=True,
         )
+
+# ── Excluir / limpar (MESMO padrão de exclusão usado na equipe abaixo) ─
+if _minhas:
+    with st.expander("🗑️ Excluir / limpar tarefas"):
+        _opts_my = {f"{_fmt_data(t['data'])} — {t['descricao']}": t["id"]
+                    for t in _minhas}
+        _sel_my = st.selectbox("Tarefa a excluir", list(_opts_my.keys()),
+                               key="tarefa_excluir_sel")
+        if st.button("🗑️ Excluir", key="tarefa_excluir_btn"):
+            db.excluir_tarefa(_opts_my[_sel_my])
+            confirmar_sucesso("Tarefa excluída", _sel_my)
+            st.rerun()
+
+        _n_concl = sum(1 for t in _minhas if t["concluida"])
+        if _n_concl:
+            st.divider()
+            if not st.session_state.get("_confirma_limpar"):
+                if st.button(f"🧹 Limpar concluídas ({_n_concl})",
+                             key="tarefa_limpar_btn", width="stretch"):
+                    st.session_state["_confirma_limpar"] = True
+                    st.rerun()
+            else:
+                st.warning(f"Excluir as **{_n_concl}** tarefas concluídas? "
+                           "Não dá pra desfazer.")
+                _cl1, _cl2 = st.columns(2)
+                if _cl1.button("Sim, limpar", key="tarefa_limpar_sim",
+                               width="stretch"):
+                    db.excluir_tarefas_concluidas(usuario)
+                    st.session_state.pop("_confirma_limpar", None)
+                    confirmar_sucesso("Concluídas removidas", "")
+                    st.rerun()
+                if _cl2.button("Cancelar", key="tarefa_limpar_nao",
+                               width="stretch"):
+                    st.session_state.pop("_confirma_limpar", None)
+                    st.rerun()
 
 # ── GESTOR: tabela da equipe + atribuição ─────────────────────────────
 if _pode_gestor():

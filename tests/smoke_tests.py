@@ -144,6 +144,14 @@ def db_tarefas_proj_rec():
     _check("recorrencia ativa gera proxima (01/09)",
            bool(_prox) and str(_prox[0]["data"]) == "2026-09-01")
 
+    db.criar_tarefa(nm, "antiga atrasada", privada=False, criado_por=nm,
+                    data=date(2020, 1, 1))
+    _check("conta tarefa atrasada (>=1)",
+           db.contar_tarefas_atrasadas(nm) >= 1)
+    db.excluir_tarefas_concluidas(nm)
+    _check("limpar concluidas: nenhuma concluida resta",
+           all(not x["concluida"] for x in db.listar_tarefas_de(nm)))
+
     conn = db.conectar(); c = conn.cursor()
     c.execute("DELETE FROM tarefas WHERE usuario=%s", (nm,))
     c.execute("DELETE FROM projetos WHERE id=%s", (pid,))
