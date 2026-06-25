@@ -23,6 +23,10 @@ BEGIN;
 -- ── Limpa o seed anterior (idempotência) ────────────────────────────────
 DELETE FROM diario  WHERE projeto_id IN (SELECT id FROM projetos
                                          WHERE codigo LIKE 'SP-2026-%');
+DELETE FROM progresso_disciplinas WHERE projeto_id IN (SELECT id FROM projetos
+                                         WHERE codigo LIKE 'SP-2026-%');
+DELETE FROM etapas_projeto WHERE projeto_id IN (SELECT id FROM projetos
+                                         WHERE codigo LIKE 'SP-2026-%');
 DELETE FROM tarefas WHERE usuario IN
   ('Marcos Andrade','Carla Ribeiro','João Mendes','Patrícia Souza',
    'Rafael Lima','Beatriz Costa')
@@ -63,12 +67,12 @@ INSERT INTO projetos
 VALUES
  ('SP-2026-001', 'Reforma Elétrica - Pavilhão João Lyra Filho', 'Carla Ribeiro',
   'Rua São Francisco Xavier, 524 - Maracanã', 'Pavilhão João Lyra Filho, 5º andar',
-  'Diretoria do CTC', '(21) 2334-0101', 'SEI-260001/2026', 'Em Execução', 'Máxima',
+  'Diretoria do CTC', '(21) 2334-0101', 'SEI-260001/2026', 'Ativo', 'Máxima',
   DATE '2026-05-10', DATE '2026-06-30', DATE '2026-06-02', NULL, 'Elétrica, SPDA',
   'Adequação da rede elétrica e dos quadros do pavilhão à nova carga dos laboratórios.'),
  ('SP-2026-002', 'Sistema CFTV - Campus Maracanã', 'Rafael Lima',
   'Rua São Francisco Xavier, 524 - Maracanã', 'Campus Maracanã, blocos A e B',
-  'Prefeitura do Campus', '(21) 2334-0202', 'SEI-260002/2026', 'Em Execução', 'Média',
+  'Prefeitura do Campus', '(21) 2334-0202', 'SEI-260002/2026', 'Ativo', 'Média',
   DATE '2026-05-15', DATE '2026-07-10', DATE '2026-06-04', NULL, 'CFTV',
   'Implantação de CFTV IP com 48 câmeras nos acessos e corredores principais.'),
  ('SP-2026-003', 'Climatização HVAC - Biblioteca CTC', 'Patrícia Souza',
@@ -85,7 +89,48 @@ VALUES
   'Rua São Francisco Xavier, 524 - Maracanã', 'Bloco F, cobertura',
   'Prefeitura do Campus', '(21) 2334-0505', 'SEI-260005/2026', 'Concluído', 'Média',
   DATE '2026-04-01', DATE '2026-05-20', DATE '2026-04-10', DATE '2026-05-20', 'SPDA',
-  'Projeto e instalação do SPDA do Bloco F.');
+  'Projeto e instalação do SPDA do Bloco F.'),
+ ('SP-2026-006', 'Reforma do Telhado - Bloco D', 'João Mendes',
+  'Rua São Francisco Xavier, 524 - Maracanã', 'Bloco D, cobertura',
+  'Prefeitura do Campus', '(21) 2334-0606', 'SEI-260006/2026', '🛑 Parado', 'Mínima',
+  DATE '2026-03-15', NULL, NULL, NULL, 'Civil',
+  'Substituição da estrutura e telhas do Bloco D. Parado aguardando liberação de verba.'),
+ ('SP-2026-007', 'Modernização de Elevadores - Pavilhão', 'Patrícia Souza',
+  'Rua São Francisco Xavier, 524 - Maracanã', 'Pavilhão João Lyra Filho, todos os andares',
+  'Diretoria do CTC', '(21) 2334-0707', 'SEI-260007/2026', 'Cancelado', 'Média',
+  DATE '2026-02-10', NULL, NULL, NULL, 'Mecânica',
+  'Modernização dos elevadores cancelada por reformulação do orçamento anual.');
+
+-- ── ETAPAS DO PROJETO (alimentam o Gantt PDF e a seção "Etapas") ───────
+INSERT INTO etapas_projeto
+  (projeto_id, ordem, nome, dias_offset, duracao_dias, percentual)
+VALUES
+ ((SELECT id FROM projetos WHERE codigo='SP-2026-001'), 0, 'Levantamento de cargas', 0, 5, 100),
+ ((SELECT id FROM projetos WHERE codigo='SP-2026-001'), 1, 'Projeto dos quadros', 5, 10, 100),
+ ((SELECT id FROM projetos WHERE codigo='SP-2026-001'), 2, 'Compra de materiais', 15, 7, 50),
+ ((SELECT id FROM projetos WHERE codigo='SP-2026-001'), 3, 'Execução e ligações', 22, 15, 10),
+ ((SELECT id FROM projetos WHERE codigo='SP-2026-001'), 4, 'Testes e comissionamento', 37, 5, 0),
+ ((SELECT id FROM projetos WHERE codigo='SP-2026-002'), 0, 'Projeto de pontos', 0, 5, 100),
+ ((SELECT id FROM projetos WHERE codigo='SP-2026-002'), 1, 'Infraestrutura de eletrocalhas', 5, 12, 60),
+ ((SELECT id FROM projetos WHERE codigo='SP-2026-002'), 2, 'Cabeamento estruturado', 17, 10, 20),
+ ((SELECT id FROM projetos WHERE codigo='SP-2026-002'), 3, 'Instalação das câmeras', 27, 8, 0),
+ ((SELECT id FROM projetos WHERE codigo='SP-2026-002'), 4, 'Configuração do servidor', 35, 4, 0),
+ ((SELECT id FROM projetos WHERE codigo='SP-2026-003'), 0, 'Cálculo de carga térmica', 0, 6, 100),
+ ((SELECT id FROM projetos WHERE codigo='SP-2026-003'), 1, 'Projeto da rede de dutos', 6, 10, 30),
+ ((SELECT id FROM projetos WHERE codigo='SP-2026-003'), 2, 'Especificação dos equipamentos', 16, 5, 0),
+ ((SELECT id FROM projetos WHERE codigo='SP-2026-005'), 0, 'Projeto SPDA', 0, 7, 100),
+ ((SELECT id FROM projetos WHERE codigo='SP-2026-005'), 1, 'Instalação de captores e descidas', 7, 10, 100),
+ ((SELECT id FROM projetos WHERE codigo='SP-2026-005'), 2, 'Medição de aterramento', 17, 3, 100);
+
+-- ── PROGRESSO POR DISCIPLINA (Evolução Técnica + barras no Dashboard) ──
+INSERT INTO progresso_disciplinas
+  (projeto_id, disciplina, concluido, percentual)
+VALUES
+ ((SELECT id FROM projetos WHERE codigo='SP-2026-001'), 'Elétrica', 0, 55),
+ ((SELECT id FROM projetos WHERE codigo='SP-2026-001'), 'SPDA', 0, 20),
+ ((SELECT id FROM projetos WHERE codigo='SP-2026-002'), 'CFTV', 0, 40),
+ ((SELECT id FROM projetos WHERE codigo='SP-2026-003'), 'HVAC', 0, 30),
+ ((SELECT id FROM projetos WHERE codigo='SP-2026-005'), 'SPDA', 1, 100);
 
 -- ── DIÁRIO (relatos, dúvidas, impedimentos + interações do gestor) ──────
 -- A `resposta_gestor` traz interações no formato "[data] Autor (Perfil): texto"
@@ -253,6 +298,10 @@ COMMIT;
 --    OR criado_por IN
 --    ('Marcos Andrade','Carla Ribeiro','João Mendes','Patrícia Souza',
 --     'Rafael Lima','Beatriz Costa');
+--  DELETE FROM progresso_disciplinas WHERE projeto_id IN
+--    (SELECT id FROM projetos WHERE codigo LIKE 'SP-2026-%');
+--  DELETE FROM etapas_projeto WHERE projeto_id IN
+--    (SELECT id FROM projetos WHERE codigo LIKE 'SP-2026-%');
 --  DELETE FROM projetos WHERE codigo LIKE 'SP-2026-%';
 --  DELETE FROM agenda WHERE titulo IN
 --    ('Reunião de abertura - Reforma Elétrica',
