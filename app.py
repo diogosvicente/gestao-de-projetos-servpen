@@ -194,7 +194,10 @@ try:
     hoje = datetime.now().date()
     # Mostra os alertas de hoje UMA vez por sessão (não a cada troca de
     # página). Antes reaparecia em todo carregamento de página — virava spam.
-    if st.session_state.get("_alertas_agenda_dia") != hoje:
+    # SÓ quando logado — senão o toast aparecia na TELA DE LOGIN (esta seção
+    # roda antes do guard de auth da seção 8).
+    if (st.session_state.get("autenticado", False)
+            and st.session_state.get("_alertas_agenda_dia") != hoje):
         st.session_state["_alertas_agenda_dia"] = hoje
         df_agenda_boot = pd.read_sql("SELECT * FROM agenda", db.get_engine())
         if not df_agenda_boot.empty:
