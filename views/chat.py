@@ -39,9 +39,13 @@ lista_usuarios = df_u["nome"].tolist() if not df_u.empty else []
 if usuario in lista_usuarios:
     lista_usuarios.remove(usuario)
 _nao_lidas_por_user = dict(db.listar_remetentes_com_nao_lidas(usuario))
-# Pessoas: quem tem não-lidas no topo, depois alfabético.
+# Quem está online agora (heartbeat da sessão, janela de 5 min). Vira o
+# 🟢 do lado do nome no seletor e o status abaixo do cabeçalho.
+_online = set(db.usuarios_online())
+# Pessoas: quem tem não-lidas no topo, depois online, depois alfabético.
 lista_usuarios.sort(
-    key=lambda n: (-int(_nao_lidas_por_user.get(n, 0)), n.lower())
+    key=lambda n: (-int(_nao_lidas_por_user.get(n, 0)),
+                   n not in _online, n.lower())
 )
 
 # Opções do seletor: grupos primeiro, depois pessoas.
@@ -54,7 +58,8 @@ def _fmt_contato(opcao):
         _l = _grupo_label[opcao]
         return f"🔴 {_l} ({_q})" if _q > 0 else _l
     _q = int(_nao_lidas_por_user.get(opcao, 0))
-    return f"🔴 {opcao} ({_q})" if _q > 0 else opcao
+    _dot = "🟢 " if opcao in _online else ""
+    return f"🔴 {_dot}{opcao} ({_q})" if _q > 0 else f"{_dot}{opcao}"
 
 
 # ── PRÉ-SELEÇÃO (à prova de bug) ───────────────────────────
@@ -92,6 +97,17 @@ if not contato:
     st.stop()
 
 _eh_grupo = contato in _grupo_label
+
+# Status de presença da conversa aberta (só faz sentido em DM 1-a-1).
+if not _eh_grupo:
+    if contato in _online:
+        st.markdown(
+            "<span style='color:#22c55e;font-size:.85rem'>● online agora"
+            "</span>", unsafe_allow_html=True)
+    else:
+        st.markdown(
+            "<span style='color:#94a3b8;font-size:.85rem'>● offline</span>",
+            unsafe_allow_html=True)
 
 
 # ── MARCADOR "novas mensagens" estilo WhatsApp ─────────────

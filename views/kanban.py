@@ -1061,6 +1061,22 @@ if "projeto_em_edicao" in st.session_state:
                                 value=str(dados["link_projeto"]),
                                 disabled=_ro_edit)
 
+        r2b1, r2b2 = st.columns(2)
+        ed_fr = r2b1.text_input(
+            "💰 Fonte de Recurso",
+            value=str(dados.get("fonte_recurso") or ""),
+            placeholder="ex.: FAPERJ, Tesouro, Convênio nº ...",
+            help="De onde vem a verba deste projeto.",
+            disabled=_ro_edit,
+        )
+        ed_dg = r2b2.text_input(
+            "📄 Documentações Geradas",
+            value=str(dados.get("documentacoes_geradas") or ""),
+            placeholder="ex.: Memorial descritivo, ART, Planta baixa",
+            help="Documentos que o projeto produziu (texto livre).",
+            disabled=_ro_edit,
+        )
+
         # Endereço: select do cadastro mestre (item 12) + digitar novo;
         # "Local" é complemento livre (item 10).
         _end_atual = str(dados.get("endereco", "")).strip()
@@ -1175,6 +1191,11 @@ if "projeto_em_edicao" in st.session_state:
         ed_dem = st.text_area("Checklist Adicional / Demandas",
                               value=_dem_extra, height=70,
                               disabled=_ro_edit)
+        ed_obs = st.text_area("📝 Observações",
+                              value=str(dados.get("observacoes") or ""),
+                              height=70,
+                              help="Anotações gerais sobre o projeto.",
+                              disabled=_ro_edit)
 
         # ── BOTÕES ──────────────────────────────────────────
         # Item 1-lista: só Gestor vê Salvar/Clonar/Excluir. Não-gestor fica
@@ -1268,6 +1289,12 @@ if "projeto_em_edicao" in st.session_state:
                  ed_pr, False),
                 ("Tags",               dados.get("tags"),
                  _tags_csv_save, False),
+                ("Fonte de Recurso",   dados.get("fonte_recurso"),
+                 ed_fr, False),
+                ("Observações",        dados.get("observacoes"),
+                 ed_obs, False),
+                ("Documentações Geradas", dados.get("documentacoes_geradas"),
+                 ed_dg, False),
             ]
             _alteracoes = []
             for _lbl, _ant, _nov, _isd in _campos_hist:
@@ -1286,6 +1313,13 @@ if "projeto_em_edicao" in st.session_state:
             db.atualizar_campo_projeto(
                 id_ed, "local", (ed_lo or "").strip() or None
             )
+            # Campos de 29/07/2026 — mesmo padrão de UPDATE separado.
+            for _col, _val in (("fonte_recurso", ed_fr),
+                               ("observacoes", ed_obs),
+                               ("documentacoes_geradas", ed_dg)):
+                db.atualizar_campo_projeto(
+                    id_ed, _col, (_val or "").strip() or None
+                )
             # Endereço usado entra no cadastro mestre (item 12).
             if _end_save:
                 db.adicionar_endereco(_end_save)

@@ -255,6 +255,9 @@ def gerar_excel(df, df_etapas=None, df_progresso=None):
                 ('Link Drive',         'link_projeto',       30),
                 ('Escopo',             'solicitacao',        45),
                 ('Disciplinas/Demandas','demandas',          40),
+                ('Fonte de Recurso',   'fonte_recurso',      25),
+                ('Documentações Geradas', 'documentacoes_geradas', 35),
+                ('Observações',        'observacoes',        40),
                 ('Cadastrado em',      'criado_em',          18),
             ]
 
@@ -586,6 +589,7 @@ def gerar_pdf(df, df_etapas=None, df_progresso=None):
                 ('Endereço da Obra',     proj.get('endereco','')),
                 ('Local',                 proj.get('local','')),
                 ('Link da Pasta',        proj.get('link_projeto','')),
+                ('Fonte de Recurso',     proj.get('fonte_recurso','')),
             ]))
             story.append(Spacer(1, 0.2*cm))
 
@@ -608,6 +612,18 @@ def gerar_pdf(df, df_etapas=None, df_progresso=None):
             if dem_ind != '—':
                 story.append(_secao('Disciplinas e Demandas Detalhadas'))
                 story.append(Paragraph(dem_ind, st['corpo']))
+                story.append(Spacer(1, 0.15*cm))
+
+            _docs = _txt(proj.get('documentacoes_geradas', ''))
+            if _docs != '—':
+                story.append(_secao('Documentações Geradas'))
+                story.append(Paragraph(_docs, st['corpo']))
+                story.append(Spacer(1, 0.15*cm))
+
+            _obs = _txt(proj.get('observacoes', ''))
+            if _obs != '—':
+                story.append(_secao('Observações'))
+                story.append(Paragraph(_obs, st['corpo']))
                 story.append(Spacer(1, 0.15*cm))
 
             proj_id = proj.get('id')

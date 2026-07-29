@@ -2,9 +2,17 @@
 
 Levantamento a partir de 5 prints de tela reais do sistema em produção (Agenda,
 Novo Projeto, Tarefas ×2, Arquivos), com anotações da Sara sobre o que
-mudar em cada tela. **Este documento é só o plano.** Nada foi implementado
-ainda — é a base para a Sara aprovar, ajustar ou rejeitar cada item antes de
-qualquer código ser escrito.
+mudar em cada tela.
+
+> **✅ Executado em 29/07/2026.** Todos os 9 itens foram implementados. As
+> decisões pendentes foram fechadas assim: Tarefas em **cards agrupados por
+> data + contadores no topo**; "Documentações Geradas" como **campo de texto**
+> no cadastro; presença exibida **na sidebar e no Chat**; pastas com
+> **criação/exclusão só do Gestor**, aninhamento ilimitado e exclusão de pasta
+> não-vazia bloqueada. Cada item abaixo tem uma linha **✅** com o que mudou de
+> fato. Verificado com `py_compile`, 40 testes de round-trip no Postgres,
+> testes de comportamento das telas novas (AppTest, como Gestor **e** como
+> Projetista) e o `tests/smoke_tests.py` completo.
 
 > **Como ler.** Cada item começa com a citação literal do pedido da Sara,
 > depois **Hoje** (o que o código faz agora, com `arquivo:linha`) e
@@ -61,6 +69,16 @@ Item 2 — nunca por uma data específica).
 escolhido, (B) abrir um expander/painel dedicado só com os eventos daquele
 dia, ou (C) pular direto para a visão "Lista"/"Resumo" filtrada pro dia?
 
+**✅ Resolvido (29/07/2026) — opção (B).** A grade `<table>` HTML virou grade
+nativa (`st.columns` + um `st.button` por dia), que é a única forma de o
+Streamlit receber o clique; as pills coloridas continuam sendo HTML dentro de
+cada célula. Dia de hoje e dia selecionado ficam destacados (`type="primary"`),
+e o `help` de cada dia já mostra quantos compromissos tem. Clicar abre um
+painel logo abaixo do calendário com os eventos daquele dia (tipo, título,
+envolvidos, local) e um 🔍 por linha que abre no formulário — mesmo padrão das
+visões Semanal/Resumo. Clicar de novo no mesmo dia fecha o painel
+(`views/agenda.py`).
+
 ---
 
 ### Item 2 — Eventos vencidos somem da lista e só voltam se pesquisar
@@ -106,6 +124,16 @@ manter marcado entre sessões, ou deixar mais visível/óbvio que ele está
 ligado). Se for (b), o ajuste é outro: dar à visão "Resumo" uma forma de
 enxergar vencidos (ex.: um link "ver atrasados" ou incluir uma janela de
 atraso recente por padrão), já que hoje ali não existe filtro nem busca.
+
+**✅ Resolvido (29/07/2026) — as DUAS causas foram corrigidas**, já que não dava
+pra saber qual era sem a tela exata e ambas produzem o mesmo sintoma:
+- **(a)** O checkbox "Só futuros" ganhou `help` explicando que fica marcado até
+  ser desmarcado; e quando ele está escondendo algo, aparece um aviso
+  "⏳ N compromisso(s) já vencido(s) estão ocultos" com um botão
+  **👁️ Mostrar vencidos** que desliga o filtro num clique.
+- **(b)** A visão "Resumo" ganhou um expander **⏰ Já vencidos (N)** logo abaixo
+  dos próximos, com os 20 mais recentes, há quantos dias venceram e o 🔍 pra
+  abrir — antes eles sumiam sem nenhuma forma de recuperar (`views/agenda.py`).
 
 ---
 
@@ -153,6 +181,19 @@ dentro da aba Chat, ou os dois? (ii) qual janela de inatividade conta como
 "online" (sugestão: 5 minutos sem interação)? (iii) topa a Abordagem 1 (mais
 precisa, exige nova coluna) ou prefere a 2 (mais rápida, menos precisa)?
 
+**✅ Resolvido (29/07/2026) — Abordagem 1, janela de 5 min, nos dois lugares.**
+- Coluna `sessoes.ultima_atividade BIGINT` (migração) + `db.tocar_sessao()`
+  chamado no boot do `app.py` com **throttle de 60s** — sem o throttle seria um
+  UPDATE por rerun do Streamlit, o que encheria o banco de escrita à toa.
+- `db.usuarios_online()` só conta sessão não expirada **e** com heartbeat dentro
+  de `db.JANELA_ONLINE_MIN` (5 min); ambas as funções são best-effort (presença
+  nunca derruba o app se o banco engasgar).
+- **Sidebar:** bloco "🟢 Online agora (N)" num `@st.fragment(run_every="30s")`,
+  que se atualiza sozinho sem recarregar a página.
+- **Chat:** 🟢 do lado do nome no seletor de contato, status "● online agora /
+  ● offline" abaixo do cabeçalho da conversa, e quem está online sobe na
+  ordenação da lista (`app.py`, `views/chat.py`, `database.py`).
+
 ---
 
 ## 🗂️ Novo Projeto
@@ -197,6 +238,14 @@ confirmado que é este mesmo, a alternativa não seria remover, e sim um
 refactor maior (separar disciplinas e texto livre em duas colunas reais em
 vez do delimitador `"|"` manual), o que é um projeto à parte, não um
 "remover".
+
+**✅ Resolvido (29/07/2026) — campo MANTIDO, nada foi removido.** A investigação
+mostrou 5 dependências reais (form do Kanban, clonagem, histórico de
+alterações, Evolução Técnica por Disciplina e os exports Excel/PDF); remover
+quebraria a Evolução Técnica, que tira dele a lista de disciplinas do projeto.
+**Continua em aberto para a Sara:** se a lembrança dela for mesmo deste campo,
+o caminho não é excluir e sim separar "disciplinas" e "texto livre" em duas
+colunas de verdade — refactor à parte, fora do escopo desta rodada.
 
 ---
 
@@ -244,6 +293,22 @@ no cadastro, ou atalho/resumo pra aba Arquivos? (ii) os 3 campos novos
 devem entrar também em clonagem de projeto, relatórios Excel/PDF e edição
 no Kanban (recomendação: sim, pra manter consistência com os demais campos
 do cadastro) ou só no cadastro/edição básica?
+
+**✅ Resolvido (29/07/2026) — (i) campo de texto; (ii) sim, entram em tudo.**
+Colunas `fonte_recurso`, `observacoes` e `documentacoes_geradas` (TEXT) criadas
+por migração. Onde aparecem:
+- **Novo Projeto:** 💰 Fonte de Recurso e 📄 Documentações Geradas na
+  Identificação (linha nova sob Contato/Link); 📝 Observações em Escopo.
+- **Edição no Kanban:** mesmos 3 campos, nas mesmas posições, gravados via
+  `atualizar_campo_projeto` (o mesmo padrão já usado por código/local/tags,
+  porque `atualizar_projeto_completo` tem assinatura posicional fixa).
+- **Histórico de alterações:** os 3 entram em `_campos_hist`, então mudança
+  neles vira linha na Auditoria.
+- **Clonagem:** copiados junto com o resto (`clonar_projeto`).
+- **Excel:** 3 colunas novas; **PDF:** Fonte de Recurso na Identificação e
+  duas seções próprias para Documentações Geradas e Observações — cada uma só
+  sai se estiver preenchida (`database.py`, `views/novo_projeto.py`,
+  `views/kanban.py`, `relatorios.py`).
 
 ---
 
@@ -299,6 +364,18 @@ chamada já existente a `db.criar_tarefa`.
 Sem ⚠️ estrutural aqui — o desenho é direto e não depende de escolha externa,
 só de validar o rótulo final ("Atribuir a" / "Atribuir a (opcional)").
 
+**✅ Resolvido (29/07/2026).** Ficou um formulário só, com o campo
+**"👤 Atribuir a"** (rótulo escolhido) visível **apenas para o Gestor** — quem
+não é gestor vê exatamente o formulário pessoal de antes. Default "— Eu mesmo —"
+= tarefa minha; escolher outra pessoa manda a tarefa pra ela e dispara o
+`log_aud("atribuir_tarefa")` que existia no form antigo. A regra de privacidade
+não mudou (ela já morava no backend, `database.py`): tarefa atribuída a
+terceiro nasce pública e com `vista=0`, alimentando o badge/toast. O segundo
+formulário ("Nova tarefa pra atribuir...") deixou de existir
+(`views/tarefas.py`). Testado: como Gestor o campo aparece e a tarefa vai
+mesmo parar no destinatário, pública e com `criado_por` correto; como
+Projetista o campo não é renderizado.
+
 ---
 
 ### Item 7 — Agrupar tarefas por data
@@ -340,6 +417,15 @@ agrupamento.
 data_editor único) ou Opção B (tabela única + separador de dia, mecânica
 atual quase intacta)? (ii) isso vale também pra "Tarefas da equipe" — hoje
 agrupada por pessoa — ou só pra "Minhas tarefas"?
+
+**✅ Resolvido (29/07/2026) — Opção A (blocos reais), nas DUAS listas.** Os
+blocos são **Atrasadas · Hoje · Amanhã · Esta semana · Depois · Sem data ·
+Concluídas**, cada um com cabeçalho colorido e contagem. "Tarefas da equipe"
+passou a usar os mesmos blocos por data (era ordenada por pessoa) — o nome de
+quem é a tarefa virou um chip 👤 dentro do card, então não se perdeu a
+informação. Como o `st.data_editor` saiu de cena, a edição virou por card:
+✏️ abre um popover com descrição, data, projeto, recorrência e privada
+(`views/tarefas.py`).
 
 ---
 
@@ -389,6 +475,16 @@ usada na Agenda):**
 ⚠️ **decisão pendente:** qual das 3 prefere? As opções 2 e 3 combinam bem
 entre si com esforço baixo/médio; a opção 1 é a mais "bonitinha" mas exige
 abrir mão do `data_editor` único em favor de cards.
+
+**✅ Resolvido (29/07/2026) — ideias 1 + 3 (cards + contadores).** Cada tarefa
+virou um card com **faixa lateral colorida por urgência** (vermelho atrasada,
+âmbar hoje, azul futura, verde concluída) e **chips** de data, projeto,
+recorrência, 🔒 privada e "↪ de fulano" quando foi atribuída. Concluída fica
+riscada e esmaecida. No topo, **contadores clicáveis** (📋 Todas · 🔴 Atrasadas ·
+🟡 Hoje · 🔵 Semana · ✅ Concluídas) que funcionam como filtro — clicar no filtro
+ativo volta pra "Todas". O toggle "📅 Só hoje" e a visão "Ver como planilha"
+saíram: viraram redundantes com os contadores e os blocos por data
+(`views/tarefas.py`).
 
 ---
 
@@ -445,65 +541,70 @@ em cards sequenciais (`views/arquivos.py:190-244`) sem agrupamento além do
    arquivo (Gestor exclui qualquer uma; demais só as que criaram), ou
    restringir a criação/exclusão de pasta só a Gestor?
 
----
-
-## Decisões pendentes (resumo)
-
-1. **Item 1 (Agenda — clicar no dia):** onde abrir o resultado do clique —
-   (A) "Compromissos Cadastrados" filtrada pro dia, (B) painel/expander
-   dedicado, ou (C) pular pra visão Lista/Resumo filtrada?
-2. **Item 2 (Agenda — vencidos somem):** confirmar qual tela exatamente ela
-   via — "Compromissos Cadastrados" com "Só futuros" grudado (a), ou visão
-   "Resumo" / "Próximos compromissos" que já corta vencidos sem busca (b)?
-3. **Item 3 (Agenda — pessoas logadas):** (i) exibir na sidebar, na aba
-   Chat, ou nos dois? (ii) qual janela de inatividade conta como "online"
-   (sugestão: 5 min)? (iii) Abordagem 1 (nova coluna `ultima_atividade`,
-   mais precisa) ou Abordagem 2 (só sessão válida, mais rápida e menos
-   precisa)?
-4. **Item 4 (Novo Projeto — Checklist Adicional/Demandas):** confirmar se é
-   este campo mesmo que lembra de ter retirado (investigação não achou
-   indício de vestígio), ou se é outro campo/formulário.
-5. **Item 5 (Novo Projeto — Documentações Geradas):** campo de texto/lista
-   novo dentro do cadastro, ou atalho/resumo apontando pra aba Arquivos?
-6. **Item 5 (Novo Projeto — 3 campos novos):** entram também em clonagem de
-   projeto, relatórios Excel/PDF e edição no Kanban (recomendação: sim), ou
-   só no cadastro/edição básica?
-7. **Item 7 (Tarefas — agrupar por data):** Opção A (blocos com cabeçalho
-   real, perde `data_editor` único) ou Opção B (tabela única + separador de
-   virada de dia)? Vale também pra "Tarefas da equipe" ou só "Minhas
-   tarefas"?
-8. **Item 8 (Tarefas — visual):** qual das 3 propostas — (1) cards com faixa
-   por urgência, (2) badges de urgência no `data_editor` atual, (3)
-   mini-dashboard de contadores — ou combinação de 2+3?
-9. **Item 9 (Arquivos — pastas):** (i) excluir pasta não-vazia — bloquear
-   (recomendado), mover conteúdo pra pasta pai, ou cascata? (ii)
-   aninhamento ilimitado (recomendado) ou travado em N níveis? (iii)
-   criar/excluir pasta segue a regra de arquivo hoje (Gestor + quem criou)
-   ou fica restrito só a Gestor?
+**✅ Resolvido (29/07/2026) — pastas implementadas.** Decisões: (1) pasta com
+conteúdo **não pode ser excluída** — precisa esvaziar antes, nada é apagado em
+cascata; (2) aninhamento **ilimitado**; (3) criar/renomear/excluir pasta é
+**só do Gestor** (projetista usa as pastas existentes e segue enviando e
+baixando arquivo normalmente).
+- **Schema:** tabela `pastas` + coluna `arquivos.pasta_id`, como proposto
+  acima. Os arquivos que já existiam ficam com `pasta_id = NULL`, ou seja,
+  **na raiz do projeto — zero migração de dados**.
+- **Disco não mudou:** continua tudo plano em `anexos/<projeto_id>/`. Mover
+  arquivo entre pastas é só `UPDATE arquivos.pasta_id`, sem tocar no binário.
+- **UI:** breadcrumb clicável (🏠 Raiz / pasta / subpasta), subpastas como cards
+  com contagem de conteúdo, upload caindo na pasta atual, e **📦 Mover** por
+  arquivo (destinos listados com caminho completo, pra não confundir pastas de
+  mesmo nome em níveis diferentes).
+- Nome duplicado é bloqueado **no mesmo nível** (em níveis diferentes pode
+  repetir) e o breadcrumb tem trava de 50 níveis contra ciclo acidental
+  (`database.py`, `views/arquivos.py`).
 
 ---
 
-## Sugestão de ordem de execução
+## Decisões pendentes (resumo) — ✅ todas fechadas em 29/07/2026
 
-Só uma sugestão — **nada será executado até a Sara confirmar este plano**
-(e as decisões pendentes acima) por escrito.
+| # | Item | Decisão tomada |
+|---|---|---|
+| 1 | Agenda — clicar no dia | **(B)** painel dedicado abaixo do calendário |
+| 2 | Agenda — vencidos somem | **as duas causas** corrigidas (não dava pra saber qual era sem a tela exata) |
+| 3 | Agenda — pessoas logadas | **Abordagem 1** (coluna `ultima_atividade`), janela de **5 min**, exibido **na sidebar E no Chat** |
+| 4 | Checklist Adicional/Demandas | campo **mantido** — está ativo, com 5 dependências reais |
+| 5 | Documentações Geradas | **campo de texto** no cadastro |
+| 6 | 3 campos novos em clone/relatórios/Kanban | **sim**, entram em tudo |
+| 7 | Tarefas — agrupar por data | **Opção A** (blocos reais), valendo também pra "Tarefas da equipe" |
+| 8 | Tarefas — visual | **ideias 1 + 3** (cards com faixa de urgência + contadores no topo) |
+| 9 | Arquivos — pastas | criar/excluir **só Gestor**; aninhamento **ilimitado**; pasta não-vazia **bloqueada** |
 
-1. **Novo Projeto** — schema primeiro: Item 5 (as 3 colunas novas), já que
-   qualquer coisa que dependa delas (relatórios, clone, edição no Kanban)
-   precisa que existam antes. Item 4 é só uma confirmação com a Sara, sem
-   mudança de schema esperada — pode ser resolvido em paralelo.
-2. **Tarefas** — Item 6 (unificar formulário) primeiro, por ser independente
-   das decisões visuais. Depois Item 7 (agrupamento) e Item 8 (visual)
-   juntos, já que os dois mexem na mesma área de renderização da tabela —
-   melhor implementar uma vez só, depois de decididas as opções #7 e #8.
-3. **Agenda** — Item 2 (vencidos somem) é o mais rápido de resolver assim
-   que a causa for confirmada (pode ser só um ajuste pequeno, sem exigir
-   nova lógica). Item 1 (clicar no dia) em seguida. Item 3 (pessoas
-   logadas) por último — é feature nova de maior esforço (infra de
-   presença do zero), no mesmo patamar que o item de Chat/grupos foi no
-   ciclo anterior de ajustes.
-4. **Arquivos** — Item 9 (pastas/subpastas) por último do documento
-   inteiro: é o de **maior esforço** desta rodada (tabela nova `pastas` +
-   reescrita da navegação/listagem), sem dependência dos demais itens —
-   dá pra adiantar em paralelo se sobrar gente, mas não é bloqueante pra
-   nada do resto.
+**Continua em aberto (não bloqueia nada):** no item 4, se a lembrança da Sara
+for mesmo do campo "Checklist Adicional / Demandas", o caminho não é remover e
+sim separar "disciplinas" e "texto livre" em duas colunas de verdade — refactor
+à parte, fora desta rodada.
+
+---
+
+## Execução
+
+**✅ Executado em 29/07/2026, na ordem sugerida abaixo.** Arquivos alterados:
+`database.py`, `app.py`, `relatorios.py`, `views/novo_projeto.py`,
+`views/kanban.py`, `views/tarefas.py`, `views/agenda.py`, `views/arquivos.py`,
+`views/chat.py`.
+
+1. **Novo Projeto** — Item 5 (3 colunas novas) primeiro, porque relatórios,
+   clone e edição no Kanban dependem delas. Item 4 não exigiu mudança.
+2. **Tarefas** — Item 6 (formulário único) e, na sequência, 7 e 8 juntos, já
+   que ambos mexiam na mesma área de renderização.
+3. **Agenda** — Item 2 (vencidos), Item 1 (clique no dia) e Item 3 (presença).
+4. **Arquivos** — Item 9 (pastas/subpastas), o de maior esforço.
+
+**Verificação:** `py_compile` em todos os arquivos alterados; **40 testes de
+round-trip no Postgres** (schema novo, 3 campos em salvar/clonar/atualizar,
+CRUD de pastas com todas as regras de bloqueio, filtro de arquivo por pasta,
+heartbeat entrando e saindo da janela de presença); **testes de comportamento
+das telas** via AppTest, como Gestor **e** como Projetista (formulário único de
+tarefa realmente atribuindo, dias do calendário clicáveis abrindo o painel,
+controles de pasta aparecendo só pro Gestor); e o `tests/smoke_tests.py`
+completo (11 views renderizando sem exceção + helpers de Tarefas).
+
+**Lembrete de deploy:** as colunas novas entram sozinhas pelas migrações
+incrementais (`ADD COLUMN IF NOT EXISTS`) no primeiro boot após o deploy — nada
+manual no banco. O app precisa ser **reiniciado** pra carregar os `.py` novos.

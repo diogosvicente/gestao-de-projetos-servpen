@@ -80,6 +80,18 @@ with st.form("form_novo_projeto_v2", clear_on_submit=False):
     f_co = r2c1.text_input("Contato (Tel/Email)")
     f_li = r2c2.text_input("Link da Pasta (Drive/Nuvem)")
 
+    r2b1, r2b2 = st.columns(2)
+    f_fr = r2b1.text_input(
+        "💰 Fonte de Recurso",
+        placeholder="ex.: FAPERJ, Tesouro, Convênio nº ...",
+        help="De onde vem a verba deste projeto.",
+    )
+    f_dg = r2b2.text_input(
+        "📄 Documentações Geradas",
+        placeholder="ex.: Memorial descritivo, ART, Planta baixa",
+        help="Documentos que o projeto produziu (texto livre).",
+    )
+
     # Endereço da Obra: select do cadastro mestre (item 12) com opção de digitar
     # um novo (accept_new_options); "Local" é complemento livre (item 10).
     r3c1, r3c2 = st.columns(2)
@@ -142,6 +154,10 @@ with st.form("form_novo_projeto_v2", clear_on_submit=False):
                            st.session_state.lista_checklist)
     f_esc = st.text_area("Descrição do Escopo", height=90)
     f_dem = st.text_area("Checklist Adicional / Demandas", height=70)
+    f_obs = st.text_area(
+        "📝 Observações", height=70,
+        help="Anotações gerais sobre o projeto.",
+    )
 
     # ── ETAPAS (dentro do form, gerenciadas via session_state) ──
     st.markdown("#### 🏁 Etapas do Projeto")
@@ -274,7 +290,11 @@ if submit_novo:
                 f_pr,              # prioridade
                 _tags_csv,         # tags (string CSV ou None)
             )
-            novo_id = db.salvar_projeto(dados_sql, codigo=_cod, local=f_lo)
+            novo_id = db.salvar_projeto(
+                dados_sql, codigo=_cod, local=f_lo,
+                fonte_recurso=f_fr, observacoes=f_obs,
+                documentacoes_geradas=f_dg,
+            )
             if novo_id:
                 # Endereço usado entra no cadastro mestre (item 12).
                 if _end:

@@ -302,81 +302,126 @@ with col_cal:
         primeiro_dia, total_dias = _cal.monthrange(ano_atual, mes_atual)
         hoje = datetime.now().date()
 
-        # IMPORTANTE: `table-layout: fixed` força colunas de largura igual
-        # (1/7 cada). Sem isso, a tabela usa auto-layout e pills com
-        # `display:block; nowrap` esticam a coluna pra caber o texto —
-        # resultado: pill "Visita Técnica - Sondagem" estourava a coluna
-        # SÁB e invadia a coluna do formulário "Novo Compromisso" à direita.
-        # `overflow:hidden` no td é defesa extra: clipa qualquer filho que
-        # tente sair (ex: pill com max-width quebrado em browser antigo).
-        html_cal = """
+        # Grade NATIVA (st.columns + st.button por dia) em vez da <table>
+        # HTML de antes. O motivo é o pedido de "clicar no dia pra ver as
+        # atividades": o Streamlit não recebe clique de HTML injetado com
+        # unsafe_allow_html — só de widget de verdade. As pills coloridas
+        # continuam sendo HTML dentro de cada célula (elas são só visual).
+        st.markdown("""
         <style>
-        .srv-cal { width:100%; table-layout:fixed;
-                   border-collapse:separate; border-spacing:3px;
-                   font-family:'Segoe UI',sans-serif; }
-        .srv-cal th { background:#1e3a5f; color:#93c5fd; font-size:.75rem;
-                      font-weight:600; letter-spacing:1px;
-                      padding:8px 4px; border-radius:4px; text-align:center;
-                      width:14.28%; }
-        .srv-cal td { vertical-align:top; background:rgba(255,255,255,0.03);
-                      border:1px solid rgba(255,255,255,0.06);
-                      border-radius:6px; padding:4px; min-height:72px;
-                      width:14.28%; overflow:hidden; }
-        .srv-cal td.hoje { border:2px solid #3b82f6 !important;
-                           background:rgba(59,130,246,0.08); }
-        .srv-cal td.vazio { background:transparent; border:none; }
-        .dia-num { font-size:.8rem; font-weight:700; color:#94a3b8;
-                   margin-bottom:3px; }
-        .dia-num.hoje-num { color:#60a5fa; font-size:.9rem; }
+        .srv-cal-h { background:#1e3a5f; color:#93c5fd; font-size:.72rem;
+                     font-weight:600; letter-spacing:1px; padding:6px 2px;
+                     border-radius:4px; text-align:center; margin-bottom:2px; }
         .ev-pill { font-size:.65rem; font-weight:600; color:#fff;
                    padding:1px 5px; border-radius:10px; margin-bottom:2px;
                    white-space:nowrap; overflow:hidden;
                    text-overflow:ellipsis; display:block;
                    max-width:100%; box-sizing:border-box; }
+        .srv-cal-vazio { min-height:34px; }
         </style>
-        <table class="srv-cal"><thead><tr>
-        <th>DOM</th><th>SEG</th><th>TER</th><th>QUA</th>
-        <th>QUI</th><th>SEX</th><th>SÁB</th>
-        </tr></thead><tbody><tr>
-        """
-        # dias em branco antes do dia 1 (semana começa domingo: offset+1)
-        offset = (primeiro_dia + 1) % 7
-        for _ in range(offset):
-            html_cal += "<td class='vazio'></td>"
+        """, unsafe_allow_html=True)
 
-        dia_semana = offset
-        for dia in range(1, total_dias + 1):
-            data_dia = datetime(ano_atual, mes_atual, dia).date()
-            is_hoje = (data_dia == hoje)
-            cls_td = "hoje" if is_hoje else ""
-            html_cal += f"<td class='{cls_td}'>"
-            html_cal += (
-                f"<div class='dia-num "
-                f"{'hoje-num' if is_hoje else ''}'>{dia}</div>"
-            )
+        _dia_sel = st.session_state.get("agenda_dia_sel")
 
-            for ev in eventos_mes.get(dia, []):
-                cor = TIPO_COR.get(str(ev.get("tipo", "")), "#475569")
-                titulo_curto = str(ev.get("titulo", ""))[:18]
-                html_cal += (
-                    f"<span class='ev-pill' style='background:{cor}' "
-                    f"title=\"{ev.get('tipo','')} — "
-                    f"{ev.get('titulo','')} | "
-                    f"{ev.get('responsaveis','')}\">⬤ {titulo_curto}</span>"
+        _hc = st.columns(7)
+        for _i, _nome in enumerate(["DOM", "SEG", "TER", "QUA", "QUI",
+                                    "SEX", "SÁB"]):
+            _hc[_i].markdown(f"<div class='srv-cal-h'>{_nome}</div>",
+                             unsafe_allow_html=True)
+
+        # Células do mês: None = espaço em branco (antes do dia 1 / depois do
+        # último). Semana começa no domingo, daí o (primeiro_dia + 1) % 7.
+        _offset = (primeiro_dia + 1) % 7
+        _celulas = [None] * _offset + list(range(1, total_dias + 1))
+        while len(_celulas) % 7:
+            _celulas.append(None)
+
+        for _ini in range(0, len(_celulas), 7):
+            _cols = st.columns(7)
+            for _i, _dia in enumerate(_celulas[_ini:_ini + 7]):
+                with _cols[_i]:
+                    if _dia is None:
+                        st.markdown("<div class='srv-cal-vazio'></div>",
+                                    unsafe_allow_html=True)
+                        continue
+                    _dd = datetime(ano_atual, mes_atual, _dia).date()
+                    _evs = eventos_mes.get(_dia, [])
+                    _eh_hoje = (_dd == hoje)
+                    _eh_sel = (_dia_sel == _dd)
+                    # Dia de hoje e dia selecionado ficam em destaque
+                    # (primary); os demais, discretos.
+                    if st.button(
+                        f"{_dia}",
+                        key=f"cal_dia_{ano_atual}_{mes_atual}_{_dia}",
+                        width="stretch",
+                        type=("primary" if (_eh_sel or _eh_hoje)
+                              else "secondary"),
+                        help=(f"{len(_evs)} compromisso(s) em "
+                              f"{_dd.strftime('%d/%m/%Y')}" if _evs
+                              else f"Sem compromissos em "
+                                   f"{_dd.strftime('%d/%m/%Y')}"),
+                    ):
+                        # Clicar de novo no dia já aberto fecha o painel.
+                        st.session_state["agenda_dia_sel"] = (
+                            None if _eh_sel else _dd
+                        )
+                        st.rerun()
+
+                    _pills = ""
+                    for ev in _evs:
+                        cor = TIPO_COR.get(str(ev.get("tipo", "")), "#475569")
+                        titulo_curto = str(ev.get("titulo", ""))[:18]
+                        _pills += (
+                            f"<span class='ev-pill' style='background:{cor}' "
+                            f"title=\"{ev.get('tipo','')} — "
+                            f"{ev.get('titulo','')} | "
+                            f"{ev.get('responsaveis','')}\">"
+                            f"⬤ {titulo_curto}</span>"
+                        )
+                    if _pills:
+                        st.markdown(_pills, unsafe_allow_html=True)
+
+        # ── Painel do dia clicado ───────────────────────────────────
+        if _dia_sel:
+            _evs_dia = eventos_mes.get(_dia_sel.day, []) \
+                if (_dia_sel.year == ano_atual
+                    and _dia_sel.month == mes_atual) else []
+            with st.container(border=True):
+                _t1, _t2 = st.columns([0.8, 0.2],
+                                      vertical_alignment="center")
+                _t1.markdown(
+                    f"#### 📌 {_dia_sel.strftime('%d/%m/%Y')} — "
+                    f"{len(_evs_dia)} compromisso(s)"
                 )
+                if _t2.button("✖ Fechar", key="cal_dia_fechar",
+                              width="stretch"):
+                    st.session_state.pop("agenda_dia_sel", None)
+                    st.rerun()
 
-            html_cal += "</td>"
-            dia_semana += 1
-            if dia_semana % 7 == 0 and dia < total_dias:
-                html_cal += "</tr><tr>"
-
-        restante = 6 - ((dia_semana - 1) % 7)
-        if restante < 6:
-            for _ in range(restante):
-                html_cal += "<td class='vazio'></td>"
-
-        html_cal += "</tr></tbody></table>"
-        st.markdown(html_cal, unsafe_allow_html=True)
+                if not _evs_dia:
+                    st.caption("Nenhum compromisso neste dia.")
+                for _ev in _evs_dia:
+                    _c1, _c2 = st.columns([0.85, 0.15],
+                                          vertical_alignment="center")
+                    _cor_ev = TIPO_COR.get(str(_ev.get("tipo", "")), "#475569")
+                    _ico_ev = TIPO_ICONE.get(str(_ev.get("tipo", "")), "📌")
+                    _c1.markdown(
+                        f"<span style='background:{_cor_ev};color:#fff;"
+                        f"padding:2px 8px;border-radius:10px;"
+                        f"font-size:.7rem'>{_ico_ev} "
+                        f"{_ev.get('tipo','')}</span> "
+                        f"**{_ev.get('titulo','')}**<br>"
+                        f"<span style='font-size:.78rem;opacity:.8'>"
+                        f"👥 {_ev.get('responsaveis','') or '—'}"
+                        + (f" · 📍 {_ev.get('local')}"
+                           if _ev.get("local") else "")
+                        + "</span>",
+                        unsafe_allow_html=True,
+                    )
+                    if _c2.button("🔍", key=f"cal_dia_abrir_{_ev['id']}",
+                                  width="stretch", help="Abrir/editar"):
+                        st.session_state["agenda_edit_id"] = int(_ev["id"])
+                        st.rerun()
 
         # Legenda de cores
         st.markdown(
@@ -589,12 +634,18 @@ with col_cal:
         if _df_ag_visivel.empty:
             st.info("Sem compromissos.")
         else:
-            _df_prox = _df_ag_visivel[
-                _df_ag_visivel.apply(
-                    lambda r: (r.get("_df") or r.get("_di")) >= _hoje_ag,
-                    axis=1,
-                )
-            ].sort_values("_di").head(5)
+            _mask_fut = _df_ag_visivel.apply(
+                lambda r: (r.get("_df") or r.get("_di")) >= _hoje_ag,
+                axis=1,
+            )
+            _df_prox = _df_ag_visivel[_mask_fut].sort_values("_di").head(5)
+            # Esta visão sempre cortou os vencidos e não tem campo de busca —
+            # eles simplesmente sumiam, sem jeito de recuperar. Agora ficam
+            # acessíveis num expander logo abaixo (fechado por padrão, pra
+            # não poluir o "próximos").
+            _df_venc = (_df_ag_visivel[~_mask_fut].sort_values("_di",
+                                                              ascending=False)
+                        if len(_df_ag_visivel) else _df_ag_visivel)
             if _df_prox.empty:
                 st.info("Sem compromissos futuros.")
             else:
@@ -643,6 +694,37 @@ with col_cal:
                                     width="stretch"):
                         st.session_state["agenda_edit_id"] = int(_ev["id"])
                         st.rerun()
+
+            # Vencidos ficam aqui, acessíveis — antes sumiam sem volta.
+            if not _df_venc.empty:
+                with st.expander(f"⏰ Já vencidos ({len(_df_venc)})"):
+                    for _, _ev in _df_venc.head(20).iterrows():
+                        _di = _ev["_di"]
+                        _df_v = _ev["_df"] or _di
+                        _cor = TIPO_COR.get(str(_ev.get("tipo", "")),
+                                            "#475569")
+                        _ico = TIPO_ICONE.get(str(_ev.get("tipo", "")), "📅")
+                        _ha = (_hoje_ag - _df_v).days
+                        cv1, cv2 = st.columns([5, 1], gap="small")
+                        cv1.markdown(
+                            f"<div style=\"border-left:3px solid {_cor};padding:2px 0 2px 8px;margin:0;line-height:1.35;opacity:.75\">"
+                            f"<b>{_ico} {_ev['titulo']}</b> "
+                            f"<span style=\"color:#94a3b8;font-size:.78rem;\">· há {_ha} dia(s) "
+                            f"<span style=\"opacity:.7;\">({_df_v.strftime('%d/%m/%Y')})</span>"
+                            f"</span></div>",
+                            unsafe_allow_html=True,
+                        )
+                        if cv2.button("🔍", key=f"res_venc_{_ev['id']}",
+                                      help="Abrir no formulário",
+                                      width="stretch"):
+                            st.session_state["agenda_edit_id"] = int(_ev["id"])
+                            st.rerun()
+                    if len(_df_venc) > 20:
+                        st.caption(
+                            f"Mostrando os 20 mais recentes de "
+                            f"{len(_df_venc)}. A lista completa está em "
+                            "**📋 Compromissos Cadastrados**, no fim da página."
+                        )
 
         st.divider()
 
@@ -871,7 +953,11 @@ filtro_tipo = f1.selectbox("Filtrar por categoria", _tipos_disp,
                             key="ag_ftipo")
 filtro_membro = f2.text_input("Filtrar por membro",
                                placeholder="nome...", key="ag_fmembro")
-filtro_futuro = f3.checkbox("Só futuros", value=False, key="ag_ffut")
+filtro_futuro = f3.checkbox(
+    "Só futuros", value=False, key="ag_ffut",
+    help="Esconde o que já passou. Fica MARCADO até você desmarcar — se "
+         "algum compromisso antigo 'sumiu' da lista, é quase sempre isso.",
+)
 
 if not df_agenda.empty:
     df_show = df_agenda.copy()
@@ -892,10 +978,26 @@ if not df_agenda.empty:
                 filtro_membro.strip(), case=False, na=False,
             )
         ]
+    # "Só futuros" é sticky (key fixa no session_state): uma vez marcado,
+    # continua valendo nas próximas visitas e os vencidos somem sem aviso —
+    # foi exatamente a queixa de "eventos vencidos desaparecem da lista".
+    # Em vez de mudar o default, avisamos QUANTOS estão escondidos e damos
+    # um clique pra trazer de volta.
     if filtro_futuro:
+        _antes = len(df_show)
         df_show = df_show[
             df_show["data_fim"] >= pd.Timestamp(datetime.now().date())
         ]
+        _ocultos = _antes - len(df_show)
+        if _ocultos:
+            _av1, _av2 = st.columns([0.72, 0.28],
+                                    vertical_alignment="center")
+            _av1.info(f"⏳ **{_ocultos}** compromisso(s) já vencido(s) "
+                      "estão ocultos pelo filtro **Só futuros**.")
+            if _av2.button("👁️ Mostrar vencidos", key="ag_mostrar_vencidos",
+                           width="stretch"):
+                st.session_state["ag_ffut"] = False
+                st.rerun()
 
     df_show = df_show.sort_values("data_inicio")
 

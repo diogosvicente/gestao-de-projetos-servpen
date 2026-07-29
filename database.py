@@ -526,10 +526,11 @@ def criar_tabela_sessoes():
 
 def criar_sessao(usuario, dias=7):
     token = secrets.token_urlsafe(18)
-    expires = int(time.time()) + dias * 86400
+    agora = int(time.time())
+    expires = agora + dias * 86400
     conn = conectar(); c = conn.cursor()
-    c.execute("INSERT INTO sessoes (token, usuario, expires_at) VALUES (%s,%s,%s)",
-              (token, usuario, expires))
+    c.execute("INSERT INTO sessoes (token, usuario, expires_at, ultima_atividade) "
+              "VALUES (%s,%s,%s,%s)", (token, usuario, expires, agora))
     conn.commit(); conn.close()
     return token
 
@@ -558,6 +559,57 @@ def limpar_sessoes_expiradas():
     conn = conectar(); c = conn.cursor()
     c.execute("DELETE FROM sessoes WHERE expires_at < %s", (int(time.time()),))
     conn.commit(); conn.close()
+
+
+# ─── PRESENÇA ("quem está online agora") ──────────────────
+# Janela padrão: quem interagiu nos últimos 5 min conta como online. O
+# heartbeat é escrito por `tocar_sessao`, chamado no boot do app.py com
+# throttle (1 write por minuto por sessão) — sem isso seria 1 UPDATE por
+# rerun do Streamlit, o que é caro à toa.
+JANELA_ONLINE_MIN = 5
+
+def tocar_sessao(token):
+    """Marca atividade da sessão agora (heartbeat de presença).
+
+    Best-effort: nunca levanta — presença é enfeite, não pode derrubar o
+    app se o banco estiver ocupado.
+    """
+    if not token:
+        return
+    try:
+        conn = conectar(); c = conn.cursor()
+        c.execute("UPDATE sessoes SET ultima_atividade = %s WHERE token = %s",
+                  (int(time.time()), token))
+        conn.commit(); conn.close()
+    except Exception as e:
+        log.debug("tocar_sessao falhou (ignorado): %s", e)
+
+def usuarios_online(janela_min=None):
+    """Nomes distintos com atividade dentro da janela (default 5 min).
+
+    Só considera sessão não expirada E com heartbeat recente — sessão
+    válida sozinha não basta (dura 7 dias). Sessões antigas, anteriores à
+    coluna `ultima_atividade`, têm NULL e ficam de fora até a pessoa
+    interagir de novo.
+    """
+    janela = int(janela_min or JANELA_ONLINE_MIN)
+    corte = int(time.time()) - janela * 60
+    try:
+        conn = conectar(); c = conn.cursor()
+        c.execute("""
+            SELECT DISTINCT usuario
+              FROM sessoes
+             WHERE expires_at > %s
+               AND ultima_atividade IS NOT NULL
+               AND ultima_atividade >= %s
+             ORDER BY usuario
+        """, (int(time.time()), corte))
+        nomes = [r[0] for r in c.fetchall()]
+        conn.close()
+        return nomes
+    except Exception as e:
+        log.debug("usuarios_online falhou (ignorado): %s", e)
+        return []
 
 
 # ─── CRIAÇÃO DE TABELAS / MIGRAÇÕES ───────────────────────
@@ -720,6 +772,24 @@ def _criar_tabelas_impl():
             tamanho_bytes BIGINT,
             mime_type TEXT
         )''')
+
+        # ── PASTAS (hierarquia de arquivos por projeto) ──
+        # Auto-referenciada: pasta_pai_id NULL = pasta na raiz do projeto.
+        # As pastas existem SÓ no banco — o arquivo físico continua caindo em
+        # anexos/<projeto_id>/... (ver caminho_seguro_para_anexo). Mover um
+        # arquivo de pasta é só um UPDATE em arquivos.pasta_id, sem tocar em
+        # disco: mais simples e sem risco de perder o binário no meio do
+        # caminho. Aninhamento é ilimitado (a árvore vive em pasta_pai_id).
+        c.execute('''CREATE TABLE IF NOT EXISTS pastas (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            projeto_id BIGINT NOT NULL,
+            nome TEXT NOT NULL,
+            pasta_pai_id BIGINT,
+            criado_por TEXT,
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
+        c.execute("CREATE INDEX IF NOT EXISTS idx_pastas_proj_pai "
+                  "ON pastas(projeto_id, pasta_pai_id)")
 
         # ── MENÇÕES NO DIÁRIO ──
         # ACESSO: 1 linha por (usuario, projeto). Idempotente via UNIQUE.
@@ -905,6 +975,23 @@ def _criar_tabelas_impl():
             # (ao concluir, gera a próxima ocorrência com a data deslocada).
             ("tarefas",               "projeto_id",         "BIGINT"),
             ("tarefas",               "recorrencia",        "TEXT DEFAULT 'nenhuma'"),
+            # Campos novos do cadastro de projeto (pedido de 29/07/2026):
+            # de onde vem a verba, observações gerais e que documentos o
+            # projeto gerou (memorial, ART, planta...). Texto livre — sem
+            # cadastro mestre, igual ao que já se faz em `demandas`.
+            ("projetos",              "fonte_recurso",      "TEXT"),
+            ("projetos",              "observacoes",        "TEXT"),
+            ("projetos",              "documentacoes_geradas", "TEXT"),
+            # Presença ("quem está online"): epoch da última interação do
+            # usuário. expires_at sozinho não serve — é fixado no login e
+            # dura 7 dias, então não distingue "com o app aberto agora" de
+            # "logou na semana passada". NULL = sessão antiga, nunca tocada
+            # (conta como offline até a próxima interação).
+            ("sessoes",               "ultima_atividade",   "BIGINT"),
+            # Pasta onde o arquivo está (NULL = raiz do projeto). Todos os
+            # arquivos que já existem hoje ficam NULL — ou seja, na raiz —
+            # sem precisar de migração de dados.
+            ("arquivos",              "pasta_id",           "BIGINT"),
         ]
         # PASSO 1: lê o schema atual via information_schema (SELECT, só
         # pega AccessShareLock — NÃO conflita com nada). Migrations cujo
@@ -1040,7 +1127,8 @@ def listar_tags_existentes():
 
 
 # ─── PROJETOS ─────────────────────────────────────────────
-def salvar_projeto(dados, codigo=None, local=None):
+def salvar_projeto(dados, codigo=None, local=None, fonte_recurso=None,
+                   observacoes=None, documentacoes_geradas=None):
     """Insere um novo projeto e retorna o id (via RETURNING).
 
     `dados` aceita 16 ou 17 valores:
@@ -1049,9 +1137,11 @@ def salvar_projeto(dados, codigo=None, local=None):
           data_fim, status, link_projeto, demandas, solicitacao, prioridade.
       17: os 16 acima + `tags` (string CSV de tags, ou None).
 
-    `codigo` (item 3) e `local` (item 10) vêm como kwargs pra não mexer na
-    tupla posicional (compat com callers antigos). `codigo` vazio vira NULL —
-    o índice único parcial só vale pra não-nulos, então vários sem código OK.
+    `codigo` (item 3), `local` (item 10) e os campos de 29/07/2026
+    (`fonte_recurso`, `observacoes`, `documentacoes_geradas`) vêm como
+    kwargs pra não mexer na tupla posicional (compat com callers antigos).
+    `codigo` vazio vira NULL — o índice único parcial só vale pra não-nulos,
+    então vários projetos sem código convivem sem conflito.
     """
     if len(dados) == 16:
         dados = (*dados, None)  # tags = NULL
@@ -1060,6 +1150,9 @@ def salvar_projeto(dados, codigo=None, local=None):
 
     codigo = (codigo or "").strip() or None
     local = (local or "").strip() or None
+    fonte_recurso = (fonte_recurso or "").strip() or None
+    observacoes = (observacoes or "").strip() or None
+    documentacoes_geradas = (documentacoes_geradas or "").strip() or None
 
     conn = conectar(); c = conn.cursor()
     try:
@@ -1068,9 +1161,12 @@ def salvar_projeto(dados, codigo=None, local=None):
                       numero_sei, data_recebimento, previsao_execucao,
                       data_inicio, data_termino, data_fim,
                       status, link_projeto, demandas, solicitacao, prioridade,
-                      tags, codigo, local)
-                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                     RETURNING id''', (*dados, codigo, local))
+                      tags, codigo, local,
+                      fonte_recurso, observacoes, documentacoes_geradas)
+                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                     RETURNING id''',
+                  (*dados, codigo, local, fonte_recurso, observacoes,
+                   documentacoes_geradas))
         novo_id = c.fetchone()[0]
         conn.commit()
         return novo_id
@@ -1234,7 +1330,8 @@ def clonar_projeto(id_origem, sufixo=" (cópia)"):
 
     O que é COPIADO:
       - Dados básicos: projetista, endereço, solicitante, contato, número SEI,
-        link, demandas (checklist), solicitação/escopo, prioridade, tags
+        link, demandas (checklist), solicitação/escopo, prioridade, tags,
+        fonte de recurso, observações e documentações geradas
       - Estrutura de etapas (nomes, durações, offsets, ordem)
 
     O que NÃO é copiado (o novo projeto começa do zero nestes):
@@ -1254,7 +1351,8 @@ def clonar_projeto(id_origem, sufixo=" (cópia)"):
         c.execute(
             """SELECT projetista, projeto, endereco, solicitante, contato,
                       numero_sei, link_projeto, demandas, solicitacao,
-                      prioridade, tags, local
+                      prioridade, tags, local,
+                      fonte_recurso, observacoes, documentacoes_geradas
                  FROM projetos WHERE id = %s""",
             (int(id_origem),),
         )
@@ -1264,7 +1362,8 @@ def clonar_projeto(id_origem, sufixo=" (cópia)"):
         # `codigo` NÃO é copiado de propósito: é único por projeto. O clone
         # nasce sem código (NULL); o usuário define um na edição se quiser.
         (projetista, projeto, endereco, solicitante, contato, numero_sei,
-         link_projeto, demandas, solicitacao, prioridade, tags, local) = row
+         link_projeto, demandas, solicitacao, prioridade, tags, local,
+         fonte_recurso, observacoes, documentacoes_geradas) = row
 
         novo_nome = f"{projeto}{sufixo}" if sufixo else projeto
 
@@ -1275,13 +1374,15 @@ def clonar_projeto(id_origem, sufixo=" (cópia)"):
                 numero_sei, data_recebimento, previsao_execucao,
                 data_inicio, data_termino, data_fim,
                 status, link_projeto, demandas, solicitacao, prioridade,
-                tags, local)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                tags, local,
+                fonte_recurso, observacoes, documentacoes_geradas)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                RETURNING id""",
             (projetista, novo_nome, endereco, solicitante, contato,
              numero_sei, hoje, hoje, hoje, hoje, hoje,
              "Em Espera", link_projeto, demandas, solicitacao, prioridade,
-             tags, local),
+             tags, local,
+             fonte_recurso, observacoes, documentacoes_geradas),
         )
         novo_id = c.fetchone()[0]
 
@@ -1820,7 +1921,10 @@ def listar_tarefas_equipe(equipe):
     conn = conectar(); c = conn.cursor()
     try:
         base = ("SELECT t.id, t.usuario, t.descricao, t.concluida, "
+                "t.privada, "
                 "t.criado_por, COALESCE(t.data, t.criado_em::date) AS data, "
+                "t.concluida_em, "
+                "COALESCE(t.recorrencia,'nenhuma') AS recorrencia, "
                 "p.projeto AS projeto_nome "
                 "FROM tarefas t "
                 "LEFT JOIN usuarios u ON u.nome = t.usuario "
@@ -1944,29 +2048,57 @@ def listar_auditoria(limit=200, filtro_usuario=None, filtro_acao=None):
 PASTA_ANEXOS = 'anexos'
 
 def salvar_arquivo(projeto_id, nome_original, path_arquivo, descricao, autor,
-                   tamanho_bytes, mime_type=''):
+                   tamanho_bytes, mime_type='', pasta_id=None):
+    """Insere a linha de metadados do arquivo.
+
+    `pasta_id=None` = arquivo na raiz do projeto (comportamento de sempre).
+    """
     conn = conectar(); c = conn.cursor()
     c.execute('''INSERT INTO arquivos
-                 (projeto_id, nome_original, path_arquivo, descricao, autor, tamanho_bytes, mime_type)
-                 VALUES (%s,%s,%s,%s,%s,%s,%s)''',
+                 (projeto_id, nome_original, path_arquivo, descricao, autor,
+                  tamanho_bytes, mime_type, pasta_id)
+                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s)''',
               (int(projeto_id), nome_original, path_arquivo, descricao or '',
-               autor or '', int(tamanho_bytes or 0), mime_type or ''))
+               autor or '', int(tamanho_bytes or 0), mime_type or '',
+               int(pasta_id) if pasta_id else None))
     conn.commit(); conn.close()
 
-def listar_arquivos(projeto_id=None):
+def listar_arquivos(projeto_id=None, pasta_id=None, so_da_pasta=False):
+    """Lista arquivos (tupla de 9: ..., tamanho_bytes, pasta_id).
+
+    - `so_da_pasta=False` (default): traz TODOS os arquivos do escopo, sem
+      olhar pasta — é o que alimenta as métricas e a busca global.
+    - `so_da_pasta=True`: traz só os que estão diretamente na pasta
+      indicada (`pasta_id=None` → os da raiz do projeto). É o que a
+      navegação por pastas usa.
+    """
     conn = conectar(); c = conn.cursor()
+    _cols = ('''SELECT id, projeto_id, nome_original, path_arquivo,
+                       descricao, autor, data_upload, tamanho_bytes, pasta_id
+                  FROM arquivos''')
+    _where, _par = [], []
     if projeto_id is not None:
-        c.execute('''SELECT id, projeto_id, nome_original, path_arquivo,
-                            descricao, autor, data_upload, tamanho_bytes
-                     FROM arquivos WHERE projeto_id=%s ORDER BY data_upload DESC''',
-                  (int(projeto_id),))
-    else:
-        c.execute('''SELECT id, projeto_id, nome_original, path_arquivo,
-                            descricao, autor, data_upload, tamanho_bytes
-                     FROM arquivos ORDER BY data_upload DESC''')
+        _where.append("projeto_id=%s"); _par.append(int(projeto_id))
+    if so_da_pasta:
+        if pasta_id is None:
+            _where.append("pasta_id IS NULL")
+        else:
+            _where.append("pasta_id=%s"); _par.append(int(pasta_id))
+    _sql = _cols + ((" WHERE " + " AND ".join(_where)) if _where else "")
+    c.execute(_sql + " ORDER BY data_upload DESC", tuple(_par))
     rows = c.fetchall()
     conn.close()
     return rows
+
+def mover_arquivo_para_pasta(id_arq, pasta_id):
+    """Move o arquivo de pasta — só troca o vínculo, não mexe em disco."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("UPDATE arquivos SET pasta_id=%s WHERE id=%s",
+                  (int(pasta_id) if pasta_id else None, int(id_arq)))
+        conn.commit()
+    finally:
+        conn.close()
 
 def excluir_arquivo(id_arq):
     conn = conectar(); c = conn.cursor()
@@ -1986,6 +2118,144 @@ def caminho_seguro_para_anexo(projeto_id, nome_original):
     ts = time.strftime('%Y%m%d_%H%M%S')
     pasta = os.path.join(PASTA_ANEXOS, str(int(projeto_id)))
     return pasta, os.path.join(pasta, f"{ts}_{nome_seguro}")
+
+
+# ─── PASTAS (hierarquia lógica dentro de cada projeto) ────
+# A árvore vive só no banco (tabela `pastas`); em disco tudo continua
+# plano em anexos/<projeto_id>/. Ver comentário no CREATE TABLE.
+def criar_pasta(projeto_id, nome, pasta_pai_id=None, criado_por=None):
+    """Cria uma pasta. Retorna o id novo, ou None se já existir irmã de
+    mesmo nome (case-insensitive) no mesmo nível."""
+    nome = (nome or "").strip()
+    if not nome:
+        return None
+    conn = conectar(); c = conn.cursor()
+    try:
+        # Nome duplicado no MESMO nível não faz sentido (confunde na UI);
+        # em níveis diferentes pode repetir à vontade.
+        if pasta_pai_id is None:
+            c.execute("SELECT 1 FROM pastas WHERE projeto_id=%s "
+                      "AND pasta_pai_id IS NULL AND LOWER(nome)=LOWER(%s)",
+                      (int(projeto_id), nome))
+        else:
+            c.execute("SELECT 1 FROM pastas WHERE projeto_id=%s "
+                      "AND pasta_pai_id=%s AND LOWER(nome)=LOWER(%s)",
+                      (int(projeto_id), int(pasta_pai_id), nome))
+        if c.fetchone():
+            return None
+        c.execute('''INSERT INTO pastas (projeto_id, nome, pasta_pai_id, criado_por)
+                     VALUES (%s,%s,%s,%s) RETURNING id''',
+                  (int(projeto_id), nome,
+                   int(pasta_pai_id) if pasta_pai_id else None,
+                   criado_por or ''))
+        novo_id = c.fetchone()[0]
+        conn.commit()
+        return novo_id
+    except Exception as e:
+        log.exception("Erro ao criar pasta '%s': %s", nome, e)
+        conn.rollback()
+        return None
+    finally:
+        conn.close()
+
+def listar_pastas(projeto_id, pasta_pai_id=None):
+    """Subpastas diretas de um nível. `pasta_pai_id=None` = raiz do projeto.
+
+    Retorna [{id, nome, pasta_pai_id, criado_por}], em ordem alfabética.
+    """
+    conn = conectar(); c = conn.cursor()
+    try:
+        if pasta_pai_id is None:
+            c.execute("SELECT id, nome, pasta_pai_id, criado_por FROM pastas "
+                      "WHERE projeto_id=%s AND pasta_pai_id IS NULL "
+                      "ORDER BY LOWER(nome)", (int(projeto_id),))
+        else:
+            c.execute("SELECT id, nome, pasta_pai_id, criado_por FROM pastas "
+                      "WHERE projeto_id=%s AND pasta_pai_id=%s "
+                      "ORDER BY LOWER(nome)",
+                      (int(projeto_id), int(pasta_pai_id)))
+        return [{"id": r[0], "nome": r[1], "pasta_pai_id": r[2],
+                 "criado_por": r[3]} for r in c.fetchall()]
+    finally:
+        conn.close()
+
+def obter_pasta(id_pasta):
+    """Dados de uma pasta, ou None se não existir."""
+    if not id_pasta:
+        return None
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("SELECT id, projeto_id, nome, pasta_pai_id, criado_por "
+                  "FROM pastas WHERE id=%s", (int(id_pasta),))
+        r = c.fetchone()
+        if not r:
+            return None
+        return {"id": r[0], "projeto_id": r[1], "nome": r[2],
+                "pasta_pai_id": r[3], "criado_por": r[4]}
+    finally:
+        conn.close()
+
+def caminho_pasta(id_pasta):
+    """Trilha da raiz até a pasta, p/ o breadcrumb: [{id, nome}, ...].
+
+    Sobe pelos pais com um teto de 50 níveis — proteção barata contra um
+    ciclo acidental (pai apontando pra descendente) travar a página.
+    """
+    trilha, atual, guarda = [], id_pasta, 0
+    while atual and guarda < 50:
+        p = obter_pasta(atual)
+        if not p:
+            break
+        trilha.append({"id": p["id"], "nome": p["nome"]})
+        atual = p["pasta_pai_id"]
+        guarda += 1
+    return list(reversed(trilha))
+
+def pasta_tem_conteudo(id_pasta):
+    """(n_arquivos, n_subpastas) diretamente dentro da pasta."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("SELECT COUNT(*) FROM arquivos WHERE pasta_id=%s",
+                  (int(id_pasta),))
+        n_arq = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM pastas WHERE pasta_pai_id=%s",
+                  (int(id_pasta),))
+        n_sub = c.fetchone()[0]
+        return int(n_arq), int(n_sub)
+    finally:
+        conn.close()
+
+def excluir_pasta(id_pasta):
+    """Exclui a pasta SÓ se estiver vazia.
+
+    Retorna True se excluiu; False se ainda tem arquivo ou subpasta dentro.
+    Nunca apaga em cascata — decisão de produto (evita perda acidental de
+    arquivo); quem quiser excluir precisa esvaziar antes.
+    """
+    n_arq, n_sub = pasta_tem_conteudo(id_pasta)
+    if n_arq or n_sub:
+        return False
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("DELETE FROM pastas WHERE id=%s", (int(id_pasta),))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+def renomear_pasta(id_pasta, novo_nome):
+    """Renomeia a pasta. Retorna False se o nome ficar vazio."""
+    novo_nome = (novo_nome or "").strip()
+    if not novo_nome:
+        return False
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("UPDATE pastas SET nome=%s WHERE id=%s",
+                  (novo_nome, int(id_pasta)))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
 
 
 # ─── DIÁRIO LEITURAS ──────────────────────────────────────

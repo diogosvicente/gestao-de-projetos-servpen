@@ -18,8 +18,10 @@ Estrutura desta arquivo:
 
 from __future__ import annotations
 
+import html as _html_mod
 import logging
 import os
+import time
 from datetime import datetime
 
 import pandas as pd
@@ -568,6 +570,21 @@ if _me_atual:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# 8.2 HEARTBEAT DE PRESENÇA ("quem está online")
+# ═══════════════════════════════════════════════════════════════════════
+# Marca atividade da sessão pra alimentar a lista de gente online (sidebar
+# e Chat). Com THROTTLE de 60s: sem isso seria 1 UPDATE por rerun do
+# Streamlit — e rerun aqui acontece a cada clique/tick de fragmento, o que
+# encheria o banco de escrita à toa. A janela de "online" é de 5 min
+# (db.JANELA_ONLINE_MIN), então bater 1×/min é folgado.
+if _auth_tok:
+    _ts_agora = time.time()
+    if _ts_agora - float(st.session_state.get("_ultimo_heartbeat", 0)) > 60:
+        st.session_state["_ultimo_heartbeat"] = _ts_agora
+        db.tocar_sessao(_auth_tok)
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # 9. SIDEBAR GLOBAL (renderiza em TODAS as páginas)
 # ═══════════════════════════════════════════════════════════════════════
 from core.auth_ui import _avatar_circular_html, _dialog_meu_perfil
@@ -763,6 +780,33 @@ with st.sidebar:
                 f"⏰ <b>{_tarefas_atrasadas}</b> atrasada(s) em Tarefas</div>",
                 unsafe_allow_html=True,
             )
+
+    # ── QUEM ESTÁ ONLINE AGORA ─────────────────────────────────
+    # Alimentado pelo heartbeat da seção 8.2. "Online" = interagiu nos
+    # últimos db.JANELA_ONLINE_MIN minutos. Fica num fragmento com
+    # run_every pra atualizar sozinho, sem o usuário recarregar a página.
+    @st.fragment(run_every="30s")
+    def _painel_online():
+        _online = [n for n in db.usuarios_online()
+                   if n != st.session_state.usuario]
+        st.divider()
+        st.caption(f"🟢 Online agora ({len(_online)})")
+        if not _online:
+            st.markdown(
+                "<div style='font-size:.8rem;opacity:.6;padding-left:2px'>"
+                "Ninguém mais online.</div>", unsafe_allow_html=True)
+        else:
+            st.markdown(
+                "".join(
+                    "<div style='font-size:.85rem;padding:2px 0'>"
+                    "<span style='color:#22c55e'>●</span> "
+                    f"{_html_mod.escape(str(_n))}</div>"
+                    for _n in _online
+                ),
+                unsafe_allow_html=True,
+            )
+
+    _painel_online()
 
     # ── FRAGMENTO GLOBAL DE NOTIFICAÇÕES (toast de msg nova) ───
     # MUITO IMPORTANTE: tem que ficar montado na sidebar, NÃO numa view.
