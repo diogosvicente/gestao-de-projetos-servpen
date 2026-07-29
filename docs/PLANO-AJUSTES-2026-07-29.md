@@ -1,0 +1,512 @@
+# Plano de Ajustes — 29/07/2026 — Agenda, Novo Projeto, Tarefas, Arquivos
+
+Levantamento a partir de 5 prints de tela reais do sistema em produção (Agenda,
+Novo Projeto, Tarefas ×2, Arquivos), com anotações da Sara sobre o que
+mudar em cada tela. **Este documento é só o plano.** Nada foi implementado
+ainda — é a base para a Sara aprovar, ajustar ou rejeitar cada item antes de
+qualquer código ser escrito.
+
+> **Como ler.** Cada item começa com a citação literal do pedido da Sara,
+> depois **Hoje** (o que o código faz agora, com `arquivo:linha`) e
+> **Proposta** (o que mudaria). ⚠️ marca ponto que **não dá pra decidir só
+> pelo código** — precisa de confirmação da Sara antes de qualquer linha ser
+> escrita. Todos os ⚠️ do documento estão consolidados em
+> [Decisões pendentes (resumo)](#decisões-pendentes-resumo) no final, numerados
+> pra responder rápido ("sim", "não", "opção B" etc.).
+
+---
+
+## 📅 Agenda
+
+### Item 1 — Clicar em cima do dia abre as atividades daquele dia
+
+> *"Na agenda, eu gostaria de clicar em cima e ela abrir as atividades
+> daquele dia."*
+
+**Hoje:** o "Calendário do Mês" inteiro é montado como uma **string HTML
+estática** (`html_cal`) e renderizado via `st.markdown(html_cal,
+unsafe_allow_html=True)` em `views/agenda.py:379`. A grade é gerada em
+`views/agenda.py:284-378`; cada evento vira um `<span class="ev-pill"
+title="...">` (`views/agenda.py:361-366`) — isso é só tooltip on-hover do
+navegador, não um clique. Não existe `<a href>`, `onclick`, `st.button` nem
+qualquer componente interativo dentro das células `<td>`; Streamlit não
+despacha clique em HTML injetado com `unsafe_allow_html=True`. Os únicos
+elementos clicáveis na visão Mensal são os botões `◀ Anterior` /
+`Próximo ▶` (`views/agenda.py:258-271`), que só trocam mês/ano.
+
+Já existem, no mesmo arquivo, três lugares com o padrão "selecionar → abrir"
+funcionando (podem servir de modelo técnico):
+- Visão Semanal: `st.selectbox` de eventos da semana + botão `📝 Abrir`
+  (`views/agenda.py:527-550`) que seta `st.session_state["agenda_edit_id"]`
+  e chama `st.rerun()`.
+- Visão Resumo: botão `🔍` por linha em "Próximos compromissos"
+  (`views/agenda.py:641-645`), mesmo padrão.
+- "Compromissos Cadastrados": botão `✏️ Editar` por linha
+  (`views/agenda.py:1003-1006`), mesmo padrão.
+- Helper reutilizável de pill/segmented-control, `_pill_select`
+  (`core/helpers.py:223-244`), já usado no toggle Mensal/Semanal/Lista/Resumo
+  (`views/agenda.py:200-206`).
+
+**Proposta:** trocar as células do dia, na grade Mensal, por widgets reais
+(um `st.button` por dia, grade 7 colunas × N linhas — mesmo espírito dos
+botões de navegação de mês já existentes). Clicar grava o dia escolhido em
+`session_state` e dispara `st.rerun()`. Isso precisa de duas peças que **não
+existem hoje em nenhuma view da Agenda**: (a) o próprio mecanismo de captura
+de clique no dia, e (b) um filtro por **dia exato** na seção "Compromissos
+Cadastrados" (hoje ela só filtra por categoria, membro e "só futuros" — ver
+Item 2 — nunca por uma data específica).
+
+⚠️ **decisão pendente:** onde o resultado do clique deve aparecer —
+(A) expandir a própria seção "Compromissos Cadastrados" já filtrada pro dia
+escolhido, (B) abrir um expander/painel dedicado só com os eventos daquele
+dia, ou (C) pular direto para a visão "Lista"/"Resumo" filtrada pro dia?
+
+---
+
+### Item 2 — Eventos vencidos somem da lista e só voltam se pesquisar
+
+> *"Eventos vencidos somem da lista de compromissos cadastrados e só
+> aparecem se eu pesquisar."*
+
+**Hoje:** a query base não tem corte de data —
+`SELECT * FROM agenda ORDER BY data_inicio ASC` (`views/agenda.py:100-104`)
+traz todo o histórico. Na seção "📋 Compromissos Cadastrados"
+(`views/agenda.py:861-862`), os filtros são categoria, membro e o checkbox
+**"Só futuros"** (`views/agenda.py:864-874`), com `value=False` por padrão
+(`views/agenda.py:874`) — ou seja, por design a tabela deveria mostrar tudo
+(passado e futuro) ao abrir a página, só cortando o passado quando esse
+checkbox específico está marcado (`views/agenda.py:895-898`). Não há nenhum
+outro trecho do repositório que force esse checkbox pra `True` — as únicas
+ocorrências de `ag_ffut`/`filtro_futuro` são a própria definição do widget e
+seu uso no filtro (`views/agenda.py:871,873,874,895`).
+
+A busca por membro (`filtro_membro`, `views/agenda.py:889-894`) é aplicada
+com **AND** sobre o resultado que já sofreu (ou não) o corte de "Só
+futuros" — ela nunca reseta ou ignora esse filtro. Ou seja, tecnicamente,
+digitar um nome na busca não traz de volta um vencido escondido pelo "Só
+futuros".
+
+Duas explicações plausíveis pro que a Sara está vendo — nenhuma 100%
+confirmável só pelo código:
+- **(a) Statefulness do checkbox:** como `ag_ffut` tem `key` fixa, uma vez
+  marcado (mesmo sem querer, inclusive em sessão anterior) o valor `True`
+  fica grudado em `session_state` pra toda a sessão do navegador (trocar de
+  aba via `st.navigation` não reseta `session_state`) — os vencidos somem
+  silenciosamente até alguém desmarcar esse checkbox pequeno.
+- **(b) Ela pode estar vendo a visão "Resumo", não "Compromissos
+  Cadastrados":** a subseção "📌 Próximos compromissos"
+  (`views/agenda.py:582-599`) filtra **incondicionalmente** por data, sem
+  checkbox e **sem busca nenhuma** (`views/agenda.py:592-597`) — ali os
+  vencidos somem de forma permanente e não há como pesquisá-los de volta.
+
+**Proposta:** ⚠️ **decisão pendente** — antes de mexer em código, confirmar
+com a Sara (print/tela exata) qual das duas situações é essa. Se for (a), o
+ajuste é simples: revisar o default/persistência desse checkbox (ex.: não
+manter marcado entre sessões, ou deixar mais visível/óbvio que ele está
+ligado). Se for (b), o ajuste é outro: dar à visão "Resumo" uma forma de
+enxergar vencidos (ex.: um link "ver atrasados" ou incluir uma janela de
+atraso recente por padrão), já que hoje ali não existe filtro nem busca.
+
+---
+
+### Item 3 — Sidebar/Chat mostrando quem está logado agora
+
+> *"Gostaria que na barra lateral aparecesse para mim todas as pessoas que
+> estão logadas no programa ou então na própria aba chat."*
+
+**Hoje:** **não existe nenhum conceito de "usuário online" no sistema.** A
+tabela `sessoes` (`database.py:830-834`) só tem `token`, `usuario`,
+`expires_at` — sem coluna de última atividade/heartbeat. `expires_at` é
+fixado no login (`time.time() + 7 dias`, `database.py:527-534`,
+`criar_sessao`) e nunca é renovado a cada requisição, então nem serve como
+proxy de atividade recente: uma sessão "válida" pode ser de alguém que fez
+login há 6 dias e não abre o sistema desde então — indistinguível de quem
+está com o app aberto agora. Não existe em lugar nenhum do repositório uma
+query tipo `SELECT DISTINCT usuario FROM sessoes WHERE expires_at > agora`.
+`core/sessao.py` (108 linhas) só lê/grava o cookie de sessão no navegador —
+zero lógica de presença. Em `app.py`, o único mecanismo "em tempo real" é o
+fragmento `_global_notif` (`core/notif.py:256-299`,
+`@st.fragment(run_every="10s")`), que só faz poll de contagem de não-lidas
+(chat/menções) pra disparar toast — não lista quem está online. Em
+`views/chat.py`, o fragmento `_render_chat_messages`
+(`core/chat_utils.py:76-77`, `run_every="2s"`) faz poll de mensagens, também
+não de presença.
+
+**Proposta — isto é feature nova do zero**, não um ajuste incremental. Duas
+abordagens técnicas leves, reaproveitando o que já existe:
+
+- **Abordagem 1 (recomendada):** somar uma coluna `ultima_atividade
+  TIMESTAMP` à tabela `sessoes`, atualizada a cada rerun de página (um hook
+  central, ex. em `app.py`, que faz um `UPDATE sessoes SET
+  ultima_atividade = now() WHERE token = ...`). "Online" = sessão válida
+  (`expires_at > agora`) **e** `ultima_atividade` dentro de uma janela de N
+  minutos. Exibição via fragmento com `run_every` (mesmo padrão já usado em
+  `core/notif.py:256` e `core/chat_utils.py:76-77`), atualizando a lista sem
+  refresh manual.
+- **Abordagem 2 (mais grosseira, menor esforço):** sem nova coluna, listar
+  como "logados" todo mundo com `expires_at > agora` — mais simples de
+  implementar, mas mistura "com o app aberto agora" com "fez login há
+  dias e nunca deslogou", o que provavelmente não é o que ela quer ver.
+
+⚠️ **decisão pendente:** (i) onde exibir — barra lateral do app inteiro, só
+dentro da aba Chat, ou os dois? (ii) qual janela de inatividade conta como
+"online" (sugestão: 5 minutos sem interação)? (iii) topa a Abordagem 1 (mais
+precisa, exige nova coluna) ou prefere a 2 (mais rápida, menos precisa)?
+
+---
+
+## 🗂️ Novo Projeto
+
+### Item 4 — Campo "Checklist Adicional / Demandas": vestigial ou em uso?
+
+> *"Verificar a função de campos. Acho que ele ficou a mais da estrutura
+> anterior, depois eu tinha mudado e retirei."* (campo circulado no print:
+> Checklist Adicional / Demandas)
+
+**Hoje — veredito da investigação: o campo está ATIVO, não é vestigial.**
+Não existe como coluna própria — o textarea "Checklist Adicional /
+Demandas" (`views/novo_projeto.py:143-144`) é concatenado com as disciplinas
+selecionadas num único texto (`" | "` como delimitador manual,
+`views/novo_projeto.py:254-256`) e gravado na coluna `demandas TEXT`
+(`database.py:608`). Esse valor é lido/escrito em pelo menos 5 frentes
+reais:
+- formulário de edição do Kanban, que espelha o mesmo campo e a mesma lógica
+  de concatenação (`views/kanban.py:1152-1177,1225-1228`);
+- clonagem de projeto — `demandas` está explicitamente na lista do que é
+  copiado (`database.py:1232-1286`, doc em `database.py:1237`);
+- histórico de alterações/auditoria do projeto (`views/kanban.py:1263-1264`);
+- "Evolução Técnica por Disciplina" **depende dele** para saber quais
+  disciplinas rastrear (`views/kanban.py:1668-1672`) — se o campo sumisse,
+  essa feature perderia a fonte de disciplinas;
+- exports Excel (`relatorios.py:257`) e PDF (`relatorios.py:607-611`).
+
+(Descartado um falso positivo: `views/dashboard.py:829-842` tem uma
+variável também chamada `demandas`, mas é só a lista de nomes de projetos de
+um colaborador — sem relação com a coluna do banco.)
+
+**Proposta:** manter o campo — está ativo, com dependências reais, e
+removê-lo quebraria a Evolução Técnica por Disciplina, o histórico e os
+exports.
+
+⚠️ **decisão pendente:** como a investigação não achou nenhum sinal de
+sobra/dead code neste campo específico, é provável que a lembrança da Sara
+seja sobre **outro** campo ou formulário (ex.: algo do multiselect de
+disciplinas em si, ou um campo de outra tela). Confirmar com ela o que
+exatamente lembra de ter retirado antes de mexer neste campo — se for
+confirmado que é este mesmo, a alternativa não seria remover, e sim um
+refactor maior (separar disciplinas e texto livre em duas colunas reais em
+vez do delimitador `"|"` manual), o que é um projeto à parte, não um
+"remover".
+
+---
+
+### Item 5 — Novos campos: Fonte de Recurso, Observações, Documentações Geradas
+
+> *"Incluir nessa aba os campos: Fonte de Recurso, Observações,
+> Documentações geradas"*
+
+**Hoje:** nenhuma das 3 colunas existe na tabela `projetos`
+(`CREATE TABLE`, `database.py:593-612`) nem na lista de migrações
+incrementais já aplicadas (`database.py:850-907`). Confirmado por grep no
+schema e no código de app.
+
+**Proposta — nome de coluna, tipo e posição no formulário:**
+
+| Campo | Coluna sugerida | Tipo | Onde entra no form |
+|---|---|---|---|
+| Fonte de Recurso | `fonte_recurso` | `TEXT` | Bloco **Identificação**, perto de SEI/Solicitante (`views/novo_projeto.py:75-77`) ou na linha de Prioridade/Tags (hoje 2 colunas, `views/novo_projeto.py:109-127`, viraria 3) |
+| Observações | `observacoes` | `TEXT` | Bloco **Escopo e Disciplinas**, como terceiro `text_area` logo após "Checklist Adicional/Demandas" (`views/novo_projeto.py:144`) |
+| Documentações Geradas | `documentacoes_geradas` | `TEXT` | Ambíguo — ver decisão abaixo |
+
+Para "Documentações Geradas", dois sentidos possíveis: (i) um campo de texto
+curto/lista dentro do próprio cadastro do projeto (ex.: "Memorial
+descritivo, ART, Planta baixa"), caindo perto de "Link da Pasta
+(Drive/Nuvem)" (`views/novo_projeto.py:81`) no bloco Identificação; (ii) ela
+estar pensando na aba **Arquivos** (`views/arquivos.py`, módulo separado de
+anexos por projeto) e querendo um resumo/atalho dela aparecendo em Novo
+Projeto — solução bem diferente da (i).
+
+**Nota de implementação (padrão já usado no código):** colunas "tardias"
+como `codigo`, `local`, `tags` não entraram na tupla posicional fixa de
+`salvar_projeto`/`atualizar_projeto_completo` (assinatura fixa de 16/17 e 14
+valores, `database.py:1046-1050,1085-1087`) — em vez disso, usam o setter
+genérico `atualizar_campo_projeto` (`database.py:1099-1105`, uso em
+`views/kanban.py:1282,1285-1288`). É provavelmente o caminho de menor
+atrito pros 3 campos novos. Qualquer um deles, se virar coluna real,
+também precisaria (pelo padrão observado) entrar na lista `migracoes`
+(`database.py:850-907`) e, se a Sara quiser refletido em clone/relatórios/
+edição no Kanban, ser replicado em `clonar_projeto`
+(`database.py:1232-1286`), `relatorios.py:239-259,580-611` e no espelho do
+formulário de edição em `views/kanban.py:1090-1177`.
+
+⚠️ **decisões pendentes:** (i) "Documentações Geradas" é campo de texto novo
+no cadastro, ou atalho/resumo pra aba Arquivos? (ii) os 3 campos novos
+devem entrar também em clonagem de projeto, relatórios Excel/PDF e edição
+no Kanban (recomendação: sim, pra manter consistência com os demais campos
+do cadastro) ou só no cadastro/edição básica?
+
+---
+
+## ✅ Tarefas
+
+### Item 6 — Unificar as duas formas de cadastro de tarefa
+
+> *"Acho que na aba tarefa não precisa ter 2 formas de cadastro. Acho que
+> poderia ter um campo para atribuir a alguém. Aí sim, a lista vai estar
+> minhas tarefas e tarefas da equipe."*
+
+**Hoje:** dois formulários distintos. (a) "Nova tarefa" pessoal
+(`views/tarefas.py:74-103`) sempre cria a tarefa pro próprio usuário
+logado — sem seletor de destinatário — com checkbox "🔒 Manter privada"
+(default `True`). (b) "Tarefas da equipe" — atribuição do gestor
+(`views/tarefas.py:298-330`), só visível pra quem passa `_pode_gestor()`
+(`core/helpers.py:53-55`), com `st.selectbox("Para quem", _membros)`
+(`views/tarefas.py:296`) e **sem** checkbox de privacidade — a tarefa nasce
+sempre pública.
+
+Ambos os formulários chamam a **mesma função de banco**,
+`criar_tarefa(usuario, descricao, *, privada, criado_por, equipe, data,
+projeto_id, recorrencia)` (`database.py:1607-1640`). A regra de negócio já
+está toda no backend (`database.py:1618-1622`): se `criado_por != usuario`,
+a tarefa é forçada `privada=False` e nasce `vista=0` (dispara badge/toast);
+se o próprio dono cria, nasce `vista=1`. **A separação em duas telas é só de
+front-end** — unificar não exige mudança de schema nem nova função de
+banco, só trocar quem popula os argumentos `usuario`/`criado_por` na
+chamada já existente a `db.criar_tarefa`.
+
+**Proposta — desenho do formulário único:**
+- Campos comuns (iguais aos dois forms de hoje): Descrição, 📅 Data,
+  🔁 Repetir, 📁 Projeto (opcional).
+- Campo novo **"Atribuir a"** — `selectbox` opcional, populado por
+  `membros_para_gestor(equipe)`, **visível apenas para quem `_pode_gestor()`**
+  (quem não é gestor nem vê o campo — o form fica idêntico ao "Nova tarefa"
+  pessoal de hoje). Vazio/"Eu mesmo" (default) = tarefa pessoal
+  (`criado_por == usuario`); preenchido com outro nome = tarefa atribuída
+  (`criado_por` = quem está logado, `usuario` = destinatário escolhido) —
+  reaproveita a regra de privacidade já existente em
+  `database.py:1618-1619`, sem inventar regra nova.
+- Checkbox **"🔒 Manter privada"** — fica habilitada só quando "Atribuir a"
+  está vazio (tarefa pessoal); some/desabilita quando um destinatário é
+  escolhido, já que o backend força `privada=False` nesse caso de qualquer
+  forma.
+- Log de auditoria (`log_aud("atribuir_tarefa", ...)`,
+  `views/tarefas.py:322`) mantido quando a tarefa é atribuída a terceiro.
+- As **listas** continuam duas, como ela mesma descreveu — "Minhas tarefas"
+  (`views/tarefas.py:105-250`) e "Tarefas da equipe"
+  (`views/tarefas.py:334-360`) seguem existindo como estão, só passam a ser
+  alimentadas por um único ponto de cadastro em vez de dois.
+
+Sem ⚠️ estrutural aqui — o desenho é direto e não depende de escolha externa,
+só de validar o rótulo final ("Atribuir a" / "Atribuir a (opcional)").
+
+---
+
+### Item 7 — Agrupar tarefas por data
+
+> *"Deixar agrupado por datas as tarefas."*
+
+**Hoje:** não há agrupamento visual em nenhuma das três visões — é sempre
+lista/tabela plana ordenada por SQL. "Minhas tarefas":
+`listar_tarefas_de` ordena por `t.concluida ASC, COALESCE(t.data,
+t.criado_em::date) ASC, t.id DESC` (`database.py:1657-1658`), renderizada em
+`st.data_editor` (`views/tarefas.py:145-165`), que preserva essa ordem mas
+não agrupa nativamente. O toggle "📅 Só hoje" (`views/tarefas.py:111-112,
+123-124`) só restringe a exibição a um dia, não agrupa; o aviso de
+atrasadas é um `st.warning` de contagem agregada (`views/tarefas.py:117-119`),
+não uma seção separada. O expander "🖥️ Ver como planilha"
+(`views/tarefas.py:210-250`) renderiza a mesma lista em HTML manual, também
+sem agrupamento. "Tarefas da equipe": `listar_tarefas_equipe` ordena
+**primeiro por usuário**, depois `concluida`, depois `id DESC`
+(`database.py:1830,1833`) — ordenação por pessoa, não por data — em
+`st.dataframe` simples (`views/tarefas.py:339-348`), sem cor nem
+agrupamento.
+
+**Proposta — duas formas de resolver, dado que a tabela principal hoje é
+`st.data_editor` (que não tem agrupamento nativo com cabeçalho de seção):**
+
+- **Opção A — cabeçalhos de seção reais:** quebrar a renderização em blocos
+  por data (ex.: "Atrasadas", "Hoje", "Amanhã", "Esta semana", "Depois"),
+  cada bloco com seu próprio cabeçalho visual. Visualmente mais parecido com
+  apps de tarefas (Todoist/Things), mas implica abrir mão de uma única
+  grade editável — a edição em lote passaria a ser por bloco, ou a interação
+  por linha mudaria de padrão.
+- **Opção B — tabela única ordenada + destaque de virada de dia:** manter o
+  `st.data_editor` único (preserva a edição em lote como está hoje), mas
+  inserir um separador visual (linha/cor de fundo) toda vez que a data muda
+  em relação à linha anterior. Mais leve de implementar, mas é mais um
+  "separador" do que um "agrupamento" no sentido literal do pedido.
+
+⚠️ **decisões pendentes:** (i) Opção A (blocos reais, abre mão do
+data_editor único) ou Opção B (tabela única + separador de dia, mecânica
+atual quase intacta)? (ii) isso vale também pra "Tarefas da equipe" — hoje
+agrupada por pessoa — ou só pra "Minhas tarefas"?
+
+---
+
+### Item 8 — Visual "mais bonitinho" (proposta do "tio Claudio")
+
+> *"Acho que o visual dessa aba poderia ser mais bonitinho. De repente o
+> tio Claudio sugira algo"*
+
+**Hoje:** sem CSS específico da aba além de dois trechos inline dentro do
+expander opt-in "Ver como planilha" — cabeçalho teal sólido `#0f766e` com
+texto branco negrito (`views/tarefas.py:212-213`), borda sutil
+`rgba(255,255,255,.08)` (`views/tarefas.py:214-215`) e destaque de atraso em
+vermelho `#ef4444` negrito (`views/tarefas.py:221`) — únicas cores
+hardcoded do arquivo, e só aparecem nessa visão alternativa, não na tabela
+principal. `st.data_editor` (tabela principal) e `st.dataframe` (tabela da
+equipe) usam formatação padrão do tema Streamlit, sem cor por coluna; os
+"ícones" são só emojis nos `label`/`help` do `column_config`
+(`views/tarefas.py:149-163`). O CSS global do app
+(`app.py:222-294,426`) estiliza forms/expanders/botões de forma genérica em
+todas as abas, nada pensado especificamente pra Tarefas.
+
+**Proposta — 3 ideias concretas, coerentes com o resto do app (tema
+escuro, cards já usados em Arquivos/Kanban, paleta de cores por tipo já
+usada na Agenda):**
+
+1. **Cards por tarefa com faixa lateral colorida por urgência.** Trocar (ou
+   complementar) o `data_editor` por um layout de cards empilhados — um
+   container por tarefa, no mesmo espírito dos cards já usados em Arquivos
+   (`views/arquivos.py:190-244`) e no Kanban — cada card com uma borda/faixa
+   lateral: vermelho para atrasada, âmbar para hoje, teal/verde para
+   futura, cinza riscado para concluída. Dentro do card: checkbox de
+   concluir, descrição, chips pequenos de data/projeto/repetição. É a opção
+   de maior impacto visual, mas custa a edição em grade rápida do
+   `data_editor` (edição vira por card/linha, não em lote).
+2. **Badges de urgência dentro do `data_editor` atual.** Mantém a tabela
+   editável como está (sem perder a edição em lote), só colore o rótulo/
+   célula de Data com um badge (pill) por urgência, reaproveitando a mesma
+   paleta que já existe no calendário da Agenda (`TIPO_COR`/`TIPO_ICONE`,
+   `views/agenda.py:233`) — dá consistência visual entre as duas abas.
+   Esforço baixo/médio, ganho moderado.
+3. **Cabeçalho com mini-dashboard de contadores.** Acima da tabela, uma
+   fileira de 3-4 "stat tiles" (no estilo já usado no Dashboard) com
+   contadores clicáveis — Atrasadas / Hoje / Esta semana / Concluídas —
+   cada um filtrando a lista abaixo ao clicar. Dá sensação mais "produto"
+   sem alterar a mecânica da tabela.
+
+⚠️ **decisão pendente:** qual das 3 prefere? As opções 2 e 3 combinam bem
+entre si com esforço baixo/médio; a opção 1 é a mais "bonitinha" mas exige
+abrir mão do `data_editor` único em favor de cards.
+
+---
+
+## 📁 Arquivos (atenção: possível sobreposição com o projeto do Everton)
+
+### Item 9 — Pastas e subpastas na aba Arquivos
+
+> *"Acho que na aba arquivos a gente cria uma pasta e poderia ter
+> subpastas."*
+
+⚠️ **Antes de qualquer coisa técnica:** existe de fato, neste mesmo
+repositório, o documento [`docs/CONTEXTO-INTEGRACAO-ARQUIVOS.md`](CONTEXTO-INTEGRACAO-ARQUIVOS.md)
+— escrito nesta mesma sessão de trabalho, a pedido do Diogo, especificamente
+para dar contexto técnico ao Everton, que vai construir um sistema separado
+e mais completo de gestão de arquivos/pastas/nomenclaturas de projetos para
+**substituir o menu "Arquivos" atual** e se integrar a este sistema (banco
+Postgres compartilhado e/ou vínculo por `projeto_id`). Ele não existia no
+momento em que o agente de investigação deste item rodou (foi recriado logo
+em seguida — uma escrita anterior não persistiu no disco por um problema de
+sincronização do caminho de rede `\\wsl.localhost\...`, sem relação com o
+conteúdo em si), mas o plano de substituição é real, não uma suposição
+externa não verificável. A tensão abaixo, portanto, **é factual**: investir
+em pastas/subpastas agora no módulo atual pode ser esforço jogado fora (ou
+duplicado) assim que o sistema do Everton entrar em produção.
+
+**Hoje (estado confirmado no código):** lista plana, sem hierarquia. Schema
+de `arquivos` (`database.py:712-722`) não tem coluna de pasta, categoria ou
+`parent_id`. Armazenamento em disco é um único nível,
+`anexos/<id_projeto>/<timestamp>_<nome>`
+(`database.py:1983-1988`) — a "pasta" que existe hoje é implicitamente o
+próprio projeto. `listar_arquivos` (`database.py:1956-1969`) sempre retorna
+lista cronológica plana por projeto, sem `GROUP BY`. Na UI
+(`views/arquivos.py:136-244`), o único filtro é "Filtrar por projeto"
+(`views/arquivos.py:139-147`); os arquivos aparecem em cards sequenciais
+(`views/arquivos.py:190-244`) sem agrupamento além do ícone por extensão. O
+upload (`views/arquivos.py:47-67`) só pede projeto (obrigatório) e descrição
+(opcional) — sem campo de pasta.
+
+**Opções (o sistema do Everton já é fato conhecido — a decisão é de prazo/escopo, não de existência):**
+- **(a) Não mexer agora** — aguardar o sistema do Everton entrar no ar e
+  desativar o menu atual nessa hora (mecanismo de desativação já mapeado em
+  `docs/CONTEXTO-INTEGRACAO-ARQUIVOS.md`, seção "O que muda com a
+  integração"), sem investir em pastas no módulo que vai sair de uso.
+- **(b) Paliativo simples agora** — somar uma coluna leve (`pasta` texto
+  simples, ou `pasta_pai_id` auto-referenciada em `arquivos`,
+  `database.py:712`) e um filtro/agrupamento na UI
+  (`views/arquivos.py:136-166`), útil enquanto o sistema do Everton não fica
+  pronto, assumindo que pode ser descartado/migrado depois.
+- **(c) Confirmar prazo e escopo com o Everton primeiro** — perguntar
+  diretamente a ele se pastas/subpastas já estão no escopo do sistema novo e
+  qual a previsão de entrega, para decidir com base em prazo real entre (a)
+  esperar ou (b) fazer o paliativo.
+
+⚠️ **decisão pendente mais importante deste documento:** recomendo
+explicitamente que a Sara resolva isso com o Everton — escopo e prazo do
+sistema novo — **antes de aprovar qualquer trabalho neste item**, pra não
+duplicar esforço nem gerar dado que depois precisa ser migrado duas vezes.
+Sugestão prática: rodar a opção (c) como primeiro passo, independente de
+qual seja a resposta final sobre (a) ou (b).
+
+---
+
+## Decisões pendentes (resumo)
+
+1. **Item 1 (Agenda — clicar no dia):** onde abrir o resultado do clique —
+   (A) "Compromissos Cadastrados" filtrada pro dia, (B) painel/expander
+   dedicado, ou (C) pular pra visão Lista/Resumo filtrada?
+2. **Item 2 (Agenda — vencidos somem):** confirmar qual tela exatamente ela
+   via — "Compromissos Cadastrados" com "Só futuros" grudado (a), ou visão
+   "Resumo" / "Próximos compromissos" que já corta vencidos sem busca (b)?
+3. **Item 3 (Agenda — pessoas logadas):** (i) exibir na sidebar, na aba
+   Chat, ou nos dois? (ii) qual janela de inatividade conta como "online"
+   (sugestão: 5 min)? (iii) Abordagem 1 (nova coluna `ultima_atividade`,
+   mais precisa) ou Abordagem 2 (só sessão válida, mais rápida e menos
+   precisa)?
+4. **Item 4 (Novo Projeto — Checklist Adicional/Demandas):** confirmar se é
+   este campo mesmo que lembra de ter retirado (investigação não achou
+   indício de vestígio), ou se é outro campo/formulário.
+5. **Item 5 (Novo Projeto — Documentações Geradas):** campo de texto/lista
+   novo dentro do cadastro, ou atalho/resumo apontando pra aba Arquivos?
+6. **Item 5 (Novo Projeto — 3 campos novos):** entram também em clonagem de
+   projeto, relatórios Excel/PDF e edição no Kanban (recomendação: sim), ou
+   só no cadastro/edição básica?
+7. **Item 7 (Tarefas — agrupar por data):** Opção A (blocos com cabeçalho
+   real, perde `data_editor` único) ou Opção B (tabela única + separador de
+   virada de dia)? Vale também pra "Tarefas da equipe" ou só "Minhas
+   tarefas"?
+8. **Item 8 (Tarefas — visual):** qual das 3 propostas — (1) cards com faixa
+   por urgência, (2) badges de urgência no `data_editor` atual, (3)
+   mini-dashboard de contadores — ou combinação de 2+3?
+9. **Item 9 (Arquivos — pastas):** confirmar com o Everton escopo e prazo do
+   sistema novo (ver `docs/CONTEXTO-INTEGRACAO-ARQUIVOS.md`), antes de
+   escolher entre (a) não mexer agora, (b) paliativo simples, ou (c)
+   confirmar prazo/escopo primeiro.
+
+---
+
+## Sugestão de ordem de execução
+
+Só uma sugestão — **nada será executado até a Sara confirmar este plano**
+(e as decisões pendentes acima) por escrito.
+
+1. **Item 9 (Arquivos)** primeiro, mas só a parte de **conversa com o
+   Everton** — resolver a decisão pendente #9 (escopo/prazo do sistema
+   novo, ver `docs/CONTEXTO-INTEGRACAO-ARQUIVOS.md`). Não bloqueia o resto
+   do plano, mas é a mais demorada por depender de terceiro, então convém
+   disparar em paralelo com a leitura do restante do documento.
+2. **Novo Projeto** — schema primeiro: Item 5 (as 3 colunas novas), já que
+   qualquer coisa que dependa delas (relatórios, clone, edição no Kanban)
+   precisa que existam antes. Item 4 é só uma confirmação com a Sara, sem
+   mudança de schema esperada — pode ser resolvido em paralelo.
+3. **Tarefas** — Item 6 (unificar formulário) primeiro, por ser independente
+   das decisões visuais. Depois Item 7 (agrupamento) e Item 8 (visual)
+   juntos, já que os dois mexem na mesma área de renderização da tabela —
+   melhor implementar uma vez só, depois de decididas as opções #7 e #8.
+4. **Agenda** — Item 2 (vencidos somem) é o mais rápido de resolver assim
+   que a causa for confirmada (pode ser só um ajuste pequeno, sem exigir
+   nova lógica). Item 1 (clicar no dia) em seguida. Item 3 (pessoas
+   logadas) por último — é feature nova de maior esforço (infra de
+   presença do zero), no mesmo patamar que o item de Chat/grupos foi no
+   ciclo anterior de ajustes.
