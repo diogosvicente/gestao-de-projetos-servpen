@@ -392,62 +392,58 @@ abrir mão do `data_editor` único em favor de cards.
 
 ---
 
-## 📁 Arquivos (atenção: possível sobreposição com o projeto do Everton)
+## 📁 Arquivos
 
 ### Item 9 — Pastas e subpastas na aba Arquivos
 
 > *"Acho que na aba arquivos a gente cria uma pasta e poderia ter
 > subpastas."*
 
-⚠️ **Antes de qualquer coisa técnica:** existe de fato, neste mesmo
-repositório, o documento [`docs/CONTEXTO-INTEGRACAO-ARQUIVOS.md`](CONTEXTO-INTEGRACAO-ARQUIVOS.md)
-— escrito nesta mesma sessão de trabalho, a pedido do Diogo, especificamente
-para dar contexto técnico ao Everton, que vai construir um sistema separado
-e mais completo de gestão de arquivos/pastas/nomenclaturas de projetos para
-**substituir o menu "Arquivos" atual** e se integrar a este sistema (banco
-Postgres compartilhado e/ou vínculo por `projeto_id`). Ele não existia no
-momento em que o agente de investigação deste item rodou (foi recriado logo
-em seguida — uma escrita anterior não persistiu no disco por um problema de
-sincronização do caminho de rede `\\wsl.localhost\...`, sem relação com o
-conteúdo em si), mas o plano de substituição é real, não uma suposição
-externa não verificável. A tensão abaixo, portanto, **é factual**: investir
-em pastas/subpastas agora no módulo atual pode ser esforço jogado fora (ou
-duplicado) assim que o sistema do Everton entrar em produção.
+**Hoje:** lista plana, sem hierarquia. Schema de `arquivos`
+(`database.py:712-722`) não tem coluna de pasta, categoria ou `parent_id`.
+Armazenamento em disco é um único nível,
+`anexos/<id_projeto>/<timestamp>_<nome>` (`database.py:1983-1988`) — a
+"pasta" que existe hoje é implicitamente o próprio projeto. `listar_arquivos`
+(`database.py:1956-1969`) sempre retorna lista cronológica plana por
+projeto, sem `GROUP BY`. Na UI (`views/arquivos.py:136-244`), o único filtro
+é "Filtrar por projeto" (`views/arquivos.py:139-147`); os arquivos aparecem
+em cards sequenciais (`views/arquivos.py:190-244`) sem agrupamento além do
+ícone por extensão. O upload (`views/arquivos.py:47-67`) só pede projeto
+(obrigatório) e descrição (opcional) — sem campo de pasta.
 
-**Hoje (estado confirmado no código):** lista plana, sem hierarquia. Schema
-de `arquivos` (`database.py:712-722`) não tem coluna de pasta, categoria ou
-`parent_id`. Armazenamento em disco é um único nível,
-`anexos/<id_projeto>/<timestamp>_<nome>`
-(`database.py:1983-1988`) — a "pasta" que existe hoje é implicitamente o
-próprio projeto. `listar_arquivos` (`database.py:1956-1969`) sempre retorna
-lista cronológica plana por projeto, sem `GROUP BY`. Na UI
-(`views/arquivos.py:136-244`), o único filtro é "Filtrar por projeto"
-(`views/arquivos.py:139-147`); os arquivos aparecem em cards sequenciais
-(`views/arquivos.py:190-244`) sem agrupamento além do ícone por extensão. O
-upload (`views/arquivos.py:47-67`) só pede projeto (obrigatório) e descrição
-(opcional) — sem campo de pasta.
+**Proposta — schema:**
+- Nova tabela `pastas`: `id` BIGINT IDENTITY PK, `projeto_id` BIGINT NOT
+  NULL, `nome` TEXT NOT NULL, `pasta_pai_id` BIGINT NULL (auto-referenciada;
+  `NULL` = pasta na raiz do projeto), `criado_por` TEXT, `criado_em`
+  TIMESTAMP DEFAULT CURRENT_TIMESTAMP. Índice em `(projeto_id,
+  pasta_pai_id)` pra listar subpastas de uma pasta rápido.
+- `arquivos` ganha uma coluna nova `pasta_id BIGINT NULL` — `NULL` = arquivo
+  solto na raiz do projeto, que é exatamente o estado de **todos os arquivos
+  já existentes hoje** (compatível sem precisar migrar nada).
+- Pastas ficam **só no banco** (não viram diretório de verdade em
+  `anexos/`) — o arquivo físico continua caindo direto em
+  `anexos/<projeto_id>/...` como hoje; mover um arquivo de pasta é só um
+  `UPDATE arquivos SET pasta_id = ...`, sem tocar em disco. Mais simples e
+  sem risco de mover/perder arquivo físico.
 
-**Opções (o sistema do Everton já é fato conhecido — a decisão é de prazo/escopo, não de existência):**
-- **(a) Não mexer agora** — aguardar o sistema do Everton entrar no ar e
-  desativar o menu atual nessa hora (mecanismo de desativação já mapeado em
-  `docs/CONTEXTO-INTEGRACAO-ARQUIVOS.md`, seção "O que muda com a
-  integração"), sem investir em pastas no módulo que vai sair de uso.
-- **(b) Paliativo simples agora** — somar uma coluna leve (`pasta` texto
-  simples, ou `pasta_pai_id` auto-referenciada em `arquivos`,
-  `database.py:712`) e um filtro/agrupamento na UI
-  (`views/arquivos.py:136-166`), útil enquanto o sistema do Everton não fica
-  pronto, assumindo que pode ser descartado/migrado depois.
-- **(c) Confirmar prazo e escopo com o Everton primeiro** — perguntar
-  diretamente a ele se pastas/subpastas já estão no escopo do sistema novo e
-  qual a previsão de entrega, para decidir com base em prazo real entre (a)
-  esperar ou (b) fazer o paliativo.
+**Proposta — UI (`views/arquivos.py`):**
+- Breadcrumb da pasta atual (Projeto ▸ Pasta ▸ Subpasta) com botões pra
+  subir de nível; pasta atual guardada em `session_state`.
+- Botão "➕ Nova pasta" — miniform com nome; pasta atual vira o pai.
+- Listagem passa a mostrar primeiro as subpastas da pasta atual (como
+  cards/botões clicáveis pra entrar), depois os arquivos que estão
+  diretamente nela (`pasta_id = <atual>` ou `IS NULL` se for a raiz).
+- Upload ganha a pasta atual como destino implícito.
 
-⚠️ **decisão pendente mais importante deste documento:** recomendo
-explicitamente que a Sara resolva isso com o Everton — escopo e prazo do
-sistema novo — **antes de aprovar qualquer trabalho neste item**, pra não
-duplicar esforço nem gerar dado que depois precisa ser migrado duas vezes.
-Sugestão prática: rodar a opção (c) como primeiro passo, independente de
-qual seja a resposta final sobre (a) ou (b).
+⚠️ **decisões pendentes:**
+1. **Exclusão de pasta não-vazia:** bloquear (recomendado — mais seguro),
+   mover o conteúdo pra pasta pai antes de excluir, ou excluir em cascata
+   (apaga arquivos e subpastas dentro)?
+2. **Profundidade de aninhamento:** ilimitada (recomendado — o schema
+   auto-referenciado já suporta sem custo extra) ou travada em N níveis?
+3. **Quem pode criar/excluir pasta:** mesma regra de hoje pra excluir
+   arquivo (Gestor exclui qualquer uma; demais só as que criaram), ou
+   restringir a criação/exclusão de pasta só a Gestor?
 
 ---
 
@@ -479,10 +475,11 @@ qual seja a resposta final sobre (a) ou (b).
 8. **Item 8 (Tarefas — visual):** qual das 3 propostas — (1) cards com faixa
    por urgência, (2) badges de urgência no `data_editor` atual, (3)
    mini-dashboard de contadores — ou combinação de 2+3?
-9. **Item 9 (Arquivos — pastas):** confirmar com o Everton escopo e prazo do
-   sistema novo (ver `docs/CONTEXTO-INTEGRACAO-ARQUIVOS.md`), antes de
-   escolher entre (a) não mexer agora, (b) paliativo simples, ou (c)
-   confirmar prazo/escopo primeiro.
+9. **Item 9 (Arquivos — pastas):** (i) excluir pasta não-vazia — bloquear
+   (recomendado), mover conteúdo pra pasta pai, ou cascata? (ii)
+   aninhamento ilimitado (recomendado) ou travado em N níveis? (iii)
+   criar/excluir pasta segue a regra de arquivo hoje (Gestor + quem criou)
+   ou fica restrito só a Gestor?
 
 ---
 
@@ -491,22 +488,22 @@ qual seja a resposta final sobre (a) ou (b).
 Só uma sugestão — **nada será executado até a Sara confirmar este plano**
 (e as decisões pendentes acima) por escrito.
 
-1. **Item 9 (Arquivos)** primeiro, mas só a parte de **conversa com o
-   Everton** — resolver a decisão pendente #9 (escopo/prazo do sistema
-   novo, ver `docs/CONTEXTO-INTEGRACAO-ARQUIVOS.md`). Não bloqueia o resto
-   do plano, mas é a mais demorada por depender de terceiro, então convém
-   disparar em paralelo com a leitura do restante do documento.
-2. **Novo Projeto** — schema primeiro: Item 5 (as 3 colunas novas), já que
+1. **Novo Projeto** — schema primeiro: Item 5 (as 3 colunas novas), já que
    qualquer coisa que dependa delas (relatórios, clone, edição no Kanban)
    precisa que existam antes. Item 4 é só uma confirmação com a Sara, sem
    mudança de schema esperada — pode ser resolvido em paralelo.
-3. **Tarefas** — Item 6 (unificar formulário) primeiro, por ser independente
+2. **Tarefas** — Item 6 (unificar formulário) primeiro, por ser independente
    das decisões visuais. Depois Item 7 (agrupamento) e Item 8 (visual)
    juntos, já que os dois mexem na mesma área de renderização da tabela —
    melhor implementar uma vez só, depois de decididas as opções #7 e #8.
-4. **Agenda** — Item 2 (vencidos somem) é o mais rápido de resolver assim
+3. **Agenda** — Item 2 (vencidos somem) é o mais rápido de resolver assim
    que a causa for confirmada (pode ser só um ajuste pequeno, sem exigir
    nova lógica). Item 1 (clicar no dia) em seguida. Item 3 (pessoas
    logadas) por último — é feature nova de maior esforço (infra de
    presença do zero), no mesmo patamar que o item de Chat/grupos foi no
    ciclo anterior de ajustes.
+4. **Arquivos** — Item 9 (pastas/subpastas) por último do documento
+   inteiro: é o de **maior esforço** desta rodada (tabela nova `pastas` +
+   reescrita da navegação/listagem), sem dependência dos demais itens —
+   dá pra adiantar em paralelo se sobrar gente, mas não é bloqueante pra
+   nada do resto.
