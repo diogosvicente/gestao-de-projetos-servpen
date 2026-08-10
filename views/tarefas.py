@@ -191,7 +191,20 @@ _n_sem = sum(1 for t in _minhas
              if _grupo_de(t) in ("hoje", "amanha", "semana"))
 _n_ok = sum(1 for t in _minhas if t["concluida"])
 
-st.subheader(f"📋 Minhas tarefas — {_pend} pendente(s)")
+_sc1, _sc2 = st.columns([0.62, 0.38], vertical_alignment="bottom")
+_sc1.subheader(f"📋 Minhas tarefas — {_pend} pendente(s)")
+
+# Como os blocos são montados: por data (Atrasadas/Hoje/...) ou por projeto.
+# Vale pras duas listas (minhas e da equipe).
+_MODO_GRUPO = _sc2.radio(
+    "Agrupar por",
+    options=["data", "projeto"],
+    format_func=lambda x: ("📅 Data" if x == "data" else "📁 Projeto"),
+    horizontal=True,
+    key="_tar_modo_grupo",
+    help="Por data mostra Atrasadas/Hoje/Amanhã…; por projeto junta as "
+         "tarefas de cada projeto num bloco só.",
+)
 
 # Contadores clicáveis = filtro. `type="primary"` marca o que está ativo.
 _filtro = st.session_state.get("_tar_filtro", "todas")
@@ -338,7 +351,37 @@ def _card_tarefa(t, *, dono_visivel=False, pode_excluir=True,
 
 def _render_grupos(lista, *, dono_visivel=False, pode_excluir_fn=None,
                    pode_editar=True, prefixo="my"):
-    """Renderiza os cards em blocos por data, na ordem de _GRUPOS."""
+    """Renderiza os cards em blocos — por data ou por projeto, conforme o
+    modo escolhido no seletor do topo (`_MODO_GRUPO`)."""
+    if _MODO_GRUPO == "projeto":
+        # Um bloco por projeto; quem não tem projeto cai em "Sem projeto",
+        # sempre por último. Dentro do bloco, pendentes primeiro e depois
+        # por data — mesma leitura do modo por data.
+        _por_proj = {}
+        for t in lista:
+            _por_proj.setdefault(t.get("projeto_nome") or "", []).append(t)
+        _ordem = sorted([p for p in _por_proj if p], key=str.lower) + (
+            [""] if "" in _por_proj else [])
+        for _nome_p in _ordem:
+            _itens = _por_proj[_nome_p]
+            _itens.sort(key=lambda x: (bool(x["concluida"]),
+                                       x["data"] is None,
+                                       x["data"] or _HOJE, -int(x["id"])))
+            _rot = f"📁 {_nome_p}" if _nome_p else "⚪ Sem projeto"
+            _cor_b = "#3730a3" if _nome_p else "#64748b"
+            st.markdown(
+                f"<div style='margin:14px 0 6px;font-weight:700;"
+                f"font-size:0.9rem;color:{_cor_b}'>"
+                f"{_rot} · {len(_itens)}</div>",
+                unsafe_allow_html=True)
+            for t in _itens:
+                _card_tarefa(
+                    t, dono_visivel=dono_visivel,
+                    pode_excluir=(pode_excluir_fn(t) if pode_excluir_fn
+                                  else True),
+                    pode_editar=pode_editar, prefixo=prefixo)
+        return
+
     _por_grupo = {}
     for t in lista:
         _por_grupo.setdefault(_grupo_de(t), []).append(t)

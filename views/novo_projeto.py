@@ -120,20 +120,23 @@ with st.form("form_novo_projeto_v2", clear_on_submit=False):
 
     r4c1, r4c2 = st.columns([1, 2])
     f_pr = r4c1.selectbox("Prioridade", ["Máxima", "Média", "Mínima"], index=1)
-    # Tags livres separadas por vírgula. Mostra as já existentes como hint.
+    # Primeiro passo da TRILHA DE STATUS (o antigo campo de tags livres). Os
+    # próximos passos são adicionados na edição do projeto, no Kanban —
+    # "conforme for criando", cada um vira uma etapa do caminho.
     _tags_existentes = db.listar_tags_existentes()
     _placeholder_tags = (
-        ", ".join(_tags_existentes[:3]) if _tags_existentes
-        else "Crítico, Aguardando Cliente, Aprovado"
+        _tags_existentes[0] if _tags_existentes else "Recebido"
     )
     f_tags = r4c2.text_input(
-        "🏷 Tags (separadas por vírgula)",
+        "🏷 Status inicial (trilha de tags)",
         value="",
         placeholder=_placeholder_tags,
         help=(
-            "Etiquetas livres pra agrupar projetos além do status. "
-            "Ex.: setor, fase, urgência, cliente. "
-            + (f"Já em uso: {', '.join(_tags_existentes)}."
+            "O primeiro passo do caminho de status do projeto. Os próximos "
+            "você acrescenta na Trilha de Status, ao abrir o projeto no "
+            "Kanban. Pode separar por vírgula pra já criar vários passos "
+            "de uma vez. "
+            + (f"Já em uso: {', '.join(_tags_existentes[:8])}."
                if _tags_existentes else "")
         ),
     )
@@ -299,6 +302,12 @@ if submit_novo:
                 # Endereço usado entra no cadastro mestre (item 12).
                 if _end:
                     db.adicionar_endereco(_end)
+                # Monta a trilha de status inicial. `projetos.tags` já foi
+                # gravado acima; adicionar_tag_projeto re-sincroniza a coluna
+                # a partir da trilha, então os dois ficam iguais.
+                for _t_ini in db.parse_tags(f_tags):
+                    db.adicionar_tag_projeto(novo_id, _t_ini,
+                                             criado_por=usuario)
                 etapas_para_salvar = [
                     {"nome": et["nome"],
                      "duracao_dias": et["duracao_dias"],

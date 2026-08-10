@@ -773,6 +773,27 @@ def _criar_tabelas_impl():
             mime_type TEXT
         )''')
 
+        # ── TRILHA DE TAGS (status do projeto em etapas) ──
+        # Substitui o antigo campo de texto livre `projetos.tags` como fonte
+        # de verdade: cada linha é um passo do caminho de status ("Recebido"
+        # -> "Aguardando Aprovação" -> "Aprovado"), com `concluida` marcando
+        # o que já foi cumprido. A tag ATUAL é a primeira não concluída.
+        # `projetos.tags` continua existindo e é RE-SINCRONIZADO a cada
+        # mudança (ver _sincronizar_tags_csv) — assim o filtro por tags do
+        # Kanban, a visão Lista, o Excel e o PDF seguem funcionando sem
+        # precisar saber da trilha.
+        c.execute('''CREATE TABLE IF NOT EXISTS projeto_tags (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            projeto_id BIGINT NOT NULL,
+            texto TEXT NOT NULL,
+            concluida INT DEFAULT 0,
+            ordem INT DEFAULT 0,
+            criado_por TEXT,
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
+        c.execute("CREATE INDEX IF NOT EXISTS idx_projeto_tags_proj "
+                  "ON projeto_tags(projeto_id, ordem)")
+
         # ── PASTAS (hierarquia de arquivos por projeto) ──
         # Auto-referenciada: pasta_pai_id NULL = pasta na raiz do projeto.
         # As pastas existem SÓ no banco — o arquivo físico continua caindo em
@@ -1057,6 +1078,38 @@ def _criar_tabelas_impl():
             c.execute("ROLLBACK TO SAVEPOINT idx_cod")
             log.warning("CREATE UNIQUE INDEX idx_projetos_codigo: %s", e)
 
+        # ── BACKFILL DA TRILHA DE TAGS ──
+        # Projetos que já tinham tags no campo de texto entram na trilha com
+        # as mesmas tags, na mesma ordem, todas como NÃO concluídas — assim
+        # ninguém perde o que já estava marcado ao migrar pro novo formato.
+        # Idempotente por construção: só popula projeto que tem tags no CSV
+        # e NENHUMA linha na trilha. Depois de rodar uma vez, a condição
+        # deixa de valer. (Se alguém esvaziar a trilha de um projeto de
+        # propósito, o sync zera o CSV junto, então não volta do além.)
+        try:
+            c.execute("SAVEPOINT bf_tags")
+            c.execute("""
+                SELECT p.id, p.tags FROM projetos p
+                 WHERE COALESCE(p.tags,'') <> ''
+                   AND NOT EXISTS (SELECT 1 FROM projeto_tags t
+                                    WHERE t.projeto_id = p.id)
+            """)
+            _pend = c.fetchall()
+            for _pid, _csv in _pend:
+                for _i, _tag in enumerate(parse_tags(_csv)):
+                    c.execute(
+                        "INSERT INTO projeto_tags "
+                        "(projeto_id, texto, concluida, ordem, criado_por) "
+                        "VALUES (%s,%s,0,%s,%s)",
+                        (_pid, _tag, _i, "migração"),
+                    )
+            if _pend:
+                log.info("backfill trilha de tags: %d projeto(s)", len(_pend))
+            c.execute("RELEASE SAVEPOINT bf_tags")
+        except Exception as e:
+            c.execute("ROLLBACK TO SAVEPOINT bf_tags")
+            log.warning("backfill da trilha de tags pulado: %s", e)
+
         conn.commit()
     except Exception as e:
         log.exception("Erro ao inicializar banco: %s", e)
@@ -1124,6 +1177,175 @@ def listar_tags_existentes():
                 todas.append(t)
     todas.sort(key=str.lower)
     return todas
+
+
+# ─── TRILHA DE TAGS (caminho de status do projeto) ────────
+# Cada projeto tem uma sequência ordenada de tags. As `concluida=1` são as
+# etapas já cumpridas; a PRIMEIRA não concluída é o status atual; as demais
+# são os próximos passos. Toda alteração re-sincroniza `projetos.tags` (CSV),
+# que continua sendo o que o filtro do Kanban, o Excel e o PDF leem.
+def _sincronizar_tags_csv(projeto_id, cur=None):
+    """Reescreve projetos.tags a partir da trilha (mantém a ordem)."""
+    _fechar = cur is None
+    conn = None
+    if _fechar:
+        conn = conectar(); cur = conn.cursor()
+    try:
+        cur.execute("SELECT texto FROM projeto_tags WHERE projeto_id=%s "
+                    "ORDER BY ordem, id", (int(projeto_id),))
+        _csv = serializar_tags([r[0] for r in cur.fetchall()]) or None
+        cur.execute("UPDATE projetos SET tags=%s WHERE id=%s",
+                    (_csv, int(projeto_id)))
+        if _fechar:
+            conn.commit()
+    finally:
+        if _fechar and conn:
+            conn.close()
+
+
+def listar_tags_projeto(projeto_id):
+    """Trilha de um projeto: [{id, texto, concluida, ordem}], em ordem."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("SELECT id, texto, concluida, ordem FROM projeto_tags "
+                  "WHERE projeto_id=%s ORDER BY ordem, id", (int(projeto_id),))
+        return [{"id": r[0], "texto": r[1], "concluida": bool(r[2]),
+                 "ordem": r[3]} for r in c.fetchall()]
+    finally:
+        conn.close()
+
+
+def listar_trilhas_todos_projetos():
+    """{projeto_id: [{texto, concluida}, ...]} — 1 query só, pro Kanban
+    conseguir desenhar a trilha de cada card sem N consultas."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("SELECT projeto_id, texto, concluida FROM projeto_tags "
+                  "ORDER BY projeto_id, ordem, id")
+        saida = {}
+        for pid, texto, concl in c.fetchall():
+            saida.setdefault(pid, []).append(
+                {"texto": texto, "concluida": bool(concl)})
+        return saida
+    finally:
+        conn.close()
+
+
+def adicionar_tag_projeto(projeto_id, texto, criado_por=None):
+    """Acrescenta um passo no FIM da trilha. Retorna o id, ou None se o
+    texto for vazio ou já existir na trilha (case-insensitive)."""
+    texto = (texto or "").strip()
+    if not texto:
+        return None
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("SELECT 1 FROM projeto_tags WHERE projeto_id=%s "
+                  "AND LOWER(texto)=LOWER(%s)", (int(projeto_id), texto))
+        if c.fetchone():
+            return None
+        c.execute("SELECT COALESCE(MAX(ordem), -1) + 1 FROM projeto_tags "
+                  "WHERE projeto_id=%s", (int(projeto_id),))
+        _ordem = c.fetchone()[0]
+        c.execute("INSERT INTO projeto_tags "
+                  "(projeto_id, texto, concluida, ordem, criado_por) "
+                  "VALUES (%s,%s,0,%s,%s) RETURNING id",
+                  (int(projeto_id), texto, _ordem, criado_por or ""))
+        novo = c.fetchone()[0]
+        _sincronizar_tags_csv(projeto_id, c)
+        conn.commit()
+        return novo
+    except Exception as e:
+        log.exception("Erro ao adicionar tag '%s': %s", texto, e)
+        conn.rollback()
+        return None
+    finally:
+        conn.close()
+
+
+def atualizar_tag_projeto(id_tag, texto=None, concluida=None):
+    """Edita o texto e/ou o estado de um passo. Qualquer passo pode ser
+    editado a qualquer momento, mesmo depois de já existirem outros."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("SELECT projeto_id FROM projeto_tags WHERE id=%s",
+                  (int(id_tag),))
+        row = c.fetchone()
+        if not row:
+            return False
+        pid = row[0]
+        if texto is not None:
+            _t = str(texto).strip()
+            if not _t:
+                return False
+            c.execute("UPDATE projeto_tags SET texto=%s WHERE id=%s",
+                      (_t, int(id_tag)))
+        if concluida is not None:
+            c.execute("UPDATE projeto_tags SET concluida=%s WHERE id=%s",
+                      (1 if concluida else 0, int(id_tag)))
+        _sincronizar_tags_csv(pid, c)
+        conn.commit()
+        return True
+    except Exception as e:
+        log.exception("Erro ao atualizar tag %s: %s", id_tag, e)
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+
+def excluir_tag_projeto(id_tag):
+    """Remove um passo da trilha e reindexa a ordem dos que sobraram."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("SELECT projeto_id FROM projeto_tags WHERE id=%s",
+                  (int(id_tag),))
+        row = c.fetchone()
+        if not row:
+            return False
+        pid = row[0]
+        c.execute("DELETE FROM projeto_tags WHERE id=%s", (int(id_tag),))
+        c.execute("SELECT id FROM projeto_tags WHERE projeto_id=%s "
+                  "ORDER BY ordem, id", (pid,))
+        for _i, (_id,) in enumerate(c.fetchall()):
+            c.execute("UPDATE projeto_tags SET ordem=%s WHERE id=%s",
+                      (_i, _id))
+        _sincronizar_tags_csv(pid, c)
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def mover_tag_projeto(id_tag, delta):
+    """Sobe (delta=-1) ou desce (delta=+1) um passo na trilha, trocando de
+    lugar com o vizinho. Sem efeito se já estiver na ponta."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("SELECT projeto_id, ordem FROM projeto_tags WHERE id=%s",
+                  (int(id_tag),))
+        row = c.fetchone()
+        if not row:
+            return False
+        pid, ordem = row
+        c.execute("SELECT id FROM projeto_tags WHERE projeto_id=%s ORDER BY "
+                  "ordem, id", (pid,))
+        ids = [r[0] for r in c.fetchall()]
+        try:
+            i = ids.index(int(id_tag))
+        except ValueError:
+            return False
+        j = i + int(delta)
+        if j < 0 or j >= len(ids):
+            return False
+        ids[i], ids[j] = ids[j], ids[i]
+        for _k, _id in enumerate(ids):
+            c.execute("UPDATE projeto_tags SET ordem=%s WHERE id=%s",
+                      (_k, _id))
+        _sincronizar_tags_csv(pid, c)
+        conn.commit()
+        return True
+    finally:
+        conn.close()
 
 
 # ─── PROJETOS ─────────────────────────────────────────────
@@ -1319,6 +1541,10 @@ def excluir_projeto(id_p):
         # CASCADE manual das menções (acesso + notificações) para não deixar órfãos
         c.execute("DELETE FROM mencoes_acesso WHERE projeto_id = %s", (int(id_p),))
         c.execute("DELETE FROM mencoes_notificacoes WHERE projeto_id = %s", (int(id_p),))
+        # Trilha de tags e pastas também são do projeto — sem isso ficariam
+        # órfãs (a trilha inclusive seria "herdada" por um id reaproveitado).
+        c.execute("DELETE FROM projeto_tags WHERE projeto_id = %s", (int(id_p),))
+        c.execute("DELETE FROM pastas WHERE projeto_id = %s", (int(id_p),))
         c.execute("DELETE FROM projetos WHERE id = %s", (int(id_p),))
         conn.commit()
     finally:
@@ -1400,6 +1626,20 @@ def clonar_projeto(id_origem, sufixo=" (cópia)"):
                    (projeto_id, nome, dias_offset, duracao_dias, ordem)
                    VALUES (%s,%s,%s,%s,%s)""",
                 (novo_id, nome_et, offset, duracao, ordem),
+            )
+
+        # Copia a trilha de tags (mesmos passos, TODOS como não cumpridos —
+        # o clone começa o caminho do zero, mesmo espírito de zerar o status
+        # e as datas). Sem isso o clone ficaria com o CSV `tags` preenchido
+        # mas sem trilha, e só o backfill do próximo boot arrumaria.
+        c.execute("SELECT texto, ordem FROM projeto_tags WHERE projeto_id=%s "
+                  "ORDER BY ordem, id", (int(id_origem),))
+        for _txt, _ord in c.fetchall():
+            c.execute(
+                "INSERT INTO projeto_tags "
+                "(projeto_id, texto, concluida, ordem, criado_por) "
+                "VALUES (%s,%s,0,%s,%s)",
+                (novo_id, _txt, _ord, "clone"),
             )
 
         conn.commit()

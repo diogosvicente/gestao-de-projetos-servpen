@@ -27,6 +27,7 @@ from core.helpers import (
     _pode_editar,
     _pode_gestor,
     _render_tag_chips,
+    _render_trilha_chips,
     _ve_tudo,
 )
 from core.ui_feedback import carregando, confirmar_sucesso, erro_humano
@@ -531,8 +532,8 @@ st.header("📋 Controle de Fluxo")
 # ── BUSCA + FILTRO DE TAGS ───────────────────────────────────
 col_busca, col_tags = st.columns([3, 2])
 busca_kanban = col_busca.text_input(
-    "🔍 Buscar por nome, projetista, cliente, SEI ou código",
-    placeholder="ex.: residencial silva, joão, 2024/12345, COD-001...",
+    "🔍 Buscar por nome, projetista, cliente, SEI, código ou fonte de recurso",
+    placeholder="ex.: residencial silva, joão, 2024/12345, COD-001, FAPERJ...",
     key="kanban_search",
 )
 _todas_tags_kanban = db.listar_tags_existentes()
@@ -569,10 +570,15 @@ if busca_kanban:
         | _col_busca("solicitante").str.lower().str.contains(termo, na=False)
         | _col_busca("numero_sei").str.lower().str.contains(termo, na=False)
         | _col_busca("codigo").str.lower().str.contains(termo, na=False)
+        | _col_busca("fonte_recurso").str.lower().str.contains(termo, na=False)
     )
     df_kanban = df_p[mask].copy()
 else:
     df_kanban = df_p.copy() if not df_p.empty else pd.DataFrame()
+
+# Trilhas de status de TODOS os projetos numa query só (o card de cada
+# projeto lê daqui — buscar por projeto seria N consultas no loop).
+_TRILHAS = db.listar_trilhas_todos_projetos()
 
 # Filtro de tags: projeto deve conter TODAS as tags selecionadas (AND).
 if tags_filtro and not df_kanban.empty:
@@ -761,17 +767,20 @@ else:
     # ════════════════════════════════════════════════════════════
     ORDEM_PRIORIDADE = {"Máxima": 0, "Média": 1, "Mínima": 2, "": 3}
 
+    # `ordenar_por_prioridade` agora é True em TODAS as colunas (antes só em
+    # "Em Espera"): pedido de 06/08/2026 — o quadro inteiro ordenado por
+    # prioridade, Máxima no topo. Empate cai na ordem que veio do banco.
     CONFIG_COLUNAS = [
         {"status_db": "Em Espera",  "label_ui": "⏳ Em Espera",
          "card_cls": "kc-espera",   "ordenar_por_prioridade": True},
         {"status_db": "Ativo",      "label_ui": "🚀 Em Execução",
-         "card_cls": "kc-ativo",    "ordenar_por_prioridade": False},
+         "card_cls": "kc-ativo",    "ordenar_por_prioridade": True},
         {"status_db": "🛑 Parado",  "label_ui": "🛑 Parados",
-         "card_cls": "kc-parado",   "ordenar_por_prioridade": False},
+         "card_cls": "kc-parado",   "ordenar_por_prioridade": True},
         {"status_db": "Cancelado",  "label_ui": "❌ Cancelados",
-         "card_cls": "kc-cancel",   "ordenar_por_prioridade": False},
+         "card_cls": "kc-cancel",   "ordenar_por_prioridade": True},
         {"status_db": "Concluído",  "label_ui": "✅ Concluídos",
-         "card_cls": "kc-conc",     "ordenar_por_prioridade": False},
+         "card_cls": "kc-conc",     "ordenar_por_prioridade": True},
     ]
 
     # CSS uniforme para os cards do Kanban
@@ -875,7 +884,10 @@ else:
                 items["_ord_pri"] = items["prioridade"].map(
                     lambda x: ORDEM_PRIORIDADE.get(str(x).strip(), 3)
                 )
-                items = items.sort_values("_ord_pri")
+                # kind="stable": dentro da mesma prioridade preserva a ordem
+                # que veio da query (senão a posição do card dança a cada
+                # rerun, o que confunde na hora de clicar).
+                items = items.sort_values("_ord_pri", kind="stable")
 
             # Header da coluna FORA do container scrollable
             st.markdown(
@@ -929,10 +941,22 @@ else:
                         p.get("data_fim") or p.get("data_termino")
                     )
 
-                    _tags_html = _render_tag_chips(p.get("tags"), small=True)
+                    # Trilha de status (tags ordenadas, com ✓ nas cumpridas e
+                    # destaque na atual). Cai no chip simples se o projeto
+                    # ainda não tiver trilha montada.
+                    _trilha = _TRILHAS.get(p["id"])
+                    _tags_html = (
+                        _render_trilha_chips(_trilha, small=True) if _trilha
+                        else _render_tag_chips(p.get("tags"), small=True)
+                    )
                     _tags_wrap = (
                         f'<div class="tags">{_tags_html}</div>'
                         if _tags_html else ""
+                    )
+
+                    _fr = str(p.get("fonte_recurso") or "").strip()
+                    _fr_html = (
+                        f'<div class="meta">💰 {_fr}</div>' if _fr else ""
                     )
 
                     card_html = (
@@ -940,6 +964,7 @@ else:
                         f'<div class="row1">{badge_alerta}{badge_pri}</div>'
                         f'<div class="nome">{p["projeto"]}</div>'
                         f'<div class="meta">👤 {p["projetista"]} · 📅 {prazo_str}</div>'
+                        f'{_fr_html}'
                         f'{_tags_wrap}'
                         f'</div>'
                     )
@@ -1119,21 +1144,16 @@ if "projeto_em_edicao" in st.session_state:
             disabled=_ro_edit,
         )
 
-        _tags_existentes_e = db.listar_tags_existentes()
-        _tags_atuais_csv = str(dados.get("tags") or "")
-        ed_tags = ed_r4c2.text_input(
-            "🏷 Tags (separadas por vírgula)",
-            value=_tags_atuais_csv,
-            placeholder=(
-                ", ".join(_tags_existentes_e[:3]) if _tags_existentes_e
-                else "Crítico, Aprovado"
-            ),
-            help=(
-                "Etiquetas livres pra agrupar projetos. "
-                + (f"Já em uso: {', '.join(_tags_existentes_e)}."
-                   if _tags_existentes_e else "")
-            ),
-            disabled=_ro_edit,
+        # As tags deixaram de ser um campo de texto aqui: viraram a "Trilha
+        # de Status", gerenciada logo abaixo deste formulário. Ela precisa de
+        # botões que agem na hora (adicionar / marcar cumprida / reordenar), e
+        # dentro de um st.form só existe form_submit_button — por isso é uma
+        # seção própria, no mesmo padrão de "Etapas" e "Evolução Técnica".
+        ed_r4c2.markdown(
+            "<div style='font-size:.82rem;opacity:.75;padding-top:26px'>"
+            "🏷 As tags agora ficam na <b>Trilha de Status</b>, "
+            "logo abaixo deste formulário.</div>",
+            unsafe_allow_html=True,
         )
 
         st.markdown("#### 📅 Datas")
@@ -1252,10 +1272,6 @@ if "projeto_em_edicao" in st.session_state:
                 ed_sei, ed_drec, ed_di, ed_dt, ed_dt,
                 ed_li, checklist_final, ed_esc, ed_pr,
             )
-            # Tags (CSV) — calculado aqui pra entrar no diff do histórico.
-            _tags_csv_save = (
-                db.serializar_tags(db.parse_tags(ed_tags)) or None
-            )
             # ── HISTÓRICO DE ALTERAÇÕES (antes/depois) ───────────
             # Compara o estado ANTIGO (`dados`) com os novos valores do
             # form. Só registra se o projeto está INICIADO (status !=
@@ -1287,8 +1303,6 @@ if "projeto_em_edicao" in st.session_state:
                  ed_esc, False),
                 ("Prioridade",         dados.get("prioridade"),
                  ed_pr, False),
-                ("Tags",               dados.get("tags"),
-                 _tags_csv_save, False),
                 ("Fonte de Recurso",   dados.get("fonte_recurso"),
                  ed_fr, False),
                 ("Observações",        dados.get("observacoes"),
@@ -1304,11 +1318,11 @@ if "projeto_em_edicao" in st.session_state:
                     _alteracoes.append((_lbl, _a, _n))
 
             db.atualizar_projeto_completo(id_ed, dados_finais)
-            # Tags num UPDATE separado (assinatura fixa de
-            # atualizar_projeto_completo — 14 valores, compat).
-            db.atualizar_campo_projeto(id_ed, "tags", _tags_csv_save)
-            # Código e Local (itens 3/10) — UPDATE separado, mesmo padrão das
-            # tags (atualizar_projeto_completo tem assinatura fixa de 14).
+            # `tags` NÃO é gravada aqui: quem manda nela é a Trilha de Status
+            # (seção própria abaixo), que re-sincroniza a coluna a cada
+            # alteração. Escrever aqui apagaria a trilha do projeto.
+            # Código e Local (itens 3/10) — UPDATE separado, porque
+            # atualizar_projeto_completo tem assinatura fixa de 14 valores.
             db.atualizar_campo_projeto(id_ed, "codigo", _cod_save or None)
             db.atualizar_campo_projeto(
                 id_ed, "local", (ed_lo or "").strip() or None
@@ -1331,8 +1345,7 @@ if "projeto_em_edicao" in st.session_state:
                 )
 
             db.log_aud(
-                usuario, "editar", "projeto", id_ed,
-                f"nome='{ed_nm}' tags='{_tags_csv_save or ''}'",
+                usuario, "editar", "projeto", id_ed, f"nome='{ed_nm}'",
             )
             del st.session_state.projeto_em_edicao
             _invalidar_dados()
@@ -1404,6 +1417,109 @@ if "projeto_em_edicao" in st.session_state:
     if _fechar:
         del st.session_state.projeto_em_edicao
         st.rerun()
+
+    # ════════════════════════════════════════════════════════
+    #  TRILHA DE STATUS (tags em sequência)
+    # ════════════════════════════════════════════════════════
+    # Substituiu o antigo campo "Tags (separadas por vírgula)". Cada passo é
+    # uma tag; marcar "cumprida" empurra o status atual pro próximo passo.
+    # Fica FORA do st.form de cima porque precisa de botões que agem na hora.
+    st.markdown("### 🏷 Trilha de Status")
+    st.caption(
+        "O caminho de status deste projeto. Marque ✔ nos passos já "
+        "cumpridos — o **primeiro não cumprido** vira o status atual, e é "
+        "ele que aparece em destaque no card do Kanban. Dá pra editar, "
+        "reordenar ou excluir qualquer passo a qualquer momento."
+    )
+
+    _trilha_ed = db.listar_tags_projeto(id_ed)
+    _ro_tags = not _pode_editar()
+
+    if _trilha_ed:
+        st.markdown(
+            f"<div style='margin:2px 0 10px'>"
+            f"{_render_trilha_chips(_trilha_ed)}</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.caption("Nenhum passo ainda — adicione o primeiro abaixo.")
+
+    _idx_atual_ed = next(
+        (i for i, t in enumerate(_trilha_ed) if not t["concluida"]), None
+    )
+    for _i, _tg in enumerate(_trilha_ed):
+        tc1, tc2, tc3, tc4, tc5 = st.columns(
+            [0.09, 0.55, 0.12, 0.12, 0.12], vertical_alignment="center")
+
+        _k_ok = f"tag_ok_{id_ed}_{_tg['id']}"
+        if tc1.checkbox("✔", value=_tg["concluida"], key=_k_ok,
+                        label_visibility="collapsed", disabled=_ro_tags,
+                        help="Passo já cumprido") != _tg["concluida"]:
+            db.atualizar_tag_projeto(_tg["id"],
+                                     concluida=st.session_state[_k_ok])
+            db.log_aud(usuario, "tag", "projeto", id_ed,
+                       f"'{_tg['texto']}' -> "
+                       f"{'cumprida' if st.session_state[_k_ok] else 'pendente'}")
+            _invalidar_dados()
+            st.rerun()
+
+        _novo_txt = tc2.text_input(
+            "Passo", value=_tg["texto"], key=f"tag_txt_{id_ed}_{_tg['id']}",
+            label_visibility="collapsed", disabled=_ro_tags,
+        )
+        if _novo_txt.strip() and _novo_txt.strip() != _tg["texto"]:
+            db.atualizar_tag_projeto(_tg["id"], texto=_novo_txt)
+            db.log_aud(usuario, "tag", "projeto", id_ed,
+                       f"renomeada: '{_tg['texto']}' -> '{_novo_txt.strip()}'")
+            _invalidar_dados()
+            st.rerun()
+
+        if tc3.button("↑", key=f"tag_up_{id_ed}_{_tg['id']}",
+                      disabled=(_ro_tags or _i == 0), width="stretch",
+                      help="Subir"):
+            db.mover_tag_projeto(_tg["id"], -1)
+            _invalidar_dados()
+            st.rerun()
+        if tc4.button("↓", key=f"tag_dn_{id_ed}_{_tg['id']}",
+                      disabled=(_ro_tags or _i == len(_trilha_ed) - 1),
+                      width="stretch", help="Descer"):
+            db.mover_tag_projeto(_tg["id"], 1)
+            _invalidar_dados()
+            st.rerun()
+        if tc5.button("🗑", key=f"tag_del_{id_ed}_{_tg['id']}",
+                      disabled=_ro_tags, width="stretch", help="Excluir passo"):
+            db.excluir_tag_projeto(_tg["id"])
+            db.log_aud(usuario, "tag", "projeto", id_ed,
+                       f"removida: '{_tg['texto']}'")
+            _invalidar_dados()
+            st.rerun()
+
+        if _i == _idx_atual_ed:
+            tc2.caption("● status atual")
+
+    if not _ro_tags:
+        with st.form(f"form_add_tag_{id_ed}", clear_on_submit=True):
+            ac1, ac2 = st.columns([0.75, 0.25],
+                                  vertical_alignment="bottom")
+            _nova_tag = ac1.text_input(
+                "Novo passo",
+                placeholder="ex.: Aguardando Aprovação SERVPEN",
+                help="Entra no fim da trilha.",
+            )
+            if ac2.form_submit_button("➕ Adicionar", width="stretch"):
+                if not _nova_tag.strip():
+                    st.warning("Escreva o nome do passo.")
+                elif db.adicionar_tag_projeto(id_ed, _nova_tag,
+                                              criado_por=usuario):
+                    db.log_aud(usuario, "tag", "projeto", id_ed,
+                               f"adicionada: '{_nova_tag.strip()}'")
+                    _invalidar_dados()
+                    st.rerun()
+                else:
+                    st.warning(
+                        f"'{_nova_tag.strip()}' já está na trilha deste "
+                        "projeto."
+                    )
 
     # ════════════════════════════════════════════════════════
     #  ETAPAS DO PROJETO (edição inline)

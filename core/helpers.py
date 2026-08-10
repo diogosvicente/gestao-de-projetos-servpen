@@ -171,6 +171,48 @@ def _render_tag_chips(tags_str, *, small=False):
     return "".join(chips)
 
 
+def _render_trilha_chips(itens, *, small=False):
+    """Trilha de status como caminho: cumpridas → atual → próximas.
+
+    `itens` = [{texto, concluida}, ...] em ordem. Regra de leitura:
+      - `concluida=True`  → ✓, esmaecida e riscada (já foi executada);
+      - a PRIMEIRA não cumprida → destacada, é o status ATUAL;
+      - as demais não cumpridas → contorno pontilhado (próximos passos).
+    Entre um chip e outro entra um "›" pra dar a ideia de caminho.
+    """
+    if not itens:
+        return ""
+    pad = "1px 6px" if small else "2px 8px"
+    fz = "10px" if small else "11px"
+    _seta = (f"<span style='opacity:.45;font-size:{fz};margin:0 2px;'>"
+             f"›</span>")
+
+    _idx_atual = next((i for i, it in enumerate(itens)
+                       if not it.get("concluida")), None)
+    partes = []
+    for i, it in enumerate(itens):
+        t = str(it.get("texto", ""))
+        safe = t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        base = (f"display:inline-block;padding:{pad};border-radius:10px;"
+                f"font-size:{fz};font-weight:600;margin:2px 0 0 0;"
+                f"letter-spacing:0.3px;")
+        if it.get("concluida"):
+            estilo = (base + "background:rgba(255,255,255,.10);color:#cbd5e1;"
+                             "text-decoration:line-through;opacity:.75;")
+            rotulo = f"✓ {safe}"
+        elif i == _idx_atual:
+            bg, fg = _cor_tag(t)
+            estilo = (base + f"background:{bg};color:{fg};"
+                             "box-shadow:0 0 0 2px rgba(255,255,255,.35);")
+            rotulo = f"● {safe}"
+        else:
+            estilo = (base + "background:transparent;color:#94a3b8;"
+                             "border:1px dashed rgba(255,255,255,.28);")
+            rotulo = safe
+        partes.append(f"<span style='{estilo}'>{rotulo}</span>")
+    return _seta.join(partes)
+
+
 # ─── HEADER / EMPTY STATE / PILL SELECT ──────────────────────────────
 def _section_header(icone, titulo, subtitulo=None, cor="#3b82f6"):
     """Header de seção padronizado — ícone + título + subtítulo opcional."""
