@@ -36,6 +36,31 @@ def _eh_tema_claro():
     return st.session_state.get("tema", "dark") == "light"
 
 
+def _cores_tema():
+    """Paleta pra HTML custom (st.markdown com unsafe_allow_html).
+
+    Por que existe: tentar consertar isso por CSS, com seletores do tipo
+    `div[style*="#1E1E1E"]`, NÃO funciona — o sanitizador de HTML do
+    Streamlit reescreve o atributo `style` e normaliza as cores
+    (`#1E1E1E` vira `rgb(30, 30, 30)`; `rgba(255,255,255,0.05)` ganha
+    espaços). Quem desenha o HTML precisa escolher a cor certa na hora.
+
+    Chaves:
+      superficie / superficie_txt  → painel sólido (ex.: corpo do relato)
+      painel_bg / painel_bd        → painel translúcido sutil
+      texto / texto_fraco          → títulos e legendas sobre o fundo da página
+    """
+    claro = _eh_tema_claro()
+    return {
+        "superficie":     "#ffffff" if claro else "#1E1E1E",
+        "superficie_txt": "#1f2937" if claro else "#EEE",
+        "painel_bg":      "rgba(0,0,0,0.04)" if claro else "rgba(255,255,255,0.05)",
+        "painel_bd":      "rgba(0,0,0,0.12)" if claro else "rgba(255,255,255,0.08)",
+        "texto":          "#111827" if claro else "#e5e7eb",
+        "texto_fraco":    "#6b7280" if claro else "#94a3b8",
+    }
+
+
 def _cor_fonte_grafico():
     return "#1f2937" if _eh_tema_claro() else "#ffffff"
 
@@ -230,16 +255,24 @@ def _render_trilha_chips(itens, *, small=False, fundo_claro=False):
 
 # ─── HEADER / EMPTY STATE / PILL SELECT ──────────────────────────────
 def _section_header(icone, titulo, subtitulo=None, cor="#3b82f6"):
-    """Header de seção padronizado — ícone + título + subtítulo opcional."""
+    """Header de seção padronizado — ícone + título + subtítulo opcional.
+
+    As cores vêm de `_cores_tema()`: antes era `#e5e7eb` fixo (cinza quase
+    branco), o que sumia no tema claro — era o caso dos títulos "Painel
+    Gerencial" e "Agenda e Disponibilidade".
+    """
+    _c = _cores_tema()
     _sub = (
-        f"<div style='color:#94a3b8;font-size:.82rem;margin-top:2px;'>{subtitulo}</div>"
+        f"<div style='color:{_c['texto_fraco']};font-size:.82rem;"
+        f"margin-top:2px;'>{subtitulo}</div>"
         if subtitulo else ""
     )
     st.markdown(
         f"""
         <div style="border-left:4px solid {cor}; padding:6px 12px;
                     margin:4px 0 12px;">
-            <div style="font-size:1.05rem; font-weight:700; color:#e5e7eb;
+            <div style="font-size:1.05rem; font-weight:700;
+                        color:{_c['texto']};
                         display:flex; align-items:center; gap:8px;">
                 <span style="font-size:1.25rem;">{icone}</span>{titulo}
             </div>
@@ -256,17 +289,18 @@ def _empty_state(icone, titulo, mensagem="", cta_label=None, cta_key=None,
 
     Retorna True se o usuário clicou no CTA, False caso contrário.
     """
+    _c = _cores_tema()
     st.markdown(
         f"""
-        <div style="background:rgba(255,255,255,0.02);
-                    border:1px dashed rgba(255,255,255,0.12);
+        <div style="background:{_c['painel_bg']};
+                    border:1px dashed {_c['painel_bd']};
                     border-left:4px solid {cor_borda};
                     border-radius:10px; padding:24px 18px; text-align:center;
                     margin:8px 0;">
             <div style="font-size:2.4rem; margin-bottom:6px;">{icone}</div>
-            <div style="font-size:1rem; font-weight:600; color:#e5e7eb;
+            <div style="font-size:1rem; font-weight:600; color:{_c['texto']};
                         margin-bottom:6px;">{titulo}</div>
-            {f'<div style="font-size:.82rem; color:#94a3b8; max-width:520px; margin:0 auto;">{mensagem}</div>' if mensagem else ''}
+            {f'<div style="font-size:.82rem; color:{_c["texto_fraco"]}; max-width:520px; margin:0 auto;">{mensagem}</div>' if mensagem else ''}
         </div>
         """,
         unsafe_allow_html=True,

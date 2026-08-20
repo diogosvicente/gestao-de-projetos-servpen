@@ -392,8 +392,16 @@ if _eh_tema_claro():
         section[data-testid="stSidebar"] { background-color: #ffffff !important; border-right: 1px solid #e5e7eb; }
         section[data-testid="stSidebar"] * { color: #1f2937 !important; }
 
-        .stMarkdown, .stMarkdown p, .stMarkdown li, .stMarkdown span,
-        [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] * {
+        /* Texto corrido. O `:not([style*="color"])` é essencial: sem ele o
+           !important atropelava a cor inline dos chips/etiquetas que vivem
+           sobre fundo colorido (Tarefas, Diário), deixando texto escuro
+           sobre fundo escuro. Vale porque o Streamlit normaliza o atributo
+           style, então quem define cor inline sempre tem "color" nele. */
+        .stMarkdown, .stMarkdown p:not([style*="color"]),
+        .stMarkdown li:not([style*="color"]),
+        .stMarkdown span:not([style*="color"]),
+        [data-testid="stCaptionContainer"],
+        [data-testid="stCaptionContainer"] *:not([style*="color"]) {
             color: #1f2937 !important;
         }
         h1, h2, h3, h4, h5, h6 { color: #111827 !important; }
@@ -484,8 +492,17 @@ if _eh_tema_claro():
         [data-testid="stExpander"] { background-color: #ffffff !important; border: 1px solid #e5e7eb !important; }
         [data-testid="stForm"] { background-color: #fafbfc; border-radius: 12px; padding: 14px; border: 1px solid #e5e7eb; }
 
+        /* Botões: mirar no testid do PRÓPRIO botão, não no wrapper.
+           Os seletores por wrapper (.stButton > button) deixavam de fora o
+           gatilho de popover (os 🗑️/✏️ do Diário e das Tarefas) e o
+           download_button (Exportar agenda) — ficavam escuros com texto
+           escuro. O `:not(...header)` preserva a barra do próprio Streamlit
+           (Deploy / menu), que não é nossa. */
+        button[data-testid^="stBaseButton-"]:not([data-testid$="header"]),
+        button[data-testid="stPopoverButton"],
         .stButton > button,
         [data-testid="stFormSubmitButton"] > button,
+        [data-testid="stDownloadButton"] button,
         [data-testid="baseButton-secondary"],
         [data-testid="baseButton-primary"] {
             background-color: #f3f4f6 !important;
@@ -533,47 +550,28 @@ if _eh_tema_claro():
             color: #1f2937 !important;
         }
 
-        /* Cards de membros/Diário com background #1E1E1E → claros.
-           Precisa casar as 4 grafias: o Diário escreve `background:#1E1E1E`
-           (sem o "-color"), então só os seletores com background-color
-           deixavam o corpo do relato preto no tema claro. */
-        div[style*="background-color: #1E1E1E"],
-        div[style*="background-color:#1E1E1E"],
-        div[style*="background: #1E1E1E"],
-        div[style*="background:#1E1E1E"] {
-            background-color: #ffffff !important;
-            background: #ffffff !important;
-            border: 1px solid #e5e7eb !important;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.05) !important;
-            color: #1f2937 !important;
-        }
-        div[style*="background: #1E1E1E"] *,
-        div[style*="background:#1E1E1E"] * { color: #1f2937 !important; }
-        div[style*="background-color: #1E1E1E"] [style*="color: white"],
-        div[style*="background-color:#1E1E1E"] [style*="color: white"],
-        div[style*="background-color: #1E1E1E"] [style*="color:#fff"],
-        div[style*="background-color:#1E1E1E"] [style*="color:#fff"] {
-            color: #111827 !important;
-        }
-        div[style*="background-color: #1E1E1E"] [style*="color: #EEE"],
-        div[style*="background-color: #1E1E1E"] [style*="color: #AAA"],
-        div[style*="background-color:#1E1E1E"] [style*="color: #EEE"],
-        div[style*="background-color:#1E1E1E"] [style*="color: #AAA"] {
-            color: #6b7280 !important;
-        }
+        /* NOTA: aqui existiam regras do tipo div[style*="#1E1E1E"] e
+           div[style*="#333"] pra clarear cards do Diário/Chat. Elas NUNCA
+           funcionaram: o sanitizador de HTML do Streamlit reescreve o
+           atributo style e converte hex em rgb() — o DOM guarda
+           "background: rgb(30, 30, 30)", então o seletor por "#1E1E1E"
+           não casa com nada. Foram removidas e o problema passou a ser
+           resolvido na origem, em Python, via core.helpers._cores_tema():
+           quem desenha o HTML já escolhe a cor certa pro tema atual. */
 
-        /* Painéis/balões desenhados com BRANCO translúcido (pensados pro
-           tema escuro): no fundo claro viram branco-sobre-branco e somem.
-           Trocamos por preto translúcido equivalente. Só os tons fracos
-           (0.02–0.06) — o 0.18 é usado em chips que ficam sobre cabeçalho
-           COLORIDO (ex.: o chip de horas do Diário) e lá o branco está certo. */
-        [style*="rgba(255,255,255,0.02)"],
-        [style*="rgba(255,255,255,.02)"],
-        [style*="rgba(255,255,255,0.03)"],
-        [style*="rgba(255,255,255,.03)"],
-        [style*="rgba(255,255,255,0.05)"],
-        [style*="rgba(255,255,255,.05)"],
-        [style*="rgba(255,255,255,0.06)"] {
+        /* Painéis desenhados com BRANCO translúcido (pensados pro tema
+           escuro): no fundo claro viram branco-sobre-branco e somem.
+           ATENÇÃO à grafia: o sanitizador do Streamlit reescreve o style e
+           coloca ESPAÇO depois das vírgulas — no DOM fica
+           "rgba(255, 255, 255, 0.05)". Escrever sem espaço aqui faz o
+           seletor não casar com nada (foi o que aconteceu antes).
+           Os casos mais visíveis (Diário, cabeçalhos de seção) já são
+           resolvidos em Python via _cores_tema(); isto aqui é a rede de
+           segurança pros painéis restantes. */
+        [style*="rgba(255, 255, 255, 0.02)"],
+        [style*="rgba(255, 255, 255, 0.03)"],
+        [style*="rgba(255, 255, 255, 0.05)"],
+        [style*="rgba(255, 255, 255, 0.06)"] {
             background: rgba(0,0,0,0.04) !important;
             border-color: rgba(0,0,0,0.12) !important;
         }

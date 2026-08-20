@@ -23,7 +23,7 @@ import database as db
 import relatorios
 
 from core.data import _invalidar_dados, _load_df_d, _load_df_p, _load_df_u
-from core.helpers import _pode_editar, _tempo_relativo
+from core.helpers import _cores_tema, _pode_editar, _tempo_relativo
 from core.mencoes import (
     _popover_mencionar,
     _processar_mencoes_diario,
@@ -120,12 +120,17 @@ def _interacoes_para_html(bruto, usuarios, eu):
              f'{data}{_ed}</span></div>')
             if autor else ""
         )
+        # Cores pelo tema: o balão fica sobre o corpo do relato, que é
+        # branco no tema claro — com o cinza-claro fixo de antes, o texto
+        # sumia.
+        _ct = _cores_tema()
         baloes.append(
-            f'<div style="background:rgba(255,255,255,0.05);'
-            f'border:1px solid rgba(255,255,255,0.08);'
+            f'<div style="background:{_ct["painel_bg"]};'
+            f'border:1px solid {_ct["painel_bd"]};'
             f'border-left:3px solid {_accent};border-radius:8px;'
             f'padding:9px 12px;margin-top:8px;">{_cab}'
-            f'<div style="font-size:13px;line-height:1.55;color:#e9e9e9;">'
+            f'<div style="font-size:13px;line-height:1.55;'
+            f'color:{_ct["superficie_txt"]};">'
             f'{corpo_html}</div></div>'
         )
     return "".join(baloes), len(itens)
@@ -219,6 +224,8 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
             f'</span>'
         )
         _ed_relato = " · editado" if d.get("editado_em") else ""
+        # Corpo do relato: era #1E1E1E fixo, que ficava preto no tema claro.
+        _c_diario = _cores_tema()
 
         st.markdown(f"""
             {_wrap_pre}
@@ -231,7 +238,7 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
             </div>
             <div style="font-size:11px;opacity:.85;">Por: {d['autor']}{_ed_relato}</div>
             </div>
-            <div style="background:#1E1E1E;color:#EEE;padding:14px 15px;border:1px solid {cor_topo};border-top:none;border-radius:0 0 10px 10px;font-size:13px;line-height:1.6;margin-bottom:4px;">
+            <div style="background:{_c_diario['superficie']};color:{_c_diario['superficie_txt']};padding:14px 15px;border:1px solid {cor_topo};border-top:none;border-radius:0 0 10px 10px;font-size:13px;line-height:1.6;margin-bottom:4px;">
             {texto_exibicao}
             {f'<div style="margin-top:12px;"><div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:{cor_topo};margin-bottom:4px;">💬 Interações · {_n_interacoes}</div>{_interacoes_html}</div>' if d.get('resposta_gestor') else ''}
             </div>
