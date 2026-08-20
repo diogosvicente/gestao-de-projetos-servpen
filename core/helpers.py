@@ -171,7 +171,7 @@ def _render_tag_chips(tags_str, *, small=False):
     return "".join(chips)
 
 
-def _render_trilha_chips(itens, *, small=False):
+def _render_trilha_chips(itens, *, small=False, fundo_claro=False):
     """Trilha de status como caminho: cumpridas → atual → próximas.
 
     `itens` = [{texto, concluida}, ...] em ordem. Regra de leitura:
@@ -179,6 +179,13 @@ def _render_trilha_chips(itens, *, small=False):
       - a PRIMEIRA não cumprida → destacada, é o status ATUAL;
       - as demais não cumpridas → contorno pontilhado (próximos passos).
     Entre um chip e outro entra um "›" pra dar a ideia de caminho.
+
+    `fundo_claro` diz sobre que fundo isto vai ser desenhado — NÃO é o tema
+    da página. No card do Kanban o fundo é sempre colorido/escuro (mesmo no
+    tema claro), então lá vai False; já na seção "Trilha de Status", que
+    fica sobre o fundo da página, quem chama passa `_eh_tema_claro()`.
+    Sem isso os chips cumpridos (branco translúcido + texto cinza-claro)
+    ficavam invisíveis no tema claro.
     """
     if not itens:
         return ""
@@ -186,6 +193,14 @@ def _render_trilha_chips(itens, *, small=False):
     fz = "10px" if small else "11px"
     _seta = (f"<span style='opacity:.45;font-size:{fz};margin:0 2px;'>"
              f"›</span>")
+    if fundo_claro:
+        _bg_ok, _fg_ok = "rgba(0,0,0,.06)", "#4b5563"
+        _fg_prox, _bd_prox = "#6b7280", "rgba(0,0,0,.25)"
+        _halo = "rgba(0,0,0,.20)"
+    else:
+        _bg_ok, _fg_ok = "rgba(255,255,255,.10)", "#cbd5e1"
+        _fg_prox, _bd_prox = "#94a3b8", "rgba(255,255,255,.28)"
+        _halo = "rgba(255,255,255,.35)"
 
     _idx_atual = next((i for i, it in enumerate(itens)
                        if not it.get("concluida")), None)
@@ -197,17 +212,17 @@ def _render_trilha_chips(itens, *, small=False):
                 f"font-size:{fz};font-weight:600;margin:2px 0 0 0;"
                 f"letter-spacing:0.3px;")
         if it.get("concluida"):
-            estilo = (base + "background:rgba(255,255,255,.10);color:#cbd5e1;"
-                             "text-decoration:line-through;opacity:.75;")
+            estilo = (base + f"background:{_bg_ok};color:{_fg_ok};"
+                             "text-decoration:line-through;opacity:.85;")
             rotulo = f"✓ {safe}"
         elif i == _idx_atual:
             bg, fg = _cor_tag(t)
             estilo = (base + f"background:{bg};color:{fg};"
-                             "box-shadow:0 0 0 2px rgba(255,255,255,.35);")
+                             f"box-shadow:0 0 0 2px {_halo};")
             rotulo = f"● {safe}"
         else:
-            estilo = (base + "background:transparent;color:#94a3b8;"
-                             "border:1px dashed rgba(255,255,255,.28);")
+            estilo = (base + f"background:transparent;color:{_fg_prox};"
+                             f"border:1px dashed {_bd_prox};")
             rotulo = safe
         partes.append(f"<span style='{estilo}'>{rotulo}</span>")
     return _seta.join(partes)

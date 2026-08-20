@@ -122,6 +122,41 @@ st.caption(
        "formulário abaixo." if _pode_gestor() else "")
 )
 
+# ── Cards coloridos por urgência ──────────────────────────────────────
+# st.container(border=True) não aceita estilo, então cada card imprime um
+# marcador invisível (.tk-<grupo>) e o CSS pinta o container que o contém,
+# via `:has()`. Mesma paleta dos cards do Kanban, pra o sistema inteiro ter
+# a mesma linguagem visual. Como o fundo é colorido nos DOIS temas, os
+# textos/ícones dentro vão sempre em tom claro.
+_CARD_BG = {
+    "atrasadas":  ("#5c1414", "#ff4d4d"),
+    "hoje":       ("#7c3a0a", "#ff9f43"),
+    "amanha":     ("#0d3d75", "#00d4ff"),
+    "semana":     ("#0d3d75", "#00d4ff"),
+    "depois":     ("#3b1f6e", "#7c3aed"),
+    "sem_data":   ("#334155", "#94a3b8"),
+    "concluidas": ("#143d14", "#4dff4d"),
+}
+_css_cards = "".join(
+    f'div[data-testid="stVerticalBlockBorderWrapper"]:has(.tk-{_k})'
+    f'{{background:{_bg} !important;border:1px solid rgba(255,255,255,.10)'
+    f' !important;border-left:5px solid {_bd} !important;'
+    f'border-radius:10px !important;}}'
+    for _k, (_bg, _bd) in _CARD_BG.items()
+)
+st.markdown(
+    "<style>"
+    ".tk-marca{display:none;}"
+    + _css_cards +
+    # Texto/ícones dos widgets nativos dentro do card (checkbox, botões)
+    # precisam ficar claros — o padrão do tema claro os deixaria escuros.
+    'div[data-testid="stVerticalBlockBorderWrapper"]:has(.tk-marca) '
+    'label p, div[data-testid="stVerticalBlockBorderWrapper"]:has(.tk-marca) '
+    '[data-testid="stCaptionContainer"] p{color:#e2e8f0 !important;}'
+    "</style>",
+    unsafe_allow_html=True,
+)
+
 # ── Formulário ÚNICO de cadastro ──────────────────────────────────────
 # O antigo "Tarefas da equipe > atribuir" foi fundido aqui: a diferença é só
 # quem vai no parâmetro `usuario` da chamada a db.criar_tarefa.
@@ -249,14 +284,16 @@ def _card_tarefa(t, *, dono_visivel=False, pode_excluir=True,
     `dono_visivel` mostra de quem é a tarefa (usado na visão da equipe).
     """
     _g = _grupo_de(t)
-    _cor = _COR[_g]
     _tid = t["id"]
     with st.container(border=True):
-        c_bar, c_chk, c_txt, c_act = st.columns(
-            [0.02, 0.06, 0.72, 0.20], vertical_alignment="center")
-        c_bar.markdown(
-            f"<div style='background:{_cor};width:6px;min-height:42px;"
-            f"border-radius:3px;'></div>", unsafe_allow_html=True)
+        # Marcador invisível que dá a cor ao card inteiro. O CSS lá em cima
+        # pinta o container através do `:has(.tk-<grupo>)` — é a forma de
+        # colorir um st.container, que não aceita estilo direto. Precisa vir
+        # ANTES das colunas pra já estar no DOM do container.
+        st.markdown(f"<span class='tk-marca tk-{_g}'></span>",
+                    unsafe_allow_html=True)
+        c_chk, c_txt, c_act = st.columns(
+            [0.07, 0.73, 0.20], vertical_alignment="center")
 
         _k_chk = f"chk_{prefixo}_{_tid}"
         c_chk.checkbox(
@@ -271,9 +308,13 @@ def _card_tarefa(t, *, dono_visivel=False, pode_excluir=True,
             _txt = _html.escape(str(t["descricao"]))
             if t["concluida"]:
                 _txt = (f"<span style='text-decoration:line-through;"
-                        f"opacity:.55'>{_txt}</span>")
+                        f"opacity:.6'>{_txt}</span>")
+            # Cor explícita: o card tem fundo colorido nos dois temas, então
+            # não dá pra deixar o texto herdar (no tema claro sairia escuro
+            # sobre fundo escuro).
             st.markdown(
-                f"<div style='font-size:0.95rem;line-height:1.3'>{_txt}</div>",
+                f"<div style='font-size:0.95rem;line-height:1.3;"
+                f"color:#f8fafc;font-weight:600'>{_txt}</div>",
                 unsafe_allow_html=True)
 
             _chips = ""

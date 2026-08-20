@@ -277,7 +277,12 @@ def _global_notif(usuario):
     _equipe_notif = st.session_state.get("equipe", "SERVPEN")
     ultimas_grp = st.session_state.get("_chat_grp_ultimas", {})
     atuais_grp = db.nao_lidas_grupos(usuario, _equipe_notif)
-    _grp_label = {s: l for s, l, _e in getattr(db, "GRUPOS_CHAT", [])}
+    # Rótulos: pega dos grupos VISÍVEIS (fixos + personalizados), senão um
+    # grupo próprio apareceria no toast como a sentinela crua "@grupo:#12".
+    try:
+        _grp_label = dict(db.grupos_chat_visiveis(_equipe_notif, usuario))
+    except Exception:
+        _grp_label = {s: l for s, l, _e in getattr(db, "GRUPOS_CHAT", [])}
     for grp, qtd in atuais_grp.items():
         anterior = ultimas_grp.get(grp, 0)
         if qtd > anterior:

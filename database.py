@@ -773,6 +773,27 @@ def _criar_tabelas_impl():
             mime_type TEXT
         )''')
 
+        # ── CHAT: GRUPOS PERSONALIZADOS ──
+        # Além dos 3 grupos fixos por equipe (TODOS/SERVPEN/SERVPAR), o
+        # usuário monta grupos próprios escolhendo quem participa. A
+        # sentinela em `chat.destinatario` é '@grupo:#<id>' — o '#' é o que
+        # distingue dos fixos, e o resto da máquina de grupo (não-lidas via
+        # chat_grupo_visto, toast, marcador de novas) funciona igual, porque
+        # ela só enxerga a sentinela como texto.
+        c.execute('''CREATE TABLE IF NOT EXISTS chat_grupos (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            nome TEXT NOT NULL,
+            criado_por TEXT,
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
+        c.execute('''CREATE TABLE IF NOT EXISTS chat_grupo_membros (
+            grupo_id BIGINT NOT NULL,
+            usuario  TEXT NOT NULL,
+            PRIMARY KEY (grupo_id, usuario)
+        )''')
+        c.execute("CREATE INDEX IF NOT EXISTS idx_chat_grp_membro "
+                  "ON chat_grupo_membros(usuario)")
+
         # ── TRILHA DE TAGS (status do projeto em etapas) ──
         # Substitui o antigo campo de texto livre `projetos.tags` como fonte
         # de verdade: cada linha é um passo do caminho de status ("Recebido"
@@ -1853,20 +1874,162 @@ GRUPOS_CHAT = [
 ]
 
 
-def grupos_chat_visiveis(equipe):
-    """Lista [(sentinela, label)] dos grupos que um usuário da `equipe` vê.
-    TODOS sempre; o grupo da própria equipe; GERAL vê os 3."""
+PREFIXO_GRUPO_CUSTOM = "@grupo:#"
+
+
+def criar_grupo_chat(nome, membros, criado_por):
+    """Cria um grupo personalizado. Retorna o id, ou None se o nome estiver
+    vazio. Quem cria entra automaticamente como membro."""
+    nome = (nome or "").strip()
+    if not nome:
+        return None
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("INSERT INTO chat_grupos (nome, criado_por) "
+                  "VALUES (%s,%s) RETURNING id", (nome, criado_por or ""))
+        gid = c.fetchone()[0]
+        _todos = set(m for m in (membros or []) if str(m).strip())
+        if criado_por:
+            _todos.add(criado_por)          # o dono sempre participa
+        for m in _todos:
+            c.execute("INSERT INTO chat_grupo_membros (grupo_id, usuario) "
+                      "VALUES (%s,%s) ON CONFLICT DO NOTHING", (gid, m))
+        conn.commit()
+        return gid
+    except Exception as e:
+        log.exception("Erro ao criar grupo de chat '%s': %s", nome, e)
+        conn.rollback()
+        return None
+    finally:
+        conn.close()
+
+
+def membros_grupo_chat(grupo_id):
+    """Nomes dos participantes de um grupo personalizado."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("SELECT usuario FROM chat_grupo_membros WHERE grupo_id=%s "
+                  "ORDER BY LOWER(usuario)", (int(grupo_id),))
+        return [r[0] for r in c.fetchall()]
+    finally:
+        conn.close()
+
+
+def obter_grupo_chat(grupo_id):
+    """{id, nome, criado_por, membros} — ou None se não existir."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("SELECT id, nome, criado_por FROM chat_grupos WHERE id=%s",
+                  (int(grupo_id),))
+        r = c.fetchone()
+    finally:
+        conn.close()
+    if not r:
+        return None
+    return {"id": r[0], "nome": r[1], "criado_por": r[2],
+            "membros": membros_grupo_chat(r[0])}
+
+
+def id_grupo_da_sentinela(sentinela):
+    """'@grupo:#12' -> 12. None se não for sentinela de grupo custom."""
+    s = str(sentinela or "")
+    if not s.startswith(PREFIXO_GRUPO_CUSTOM):
+        return None
+    try:
+        return int(s[len(PREFIXO_GRUPO_CUSTOM):])
+    except ValueError:
+        return None
+
+
+def atualizar_grupo_chat(grupo_id, nome=None, membros=None):
+    """Renomeia e/ou redefine a lista de participantes. O criador nunca é
+    removido (senão o grupo ficaria sem dono e sumiria da lista dele)."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        if nome is not None:
+            _n = str(nome).strip()
+            if not _n:
+                return False
+            c.execute("UPDATE chat_grupos SET nome=%s WHERE id=%s",
+                      (_n, int(grupo_id)))
+        if membros is not None:
+            c.execute("SELECT criado_por FROM chat_grupos WHERE id=%s",
+                      (int(grupo_id),))
+            _row = c.fetchone()
+            _dono = _row[0] if _row else None
+            _novos = set(m for m in membros if str(m).strip())
+            if _dono:
+                _novos.add(_dono)
+            c.execute("DELETE FROM chat_grupo_membros WHERE grupo_id=%s",
+                      (int(grupo_id),))
+            for m in _novos:
+                c.execute("INSERT INTO chat_grupo_membros (grupo_id, usuario)"
+                          " VALUES (%s,%s) ON CONFLICT DO NOTHING",
+                          (int(grupo_id), m))
+        conn.commit()
+        return True
+    except Exception as e:
+        log.exception("Erro ao atualizar grupo %s: %s", grupo_id, e)
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+
+def excluir_grupo_chat(grupo_id):
+    """Apaga o grupo, os membros e as mensagens trocadas nele."""
+    sent = f"{PREFIXO_GRUPO_CUSTOM}{int(grupo_id)}"
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("DELETE FROM chat_grupo_membros WHERE grupo_id=%s",
+                  (int(grupo_id),))
+        c.execute("DELETE FROM chat WHERE destinatario=%s", (sent,))
+        c.execute("DELETE FROM chat_grupo_visto WHERE grupo=%s", (sent,))
+        c.execute("DELETE FROM chat_grupos WHERE id=%s", (int(grupo_id),))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def grupos_chat_do_usuario(usuario):
+    """[(sentinela, label)] dos grupos personalizados em que o usuário está."""
+    if not usuario:
+        return []
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("SELECT g.id, g.nome FROM chat_grupos g "
+                  "JOIN chat_grupo_membros m ON m.grupo_id = g.id "
+                  "WHERE m.usuario = %s ORDER BY LOWER(g.nome)", (usuario,))
+        return [(f"{PREFIXO_GRUPO_CUSTOM}{r[0]}", f"🔸 {r[1]}")
+                for r in c.fetchall()]
+    except Exception as e:
+        log.debug("grupos_chat_do_usuario falhou (ignorado): %s", e)
+        return []
+    finally:
+        conn.close()
+
+
+def grupos_chat_visiveis(equipe, usuario=None):
+    """Lista [(sentinela, label)] dos grupos que a pessoa vê.
+
+    Fixos: TODOS sempre; o da própria equipe; GERAL vê os 3.
+    Personalizados: os que ela participa — só entram quando `usuario` é
+    informado (o parâmetro é opcional pra não quebrar chamadas antigas).
+    """
     eq = (equipe or "SERVPEN").strip().upper()
-    return [
+    fixos = [
         (sent, label) for sent, label, geq in GRUPOS_CHAT
         if geq == "TODOS" or eq == "GERAL" or eq == geq
     ]
+    return fixos + (grupos_chat_do_usuario(usuario) if usuario else [])
 
 
 def nao_lidas_grupos(usuario, equipe):
     """dict {sentinela: qtd não-lidas} para os grupos visíveis ao usuário.
-    Não-lida = msg do grupo com id > ultimo_id_visto e remetente != usuário."""
-    vis = grupos_chat_visiveis(equipe)
+    Não-lida = msg do grupo com id > ultimo_id_visto e remetente != usuário.
+    Cobre os fixos E os personalizados de que o usuário participa."""
+    vis = grupos_chat_visiveis(equipe, usuario)
     if not vis:
         return {}
     conn = conectar(); c = conn.cursor()

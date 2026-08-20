@@ -476,13 +476,22 @@ if _eh_tema_claro():
             color: #1f2937 !important;
         }
 
-        /* Cards de membros/Diário com background #1E1E1E → claros */
+        /* Cards de membros/Diário com background #1E1E1E → claros.
+           Precisa casar as 4 grafias: o Diário escreve `background:#1E1E1E`
+           (sem o "-color"), então só os seletores com background-color
+           deixavam o corpo do relato preto no tema claro. */
         div[style*="background-color: #1E1E1E"],
-        div[style*="background-color:#1E1E1E"] {
+        div[style*="background-color:#1E1E1E"],
+        div[style*="background: #1E1E1E"],
+        div[style*="background:#1E1E1E"] {
             background-color: #ffffff !important;
+            background: #ffffff !important;
             border: 1px solid #e5e7eb !important;
             box-shadow: 0 2px 6px rgba(0,0,0,0.05) !important;
+            color: #1f2937 !important;
         }
+        div[style*="background: #1E1E1E"] *,
+        div[style*="background:#1E1E1E"] * { color: #1f2937 !important; }
         div[style*="background-color: #1E1E1E"] [style*="color: white"],
         div[style*="background-color:#1E1E1E"] [style*="color: white"],
         div[style*="background-color: #1E1E1E"] [style*="color:#fff"],
@@ -494,6 +503,38 @@ if _eh_tema_claro():
         div[style*="background-color:#1E1E1E"] [style*="color: #EEE"],
         div[style*="background-color:#1E1E1E"] [style*="color: #AAA"] {
             color: #6b7280 !important;
+        }
+
+        /* Painéis/balões desenhados com BRANCO translúcido (pensados pro
+           tema escuro): no fundo claro viram branco-sobre-branco e somem.
+           Trocamos por preto translúcido equivalente. Só os tons fracos
+           (0.02–0.06) — o 0.18 é usado em chips que ficam sobre cabeçalho
+           COLORIDO (ex.: o chip de horas do Diário) e lá o branco está certo. */
+        [style*="rgba(255,255,255,0.02)"],
+        [style*="rgba(255,255,255,.02)"],
+        [style*="rgba(255,255,255,0.03)"],
+        [style*="rgba(255,255,255,.03)"],
+        [style*="rgba(255,255,255,0.05)"],
+        [style*="rgba(255,255,255,.05)"],
+        [style*="rgba(255,255,255,0.06)"] {
+            background: rgba(0,0,0,0.04) !important;
+            border-color: rgba(0,0,0,0.12) !important;
+        }
+        /* Mesmos casos, porém definidos por CLASSE (não dá pra pegar por
+           seletor de atributo): grade da Agenda semanal e separador de data
+           do Chat. */
+        .srv-sem .dia {
+            background: rgba(0,0,0,0.03) !important;
+            border-color: rgba(0,0,0,0.12) !important;
+        }
+        .wa-date-sep span {
+            background: rgba(0,0,0,0.07) !important;
+            color: #4b5563 !important;
+        }
+        /* `código inline` dentro do corpo do relato (que agora é branco) */
+        div[style*="background:#1E1E1E"] code,
+        div[style*="background: #1E1E1E"] code {
+            background: rgba(0,0,0,0.08) !important;
         }
 
         /* Bolha de chat recebido (#333) → cinza claro */

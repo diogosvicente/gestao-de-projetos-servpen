@@ -20,6 +20,7 @@ import database as db
 from core.data import _invalidar_dados, _load_df_d, _load_df_p, _load_df_u
 from core.helpers import (
     _badge_status,
+    _eh_tema_claro,
     _empty_state,
     _equipe_atual,
     _estiliza_plotly,
@@ -830,14 +831,28 @@ else:
                    letter-spacing:.3px; }
     .kc-col-header {
         position: sticky; top: 0;
-        background: var(--background-color, #0e1117);
         z-index: 5;
         font-size: 13px; font-weight:700; margin: 0 0 6px;
         padding: 6px 4px;
-        border-bottom: 1px solid rgba(255,255,255,.08);
     }
     </style>
     """, unsafe_allow_html=True)
+
+    # Cabeçalho da coluna: cor vem do tema. Antes era
+    # `var(--background-color, #0e1117)` — o Streamlit NÃO define essa
+    # variável, então caía sempre no fallback escuro e, no tema claro, os
+    # cabeçalhos viravam barras pretas com texto ilegível. Resolver em
+    # Python é mais confiável do que depender de variável de tema do CSS.
+    _hdr_bg = "#ffffff" if _eh_tema_claro() else "#0e1117"
+    _hdr_fg = "#111827" if _eh_tema_claro() else "#fafafa"
+    _hdr_bd = ("rgba(0,0,0,.10)" if _eh_tema_claro()
+               else "rgba(255,255,255,.08)")
+    st.markdown(
+        f"<style>.kc-col-header{{background:{_hdr_bg} !important;"
+        f"color:{_hdr_fg} !important;"
+        f"border-bottom:1px solid {_hdr_bd} !important;}}</style>",
+        unsafe_allow_html=True,
+    )
 
     # ── TOOLBAR: densidade + collapse finalizados ────────────────
     tb1, tb2, _tb3 = st.columns([1.2, 1.2, 2])
@@ -1436,9 +1451,12 @@ if "projeto_em_edicao" in st.session_state:
     _ro_tags = not _pode_editar()
 
     if _trilha_ed:
+        # Aqui a trilha fica sobre o fundo da PÁGINA (diferente do card do
+        # Kanban, que é sempre colorido) — daí passar o tema atual.
         st.markdown(
             f"<div style='margin:2px 0 10px'>"
-            f"{_render_trilha_chips(_trilha_ed)}</div>",
+            f"{_render_trilha_chips(_trilha_ed, fundo_claro=_eh_tema_claro())}"
+            f"</div>",
             unsafe_allow_html=True,
         )
     else:
@@ -1447,52 +1465,69 @@ if "projeto_em_edicao" in st.session_state:
     _idx_atual_ed = next(
         (i for i, t in enumerate(_trilha_ed) if not t["concluida"]), None
     )
+
+    # Toda alteração da trilha passa por CALLBACK (on_change/on_click), nunca
+    # por `st.rerun()` no meio do desenho da página. Motivo: rerun no meio da
+    # renderização aborta o script na hora, o navegador fica com a árvore
+    # pela metade e o React erra ao reconciliar — é a origem provável do
+    # "NotFoundError: removeChild" que apareceu ao editar o Kanban. Com
+    # callback o Streamlit roda a ação ANTES do desenho e re-renderiza a
+    # página inteira uma única vez.
+    def _cb_tag_ok(id_tag, chave, texto):
+        _novo = bool(st.session_state.get(chave))
+        db.atualizar_tag_projeto(id_tag, concluida=_novo)
+        db.log_aud(usuario, "tag", "projeto", id_ed,
+                   f"'{texto}' -> {'cumprida' if _novo else 'pendente'}")
+        _invalidar_dados()
+
+    def _cb_tag_txt(id_tag, chave, texto_antigo):
+        _novo = str(st.session_state.get(chave, "")).strip()
+        if not _novo or _novo == texto_antigo:
+            # Voltou pro valor antigo (ou apagou tudo): restaura e não grava.
+            st.session_state[chave] = texto_antigo
+            return
+        db.atualizar_tag_projeto(id_tag, texto=_novo)
+        db.log_aud(usuario, "tag", "projeto", id_ed,
+                   f"renomeada: '{texto_antigo}' -> '{_novo}'")
+        _invalidar_dados()
+
+    def _cb_tag_mover(id_tag, delta):
+        db.mover_tag_projeto(id_tag, delta)
+        _invalidar_dados()
+
+    def _cb_tag_del(id_tag, texto):
+        db.excluir_tag_projeto(id_tag)
+        db.log_aud(usuario, "tag", "projeto", id_ed, f"removida: '{texto}'")
+        _invalidar_dados()
+
     for _i, _tg in enumerate(_trilha_ed):
         tc1, tc2, tc3, tc4, tc5 = st.columns(
             [0.09, 0.55, 0.12, 0.12, 0.12], vertical_alignment="center")
 
         _k_ok = f"tag_ok_{id_ed}_{_tg['id']}"
-        if tc1.checkbox("✔", value=_tg["concluida"], key=_k_ok,
-                        label_visibility="collapsed", disabled=_ro_tags,
-                        help="Passo já cumprido") != _tg["concluida"]:
-            db.atualizar_tag_projeto(_tg["id"],
-                                     concluida=st.session_state[_k_ok])
-            db.log_aud(usuario, "tag", "projeto", id_ed,
-                       f"'{_tg['texto']}' -> "
-                       f"{'cumprida' if st.session_state[_k_ok] else 'pendente'}")
-            _invalidar_dados()
-            st.rerun()
-
-        _novo_txt = tc2.text_input(
-            "Passo", value=_tg["texto"], key=f"tag_txt_{id_ed}_{_tg['id']}",
+        _k_txt = f"tag_txt_{id_ed}_{_tg['id']}"
+        tc1.checkbox(
+            "✔", value=_tg["concluida"], key=_k_ok,
             label_visibility="collapsed", disabled=_ro_tags,
+            help="Passo já cumprido",
+            on_change=_cb_tag_ok, args=(_tg["id"], _k_ok, _tg["texto"]),
         )
-        if _novo_txt.strip() and _novo_txt.strip() != _tg["texto"]:
-            db.atualizar_tag_projeto(_tg["id"], texto=_novo_txt)
-            db.log_aud(usuario, "tag", "projeto", id_ed,
-                       f"renomeada: '{_tg['texto']}' -> '{_novo_txt.strip()}'")
-            _invalidar_dados()
-            st.rerun()
-
-        if tc3.button("↑", key=f"tag_up_{id_ed}_{_tg['id']}",
-                      disabled=(_ro_tags or _i == 0), width="stretch",
-                      help="Subir"):
-            db.mover_tag_projeto(_tg["id"], -1)
-            _invalidar_dados()
-            st.rerun()
-        if tc4.button("↓", key=f"tag_dn_{id_ed}_{_tg['id']}",
-                      disabled=(_ro_tags or _i == len(_trilha_ed) - 1),
-                      width="stretch", help="Descer"):
-            db.mover_tag_projeto(_tg["id"], 1)
-            _invalidar_dados()
-            st.rerun()
-        if tc5.button("🗑", key=f"tag_del_{id_ed}_{_tg['id']}",
-                      disabled=_ro_tags, width="stretch", help="Excluir passo"):
-            db.excluir_tag_projeto(_tg["id"])
-            db.log_aud(usuario, "tag", "projeto", id_ed,
-                       f"removida: '{_tg['texto']}'")
-            _invalidar_dados()
-            st.rerun()
+        tc2.text_input(
+            "Passo", value=_tg["texto"], key=_k_txt,
+            label_visibility="collapsed", disabled=_ro_tags,
+            on_change=_cb_tag_txt, args=(_tg["id"], _k_txt, _tg["texto"]),
+        )
+        tc3.button("↑", key=f"tag_up_{id_ed}_{_tg['id']}",
+                   disabled=(_ro_tags or _i == 0), width="stretch",
+                   help="Subir", on_click=_cb_tag_mover,
+                   args=(_tg["id"], -1))
+        tc4.button("↓", key=f"tag_dn_{id_ed}_{_tg['id']}",
+                   disabled=(_ro_tags or _i == len(_trilha_ed) - 1),
+                   width="stretch", help="Descer", on_click=_cb_tag_mover,
+                   args=(_tg["id"], 1))
+        tc5.button("🗑", key=f"tag_del_{id_ed}_{_tg['id']}",
+                   disabled=_ro_tags, width="stretch", help="Excluir passo",
+                   on_click=_cb_tag_del, args=(_tg["id"], _tg["texto"]))
 
         if _i == _idx_atual_ed:
             tc2.caption("● status atual")
