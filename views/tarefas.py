@@ -137,8 +137,19 @@ _CARD_BG = {
     "sem_data":   ("#334155", "#94a3b8"),
     "concluidas": ("#143d14", "#4dff4d"),
 }
+# O container com borda do Streamlit 1.58 é um `div[data-testid=
+# "stVerticalBlock"]` — mas esse MESMO testid também envolve os blocos
+# externos da página. Por isso o `:has()` precisa ser ancorado no filho
+# direto (`> stElementContainer`), senão ele casa também com os blocos de
+# fora e a página inteira sai colorida. Verificado no DOM real: com o
+# ancoramento casa exatamente 1 elemento, e é o que tem a borda.
+def _sel_card(marca):
+    return ('div[data-testid="stVerticalBlock"]'
+            f':has(> div[data-testid="stElementContainer"] .{marca})')
+
+
 _css_cards = "".join(
-    f'div[data-testid="stVerticalBlockBorderWrapper"]:has(.tk-{_k})'
+    f'{_sel_card("tk-" + _k)}'
     f'{{background:{_bg} !important;border:1px solid rgba(255,255,255,.10)'
     f' !important;border-left:5px solid {_bd} !important;'
     f'border-radius:10px !important;}}'
@@ -150,9 +161,9 @@ st.markdown(
     + _css_cards +
     # Texto/ícones dos widgets nativos dentro do card (checkbox, botões)
     # precisam ficar claros — o padrão do tema claro os deixaria escuros.
-    'div[data-testid="stVerticalBlockBorderWrapper"]:has(.tk-marca) '
-    'label p, div[data-testid="stVerticalBlockBorderWrapper"]:has(.tk-marca) '
-    '[data-testid="stCaptionContainer"] p{color:#e2e8f0 !important;}'
+    f'{_sel_card("tk-marca")} label p,'
+    f'{_sel_card("tk-marca")} [data-testid="stCaptionContainer"] p'
+    '{color:#e2e8f0 !important;}'
     "</style>",
     unsafe_allow_html=True,
 )

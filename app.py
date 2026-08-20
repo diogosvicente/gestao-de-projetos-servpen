@@ -64,7 +64,7 @@ log = logging.getLogger(__name__)
 # 2. CONFIGURAÇÃO DA PÁGINA (sempre o PRIMEIRO comando Streamlit)
 # ═══════════════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="GESTÃO DE PROJETOS - SERVPEN",
+    page_title="GESTÃO DE PROJETOS - SERVPEN/SERVPAR",
     layout="wide",
     page_icon="🏢",
 )
@@ -409,6 +409,63 @@ if _eh_tema_claro():
             background-color: #ffffff !important;
             color: #1f2937 !important;
             border-color: #d1d5db !important;
+        }
+
+        /* ── RÓTULOS DOS CAMPOS ──
+           O tema BASE do app é escuro (config.toml), então o Streamlit pinta
+           todo rótulo de branco. O override claro recoloria só markdown,
+           títulos e captions — os rótulos dos widgets ficavam brancos sobre
+           fundo branco, ou seja, invisíveis (só apareciam ao selecionar com
+           o mouse). Aqui eles voltam a ser escuros. */
+        [data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] *,
+        .stTextInput label, .stTextArea label, .stSelectbox label,
+        .stMultiSelect label, .stDateInput label, .stNumberInput label,
+        .stTimeInput label, .stFileUploader label, .stSlider label,
+        .stRadio label, .stCheckbox label, .stToggle label,
+        .stRadio label p, .stCheckbox label p {
+            color: #1f2937 !important;
+        }
+
+        /* Texto-fantasma (placeholder) — mesma história: era branco. */
+        .stApp input::placeholder,
+        .stApp textarea::placeholder,
+        .stApp div[data-baseweb="select"] div[class*="placeholder"] {
+            color: #9ca3af !important;
+            opacity: 1 !important;
+        }
+
+        /* ── SELECT / MULTISELECT / DATA ──
+           Estes componentes são do BaseWeb; o seletor antigo
+           (.stSelectbox > div > div) não casa mais na versão atual do
+           Streamlit — daí o "Choose options" continuar preto no tema claro.
+           Vamos pela marcação do próprio BaseWeb, que é estável. */
+        div[data-baseweb="select"] > div,
+        div[data-baseweb="input"],
+        div[data-baseweb="base-input"],
+        div[data-baseweb="textarea"] {
+            background-color: #ffffff !important;
+            border-color: #d1d5db !important;
+        }
+        /* Só a caixa e o campo digitável. As etiquetas dos itens já
+           escolhidos (span[data-baseweb="tag"]) NÃO são tocadas de
+           propósito: elas têm cor própria do BaseWeb, e forçar branco/escuro
+           aqui seria chute — por herança de `color` elas continuam como o
+           componente decidiu. */
+        div[data-baseweb="select"] > div,
+        div[data-baseweb="select"] input {
+            color: #1f2937 !important;
+        }
+
+        /* Menu suspenso aberto (lista de opções) */
+        div[data-baseweb="popover"] ul,
+        div[data-baseweb="popover"] div[role="listbox"],
+        ul[data-baseweb="menu"] {
+            background-color: #ffffff !important;
+        }
+        div[data-baseweb="popover"] li,
+        ul[data-baseweb="menu"] li,
+        div[data-baseweb="popover"] li * {
+            color: #1f2937 !important;
         }
 
         .card-projetista {
