@@ -490,6 +490,30 @@ if _eh_tema_claro():
         }
 
         [data-testid="stExpander"] { background-color: #ffffff !important; border: 1px solid #e5e7eb !important; }
+        /* Cabeçalho do expander: quando ABERTO, o Streamlit pinta o
+           <summary> com a cor do tema escuro (rgb(26,28,36)) — no tema
+           claro isso virava uma barra preta com texto escuro por cima
+           (os grupos de projeto no Diário). Fechado ele é transparente e
+           herda o branco, por isso só os abertos ficavam ilegíveis. */
+        [data-testid="stExpander"] summary,
+        [data-testid="stExpander"] details > summary,
+        [data-testid="stExpander"] details[open] > summary {
+            background-color: #ffffff !important;
+            color: #1f2937 !important;
+            /* `transition: none` NÃO é enfeite, é o que faz a linha acima
+               valer. O Streamlit põe `transition: background-color .15s` no
+               summary e, pelas regras da cascata do CSS, uma transição em
+               curso vence QUALQUER declaração — inclusive !important. Como
+               o React re-renderiza o elemento, a transição nunca assentava e
+               a cor escura continuava ganhando. Verificado no DOM: com a
+               transição desligada o fundo vira branco instantaneamente. */
+            transition: none !important;
+        }
+        [data-testid="stExpander"] summary:hover,
+        [data-testid="stExpander"] details[open] > summary:hover {
+            background-color: #f3f4f6 !important;
+        }
+        [data-testid="stExpander"] summary * { color: #1f2937 !important; }
         [data-testid="stForm"] { background-color: #fafbfc; border-radius: 12px; padding: 14px; border: 1px solid #e5e7eb; }
 
         /* Botões: mirar no testid do PRÓPRIO botão, não no wrapper.
