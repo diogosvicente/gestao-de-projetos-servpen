@@ -464,6 +464,30 @@ if _eh_tema_claro():
             color: #1f2937 !important;
         }
 
+        /* ── Achados da varredura de contraste (auditoria no DOM) ──
+           Sobraram brancos do tema escuro nestes três: rótulo de aba não
+           selecionada (sumia por completo), extremos e valor do slider
+           (usado na Evolução Técnica do Kanban) e cor de link. */
+        [data-testid="stTab"] p,
+        button[data-baseweb="tab"] p {
+            color: #1f2937 !important;
+        }
+        [data-testid="stTab"][aria-selected="true"] p,
+        button[data-baseweb="tab"][aria-selected="true"] p {
+            color: #b91c1c !important;   /* mantém o destaque da ativa */
+        }
+        /* Só os extremos (min/max), que ficam sobre o fundo da página. O
+           valor atual (stSliderThumbValue) NÃO entra aqui: ele é desenhado
+           em cima do polegar vermelho do slider, que é igual nos dois temas
+           — escurecê-lo pioraria o contraste em vez de melhorar. */
+        [data-testid="stSliderTickBar"],
+        [data-testid="stSliderTickBar"] * {
+            color: #4b5563 !important;
+        }
+        .stMarkdown a, [data-testid="stMarkdownContainer"] a {
+            color: #1d4ed8 !important;
+        }
+
         /* Menu suspenso aberto (lista de opções) */
         div[data-baseweb="popover"] ul,
         div[data-baseweb="popover"] div[role="listbox"],

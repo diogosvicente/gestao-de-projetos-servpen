@@ -24,7 +24,7 @@ import streamlit as st
 
 import database as db
 from core.data import _load_df_p
-from core.helpers import _pode_gestor
+from core.helpers import _pill_select, _pode_gestor
 from core.ui_feedback import confirmar_sucesso
 
 usuario = st.session_state.usuario
@@ -242,15 +242,30 @@ _sc1.subheader(f"📋 Minhas tarefas — {_pend} pendente(s)")
 
 # Como os blocos são montados: por data (Atrasadas/Hoje/...) ou por projeto.
 # Vale pras duas listas (minhas e da equipe).
-_MODO_GRUPO = _sc2.radio(
-    "Agrupar por",
-    options=["data", "projeto"],
-    format_func=lambda x: ("📅 Data" if x == "data" else "📁 Projeto"),
-    horizontal=True,
-    key="_tar_modo_grupo",
-    help="Por data mostra Atrasadas/Hoje/Amanhã…; por projeto junta as "
-         "tarefas de cada projeto num bloco só.",
+_VISAO = _pill_select(
+    _sc2, "Visão",
+    options=["🗂 Quadro", "📋 Lista"],
+    default="🗂 Quadro",
+    key="_tar_visao",
+    help="Quadro: colunas por prazo, no estilo do Kanban. "
+         "Lista: blocos empilhados, agrupados por data ou por projeto.",
 )
+_EH_QUADRO = str(_VISAO).endswith("Quadro")
+
+# O agrupamento Data/Projeto só faz sentido na visão em Lista — no Quadro as
+# colunas JÁ são o agrupamento (por prazo).
+if _EH_QUADRO:
+    _MODO_GRUPO = "data"
+else:
+    _MODO_GRUPO = st.radio(
+        "Agrupar por",
+        options=["data", "projeto"],
+        format_func=lambda x: ("📅 Data" if x == "data" else "📁 Projeto"),
+        horizontal=True,
+        key="_tar_modo_grupo",
+        help="Por data mostra Atrasadas/Hoje/Amanhã…; por projeto junta as "
+             "tarefas de cada projeto num bloco só.",
+    )
 
 # Contadores clicáveis = filtro. `type="primary"` marca o que está ativo.
 _filtro = st.session_state.get("_tar_filtro", "todas")
@@ -289,7 +304,7 @@ if _n_atras and _filtro != "atrasadas":
 
 
 def _card_tarefa(t, *, dono_visivel=False, pode_excluir=True,
-                 pode_editar=True, prefixo="my"):
+                 pode_editar=True, prefixo="my", compacto=False):
     """Um card de tarefa: faixa colorida + checkbox + chips + ações.
 
     `dono_visivel` mostra de quem é a tarefa (usado na visão da equipe).
@@ -303,8 +318,15 @@ def _card_tarefa(t, *, dono_visivel=False, pode_excluir=True,
         # ANTES das colunas pra já estar no DOM do container.
         st.markdown(f"<span class='tk-marca tk-{_g}'></span>",
                     unsafe_allow_html=True)
-        c_chk, c_txt, c_act = st.columns(
-            [0.07, 0.73, 0.20], vertical_alignment="center")
+        if compacto:
+            # Coluna do quadro é estreita: checkbox + texto numa linha, e as
+            # ações (✏️/🗑️) numa linha abaixo, senão tudo fica espremido.
+            c_chk, c_txt = st.columns([0.16, 0.84],
+                                      vertical_alignment="center")
+            c_act = None
+        else:
+            c_chk, c_txt, c_act = st.columns(
+                [0.07, 0.73, 0.20], vertical_alignment="center")
 
         _k_chk = f"chk_{prefixo}_{_tid}"
         c_chk.checkbox(
@@ -324,7 +346,8 @@ def _card_tarefa(t, *, dono_visivel=False, pode_excluir=True,
             # não dá pra deixar o texto herdar (no tema claro sairia escuro
             # sobre fundo escuro).
             st.markdown(
-                f"<div style='font-size:0.95rem;line-height:1.3;"
+                f"<div style='font-size:"
+                f"{'0.82rem' if compacto else '0.95rem'};line-height:1.3;"
                 f"color:#f8fafc;font-weight:600'>{_txt}</div>",
                 unsafe_allow_html=True)
 
@@ -349,7 +372,8 @@ def _card_tarefa(t, *, dono_visivel=False, pode_excluir=True,
                 st.markdown(f"<div style='margin-top:4px'>{_chips}</div>",
                             unsafe_allow_html=True)
 
-        with c_act:
+        # No modo compacto as ações ficam numa linha própria, abaixo.
+        with (st.container() if c_act is None else c_act):
             a1, a2 = st.columns(2)
             if pode_editar:
                 with a1.popover("✏️", width="stretch", help="Editar"):
@@ -399,6 +423,53 @@ def _card_tarefa(t, *, dono_visivel=False, pode_excluir=True,
                         db.excluir_tarefa(_tid)
                         confirmar_sucesso("Tarefa excluída", "")
                         st.rerun()
+
+
+# Colunas do QUADRO (estilo Kanban). "Futuras" junta esta semana, depois e
+# as sem data — senão viraria coluna demais e cada uma com 1 item.
+_COLUNAS_QUADRO = [
+    ("atrasadas",  "🔴 Atrasadas",  ("atrasadas",)),
+    ("hoje",       "🟡 Hoje",       ("hoje",)),
+    ("amanha",     "🔵 Amanhã",     ("amanha",)),
+    ("futuras",    "⚪ Futuras",    ("semana", "depois", "sem_data")),
+    ("concluidas", "✅ Concluídas", ("concluidas",)),
+]
+
+
+def _render_quadro(lista, *, dono_visivel=False, pode_excluir_fn=None,
+                   pode_editar=True, prefixo="qd"):
+    """Quadro em colunas por prazo, no mesmo espírito do Kanban."""
+    _por_grupo = {}
+    for t in lista:
+        _por_grupo.setdefault(_grupo_de(t), []).append(t)
+
+    _cols = st.columns(len(_COLUNAS_QUADRO))
+    for _col, (_chave, _rotulo, _grupos) in zip(_cols, _COLUNAS_QUADRO):
+        _itens = [t for _g in _grupos for t in _por_grupo.get(_g, [])]
+        _itens.sort(key=lambda x: (x["data"] is None, x["data"] or _HOJE,
+                                   -int(x["id"])))
+        with _col:
+            st.markdown(
+                f"<div style='font-weight:700;font-size:.85rem;"
+                f"color:{_COR[_grupos[0]]};padding:6px 2px;"
+                f"border-bottom:2px solid {_COR[_grupos[0]]};"
+                f"margin-bottom:8px'>{_rotulo} "
+                f"<span style='opacity:.65;font-weight:500'>"
+                f"({len(_itens)})</span></div>",
+                unsafe_allow_html=True)
+            if not _itens:
+                st.markdown(
+                    "<div style='color:#6b7280;font-size:11px;"
+                    "border:1px dashed rgba(128,128,128,.35);"
+                    "border-radius:6px;padding:10px;text-align:center;'>"
+                    "vazio</div>", unsafe_allow_html=True)
+            for t in _itens:
+                _card_tarefa(
+                    t, dono_visivel=dono_visivel,
+                    pode_excluir=(pode_excluir_fn(t) if pode_excluir_fn
+                                  else True),
+                    pode_editar=pode_editar, prefixo=prefixo,
+                    compacto=True)
 
 
 def _render_grupos(lista, *, dono_visivel=False, pode_excluir_fn=None,
@@ -460,7 +531,10 @@ if not _minhas:
 elif not _vis:
     st.info("Nada neste filtro. 🎉 Clique em **📋 Todas** pra ver o resto.")
 else:
-    _render_grupos(_vis, prefixo="my")
+    if _EH_QUADRO:
+        _render_quadro(_vis, prefixo="my")
+    else:
+        _render_grupos(_vis, prefixo="my")
 
 # Limpeza em lote das concluídas (mantida do desenho anterior).
 if _n_ok:
@@ -499,8 +573,10 @@ if _pode_gestor():
                 "(as 🔒 privadas não aparecem aqui).")
     else:
         # Só edita/conclui a própria tarefa; aqui o Gestor apenas acompanha e
-        # remove o que ele mesmo atribuiu.
-        _render_grupos(
+        # remove o que ele mesmo atribuiu. Segue a mesma visão escolhida
+        # lá em cima (quadro ou lista).
+        _fn = _render_quadro if _EH_QUADRO else _render_grupos
+        _fn(
             _eq, dono_visivel=True, pode_editar=False,
             pode_excluir_fn=lambda t: t.get("criado_por") == usuario,
             prefixo="eq",

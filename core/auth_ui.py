@@ -16,6 +16,7 @@ import streamlit as st
 
 import auth
 import database as db
+from core.helpers import _eh_tema_claro
 
 from core.data import _invalidar_dados
 from core.ui_feedback import carregando, confirmar_sucesso, erro_humano
@@ -332,6 +333,38 @@ section[data-testid="stMain"] .block-container,
 """
 
 
+_CSS_LOGIN_CLARO = """
+<style>
+/* Tema claro na tela de login. Só o que precisa inverter — o resto do
+   _CSS_LOGIN (layout, gradiente do botão) continua valendo nos dois temas. */
+.login-header .brand   { color: #111827 !important; }
+.login-header .tagline { color: #6b7280 !important; }
+.login-header img      { filter: none !important; }
+.login-footer          { color: #6b7280 !important; }
+
+.stTextInput > div > div > input {
+    background-color: #ffffff !important;
+    border: 1px solid #d1d5db !important;
+    color: #1f2937 !important;
+}
+.stTextInput > div > div > input::placeholder {
+    color: #9ca3af !important;
+    opacity: 1 !important;
+}
+.stTextInput label { color: #374151 !important; }
+
+/* Expander "Esqueci minha senha" e textos de apoio */
+[data-testid="stExpander"] summary,
+[data-testid="stExpander"] details > summary {
+    background-color: #ffffff !important;
+    color: #1f2937 !important;
+    transition: none !important;
+}
+[data-testid="stExpander"] summary * { color: #1f2937 !important; }
+</style>
+"""
+
+
 def tela_login():
     """Renderiza a tela de login. Chamada pelo app.py quando não há sessão.
 
@@ -340,6 +373,12 @@ def tela_login():
     (recuperação via pergunta secreta).
     """
     st.markdown(_CSS_LOGIN, unsafe_allow_html=True)
+    # O _CSS_LOGIN acima é desenhado pro fundo escuro e é injetado DEPOIS do
+    # CSS de tema do app.py — por isso vence e, no tema claro, deixava o
+    # texto digitado branco sobre campo branco (não dava pra ver o que
+    # estava sendo digitado) e a marca sumia. Este override vem por último.
+    if _eh_tema_claro():
+        st.markdown(_CSS_LOGIN_CLARO, unsafe_allow_html=True)
 
     # Form: Enter em qualquer input submete o formulário
     with st.form("login_form", clear_on_submit=False, border=False):

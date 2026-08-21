@@ -994,6 +994,15 @@ def _criar_tabelas_impl():
             ("diario",                "resolvido",          "INTEGER DEFAULT 0"),
             # Marca quando o relato foi editado — UI mostra "· editado".
             ("diario",                "editado_em",         "TIMESTAMP"),
+            # Escopo do registro do Diário:
+            #   'projeto' (padrão) → vinculado a um projeto, entra nas pastas
+            #                        de projeto, como sempre foi;
+            #   'pessoa'           → "Minhas Atividades": o registro é da
+            #                        PESSOA (autor), sem projeto, e aparece
+            #                        nas pastas de pessoas.
+            # DEFAULT 'projeto' faz todo registro antigo continuar no mesmo
+            # lugar — nada muda pra quem já usa.
+            ("diario",                "escopo",             "TEXT DEFAULT 'projeto'"),
             ("chat",                  "lido_em",            "TIMESTAMP"),
             # Marca quando a mensagem foi editada — UI mostra "(editado)"
             # do lado do horário, no estilo WhatsApp/Telegram.

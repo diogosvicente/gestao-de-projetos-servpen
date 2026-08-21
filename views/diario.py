@@ -23,7 +23,12 @@ import database as db
 import relatorios
 
 from core.data import _invalidar_dados, _load_df_d, _load_df_p, _load_df_u
-from core.helpers import _cores_tema, _pode_editar, _tempo_relativo
+from core.helpers import (
+    _cores_tema,
+    _pill_select,
+    _pode_editar,
+    _tempo_relativo,
+)
 from core.mencoes import (
     _popover_mencionar,
     _processar_mencoes_diario,
@@ -149,11 +154,27 @@ def _interacoes_para_html(bruto, usuarios, eu):
 # ══════════════════════════════════════════════════════════════════════
 @st.fragment
 def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
-                         autor_logado, perfil, destacar_relato_id):
-    df_proj_d = pd.read_sql_query(
-        "SELECT * FROM diario WHERE projeto_id = %s ORDER BY id DESC",
-        db.get_engine(), params=(int(proj_id),),
-    )
+                         autor_logado, perfil, destacar_relato_id,
+                         autor_pessoal=None):
+    """Renderiza os cards de relato.
+
+    `autor_pessoal` preenchido → pasta de PESSOA ("Minhas Atividades"):
+    lista os registros de escopo 'pessoa' daquele autor. Caso contrário,
+    pasta de PROJETO, como sempre. O card em si é idêntico nos dois casos —
+    só muda de onde vêm as linhas.
+    """
+    if autor_pessoal is not None:
+        df_proj_d = pd.read_sql_query(
+            "SELECT * FROM diario WHERE COALESCE(escopo,'projeto') = 'pessoa'"
+            " AND autor = %s ORDER BY id DESC",
+            db.get_engine(), params=(autor_pessoal,),
+        )
+    else:
+        df_proj_d = pd.read_sql_query(
+            "SELECT * FROM diario WHERE projeto_id = %s"
+            " AND COALESCE(escopo,'projeto') <> 'pessoa' ORDER BY id DESC",
+            db.get_engine(), params=(int(proj_id),),
+        )
 
     if busca and busca.strip():
         t = busca.lower()
@@ -509,9 +530,13 @@ _mapa_nao_lidos = db.contar_nao_lidos_diario(usuario)
 # horas (=0 ou NULL) ficam de fora.
 with st.expander("⏱ Horas registradas", expanded=False):
     try:
+        # `escopo` entra aqui pra separar as horas de PROJETO das de
+        # atividade pessoal: sem isso, o registro pessoal (que não tem
+        # projeto) entrava no ranking "Top projetos" como um item `nan`.
         _df_h = pd.read_sql_query(
             """SELECT d.projeto_id, p.projeto, d.autor,
-                      COALESCE(d.horas, 0) AS horas, d.data
+                      COALESCE(d.horas, 0) AS horas, d.data,
+                      COALESCE(d.escopo, 'projeto') AS escopo
                FROM diario d
                LEFT JOIN projetos p ON p.id = d.projeto_id
                WHERE COALESCE(d.horas, 0) > 0""",
@@ -531,7 +556,8 @@ with st.expander("⏱ Horas registradas", expanded=False):
             ),
         )
         _df_h = pd.DataFrame(
-            columns=["projeto_id", "projeto", "autor", "horas", "dt"]
+            columns=["projeto_id", "projeto", "autor", "horas", "dt",
+                     "escopo"]
         )
 
     if _df_h.empty:
@@ -560,11 +586,13 @@ with st.expander("⏱ Horas registradas", expanded=False):
                   f"{_soma(_minha, _ini_mes):.1f} h",
                   f"equipe: {_soma(_df_h, _ini_mes):.1f} h")
 
-        # Top projetos do mês (equipe)
+        # Top projetos do mês (equipe) — só horas de PROJETO. As de
+        # atividade pessoal têm o total próprio logo abaixo.
         _df_mes = _df_h[_df_h["dt"] >= _ini_mes]
-        if not _df_mes.empty:
+        _df_mes_proj = _df_mes[_df_mes["escopo"] != "pessoa"]
+        if not _df_mes_proj.empty:
             _top_p = (
-                _df_mes.groupby("projeto", dropna=False)["horas"]
+                _df_mes_proj.groupby("projeto", dropna=False)["horas"]
                 .sum().sort_values(ascending=False).head(5)
             )
             if not _top_p.empty:
@@ -572,8 +600,20 @@ with st.expander("⏱ Horas registradas", expanded=False):
                     "**🏆 Top projetos no mês** (horas totais da equipe)"
                 )
                 for _nome_p, _h in _top_p.items():
-                    _nome_p = _nome_p if _nome_p else "(sem projeto)"
+                    _nome_p = _nome_p if (_nome_p and pd.notna(_nome_p)) \
+                        else "(sem projeto)"
                     st.markdown(f"- **{_nome_p}** — {_h:.1f} h")
+
+        # Horas de atividade pessoal no mês, por pessoa (não são de projeto).
+        _df_mes_pes = _df_mes[_df_mes["escopo"] == "pessoa"]
+        if not _df_mes_pes.empty:
+            _top_pes = (
+                _df_mes_pes.groupby("autor")["horas"]
+                .sum().sort_values(ascending=False).head(5)
+            )
+            st.markdown("**👤 Atividades pessoais no mês** (horas por pessoa)")
+            for _nome_a, _h in _top_pes.items():
+                st.markdown(f"- **{_nome_a}** — {_h:.1f} h")
 
         # Breakdown por projetista no mês (só se há >1 autor)
         _aut_mes = (
@@ -588,8 +628,25 @@ with st.expander("⏱ Horas registradas", expanded=False):
 # ── 1. FORMULÁRIO DE NOVO REGISTRO ───────────────────────────
 if _pode_editar():
     with st.expander("➕ Novo Relato, Dúvida ou Impedimento", expanded=False):
+        # Onde o registro vai morar: na pasta do PROJETO (como sempre) ou na
+        # pasta da PESSOA ("Minhas Atividades"). Só isso muda — tipo,
+        # disciplina, horas e anexo seguem iguais nos dois casos.
+        _escopo_novo = st.radio(
+            "Registrar em",
+            ["📁 Projeto", "👤 Minha atividade"],
+            horizontal=True,
+            key="diario_escopo_novo",
+            help="'Minha atividade' não fica em nenhum projeto — vai pra sua "
+                 "pasta pessoal, com as horas trabalhadas.",
+        )
+        _eh_pessoal = _escopo_novo.endswith("Minha atividade")
+
         _proj_opts = df_p["projeto"].tolist() if not df_p.empty else ["-"]
-        p_sel = st.selectbox("Projeto", _proj_opts, key="diario_proj_sel")
+        if _eh_pessoal:
+            p_sel = "-"
+            st.caption(f"👤 Vai para a sua pasta: **{usuario}**")
+        else:
+            p_sel = st.selectbox("Projeto", _proj_opts, key="diario_proj_sel")
 
         c_d1, c_d2 = st.columns(2)
         tipo_relato = c_d1.selectbox(
@@ -633,7 +690,7 @@ if _pode_editar():
 
         if st.button("💾 Salvar Registro", width="stretch",
                      key="diario_salvar"):
-            if r_rel and p_sel != "-":
+            if r_rel and (_eh_pessoal or p_sel != "-"):
                 try:
                     with carregando(
                         "Salvando anexo..." if r_arq else "Salvando relato..."
@@ -650,8 +707,13 @@ if _pode_editar():
                             with open(path, "wb") as f:
                                 f.write(r_arq.getbuffer())
 
-                        info_p = df_p[df_p["projeto"] == p_sel].iloc[0]
-                        pid = info_p["id"]
+                        # Atividade pessoal não tem projeto: projeto_id fica
+                        # NULL e o escopo marca onde ela deve aparecer.
+                        if _eh_pessoal:
+                            pid = None
+                        else:
+                            info_p = df_p[df_p["projeto"] == p_sel].iloc[0]
+                            pid = int(info_p["id"])
 
                         texto_final_banco = f"[{tipo_relato}] {r_rel}"
 
@@ -660,30 +722,34 @@ if _pode_editar():
                             c.execute(
                                 """INSERT INTO diario
                                 (projeto_id, data, executado, autor,
-                                 disciplina, horas, anexo, resolvido)
-                                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                                 disciplina, horas, anexo, resolvido, escopo)
+                                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
                                 RETURNING id""",
-                                (int(pid),
+                                (pid,
                                  datetime.now().strftime("%d/%m/%Y %H:%M"),
                                  texto_final_banco,
                                  usuario, r_disc,
                                  float(r_horas or 0),
-                                 path, 0),
+                                 path, 0,
+                                 "pessoa" if _eh_pessoal else "projeto"),
                             )
                             _novo_relato_id = c.fetchone()[0]
                             conn.commit()
 
                         # Processa @"Nome" do texto: concede acesso +
-                        # notifica + audita
-                        _processar_mencoes_diario(
-                            texto=r_rel, projeto_id=int(pid),
-                            autor=usuario, relato_id=_novo_relato_id,
-                            contexto="relato",
-                            lista_usuarios=(
-                                df_u["nome"].tolist() if not df_u.empty
-                                else []
-                            ),
-                        )
+                        # notifica + audita. Só faz sentido em registro de
+                        # projeto — a menção serve pra dar acesso AO PROJETO,
+                        # e atividade pessoal não tem projeto pra liberar.
+                        if not _eh_pessoal:
+                            _processar_mencoes_diario(
+                                texto=r_rel, projeto_id=int(pid),
+                                autor=usuario, relato_id=_novo_relato_id,
+                                contexto="relato",
+                                lista_usuarios=(
+                                    df_u["nome"].tolist() if not df_u.empty
+                                    else []
+                                ),
+                            )
 
                     _invalidar_dados()
                     confirmar_sucesso("Registro salvo",
@@ -769,10 +835,94 @@ if st.session_state.get("_pdf_diario_bytes"):
 
 st.divider()
 
-# ── 2. AGRUPAMENTO POR PROJETO (CARDS) ───────────────────────
-if df_d.empty or df_p.empty:
+def _render_pastas_pessoas(df_pessoal):
+    """Pastas por PESSOA — "Minhas Atividades".
+
+    Mesma ideia das pastas de projeto, só que o agrupamento é por autor e o
+    rótulo mostra o total de horas trabalhadas. Cada pasta reusa o mesmo
+    card de relato (via `_render_relatos_proj(autor_pessoal=...)`), então a
+    estrutura do Diário não muda.
+    """
+    if df_pessoal.empty:
+        st.info(
+            "👤 Ninguém registrou atividade pessoal ainda. Use **➕ Novo "
+            "Relato → 👤 Minha atividade** pra lançar o que você executou "
+            "e as horas."
+        )
+        return
+
+    _pf1, _pf2 = st.columns([3, 1])
+    _busca_p = _pf1.text_input(
+        "🔍 Buscar nas atividades",
+        placeholder="palavra-chave, disciplina...",
+        key="diario_busca_pessoa",
+    )
+    _so_minhas = _pf2.checkbox(
+        "Só as minhas", key="diario_so_minhas",
+        help="Mostra apenas a sua pasta.",
+    )
+
+    _pessoas = sorted(
+        df_pessoal["autor"].dropna().astype(str).unique().tolist(),
+        key=str.lower,
+    )
+    if _so_minhas:
+        _pessoas = [p for p in _pessoas if p == usuario]
+    if not _pessoas:
+        st.info("Nenhuma pasta de pessoa nesta seleção.")
+        return
+
+    for _pessoa in _pessoas:
+        _df_pes = df_pessoal[df_pessoal["autor"] == _pessoa]
+        _n = len(_df_pes)
+        _horas = float(pd.to_numeric(_df_pes["horas"],
+                                     errors="coerce").fillna(0).sum())
+        _label = (
+            f"👤 {_pessoa}  ({_n} registro{'s' if _n != 1 else ''}"
+            + (f"  ·  ⏱ {_horas:.2f} h" if _horas else "")
+            + ")"
+        )
+        with st.expander(_label, expanded=(_pessoa == usuario)):
+            _render_relatos_proj(
+                proj_id=None,
+                busca=_busca_p,
+                so_pendentes=False,
+                usuarios_para_render=(
+                    df_u["nome"].tolist() if not df_u.empty else []
+                ),
+                autor_logado=usuario,
+                perfil=perfil,
+                destacar_relato_id=None,
+                autor_pessoal=_pessoa,
+            )
+
+
+# ── 2. PASTAS: POR PROJETO ou POR PESSOA ─────────────────────
+# A dinâmica de projeto continua exatamente a mesma. O seletor abaixo só
+# troca QUAIS pastas aparecem: as dos projetos (registros com escopo
+# 'projeto') ou as das pessoas (registros de "Minhas Atividades").
+if "escopo" not in df_d.columns:
+    df_d["escopo"] = "projeto"          # banco antigo, antes da migração
+df_d["escopo"] = df_d["escopo"].fillna("projeto")
+_df_proj_d_all = df_d[df_d["escopo"] != "pessoa"]
+_df_pessoa_d_all = df_d[df_d["escopo"] == "pessoa"]
+
+_visao_diario = _pill_select(
+    st, "Pastas",
+    options=["📁 Projetos", "👤 Pessoas"],
+    default="📁 Projetos",
+    key="diario_visao_pastas",
+    help="Projetos: os relatos vinculados a cada obra. Pessoas: as "
+         "atividades que cada um registrou pra si, com as horas.",
+)
+_ver_pessoas = str(_visao_diario).endswith("Pessoas")
+
+if _ver_pessoas:
+    _render_pastas_pessoas(_df_pessoa_d_all)
+elif _df_proj_d_all.empty or df_p.empty:
     st.info("📭 Nenhum registro no diário ainda.")
 else:
+    df_d = _df_proj_d_all          # daqui pra baixo, só registros de projeto
     _proj_ids_com_diario = df_d["projeto_id"].unique().tolist()
     _projetos_diario = df_p[df_p["id"].isin(_proj_ids_com_diario)].copy()
 
