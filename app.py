@@ -725,7 +725,15 @@ if _auth_tok:
     _ts_agora = time.time()
     if _ts_agora - float(st.session_state.get("_ultimo_heartbeat", 0)) > 60:
         st.session_state["_ultimo_heartbeat"] = _ts_agora
+        # Além da presença, isto RENOVA a validade da sessão (pedido:
+        # "só deslogar quando apertar Sair").
         db.tocar_sessao(_auth_tok)
+    # O cookie do navegador tem prazo próprio e é gravado uma vez por
+    # sessão. Numa aba deixada aberta por semanas ele venceria sozinho —
+    # então reinjetamos 1× por dia (1 iframe/dia, sem encher o DOM).
+    if _ts_agora - float(st.session_state.get("_ultimo_cookie", 0)) > 86400:
+        st.session_state["_ultimo_cookie"] = _ts_agora
+        sessao.gravar_cookie(_auth_tok, forcar=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════

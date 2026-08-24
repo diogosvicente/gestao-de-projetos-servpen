@@ -22,6 +22,8 @@ import relatorios
 
 from core.data import _load_df_d, _load_df_p, _load_df_u
 from core.helpers import (
+    STATUS_PROJETO,
+    _chip_status_projeto,
     _empty_state,
     _equipe_atual,
     _estiliza_plotly,
@@ -826,14 +828,26 @@ for i, user in enumerate(lista_exibicao):
             df_p_limpo[df_p_limpo["projetista"].str.contains(user, na=False)]
             if not df_p_limpo.empty else pd.DataFrame()
         )
-        demandas = (
-            projs_user["projeto"].tolist() if not projs_user.empty else []
-        )
+        # Cada demanda agora leva o selo de status do Kanban ao lado — dá
+        # pra ver, sem sair do painel, o que está em execução, parado etc.
+        # Ordena por status (mesma ordem das colunas do Kanban) pra leitura
+        # ficar previsível.
+        _ordem_st = {s: i for i, s in enumerate(STATUS_PROJETO)}
+        if not projs_user.empty:
+            _dem = projs_user[["projeto", "status"]].copy()
+            _dem["_o"] = _dem["status"].map(
+                lambda x: _ordem_st.get(str(x).strip(), 99)
+            )
+            _dem = _dem.sort_values(["_o", "projeto"], kind="stable")
+            demandas = list(zip(_dem["projeto"], _dem["status"]))
+        else:
+            demandas = []
         demandas_html = (
             "".join([
                 f'<div class="badge-projeto" '
-                f'style="border-left: 3px solid {cor_atual};">📌 {d}</div><br>'
-                for d in demandas
+                f'style="border-left: 3px solid {cor_atual};">📌 {d}'
+                f'{_chip_status_projeto(s)}</div><br>'
+                for d, s in demandas
             ]) if demandas else "Sem projetos"
         )
         st.markdown(f"""

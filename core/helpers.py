@@ -160,6 +160,37 @@ def _badge_status(status):
     )
 
 
+# Status do projeto → (rótulo curto, cor). Os VALORES das chaves são os
+# mesmos gravados em `projetos.status` e usados pelo CONFIG_COLUNAS do
+# Kanban — é esse valor que amarra as duas telas. Aqui o rótulo é no
+# singular (é um selo de UM projeto); no Kanban ele é plural, porque
+# nomeia a coluna inteira.
+STATUS_PROJETO = {
+    "Em Espera":  ("⏳ Em Espera",   "#7c3aed"),
+    "Ativo":      ("🚀 Em Execução", "#0ea5e9"),
+    "🛑 Parado":  ("🛑 Parado",      "#f59e0b"),
+    "Cancelado":  ("❌ Cancelado",   "#ef4444"),
+    "Concluído":  ("✅ Concluído",   "#22c55e"),
+}
+
+
+def _chip_status_projeto(status, *, small=True):
+    """Selo colorido do status de um projeto, com o mesmo nome do Kanban.
+
+    Status desconhecido (dado antigo/torto) não some: aparece em cinza com
+    o texto cru, pra ficar evidente que precisa de ajuste.
+    """
+    s = str(status or "").strip()
+    rotulo, cor = STATUS_PROJETO.get(s, (s or "—", "#64748b"))
+    fz = "9.5px" if small else "11px"
+    return (
+        f"<span style='display:inline-block;background:{cor};color:#fff;"
+        f"padding:1px 7px;border-radius:9px;font-size:{fz};font-weight:700;"
+        f"margin-left:6px;white-space:nowrap;vertical-align:middle;'>"
+        f"{rotulo}</span>"
+    )
+
+
 def _cor_tag(tag):
     """Devolve par (bg, fg) determinístico pra uma tag — mesma tag = mesma cor.
 

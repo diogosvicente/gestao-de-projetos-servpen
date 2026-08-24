@@ -27,7 +27,11 @@ import streamlit as st
 import streamlit.components.v1 as _components
 
 _COOKIE_NOME = "servpen_sessao"
-_COOKIE_DIAS = 7
+# Janela do cookie. Combina com a validade da sessão no banco, que é
+# DESLIZANTE (cada interação empurra o vencimento pra frente — ver
+# database.tocar_sessao). Na prática: quem usa o sistema não é deslogado;
+# só sai apertando "Sair do Sistema" ou depois de 30 dias sem abrir.
+_COOKIE_DIAS = 30
 _FLAG_GRAVADO = "_cookie_sessao_gravado"
 
 
@@ -50,14 +54,18 @@ def ler_token() -> str | None:
         return None
 
 
-def gravar_cookie(token: str) -> None:
-    """Grava/renova o cookie de sessão (7 dias).
+def gravar_cookie(token: str, forcar: bool = False) -> None:
+    """Grava/renova o cookie de sessão.
 
     Idempotente por sessão: a flag em session_state garante que o
     component JS é injetado UMA vez por token (não a cada rerun). Sem
     isso, encheria o DOM de iframes e deixaria o app instável.
+
+    `forcar=True` reinjeta mesmo já tendo gravado — usado pelo app.py pra
+    renovar o cookie UMA VEZ POR DIA, senão uma aba deixada aberta por
+    semanas veria o cookie vencer no navegador.
     """
-    if st.session_state.get(_FLAG_GRAVADO) == token:
+    if not forcar and st.session_state.get(_FLAG_GRAVADO) == token:
         return
     _max_age = _COOKIE_DIAS * 86400
     _components.html(

@@ -524,7 +524,13 @@ def criar_tabela_sessoes():
     CREATE TABLE a cada rerun; agora delega ao guard."""
     criar_tabelas()
 
-def criar_sessao(usuario, dias=7):
+# Validade da sessão. É DESLIZANTE: `tocar_sessao` empurra o vencimento a
+# cada interação, então quem usa o sistema nunca é deslogado sozinho — sai
+# só no botão "Sair do Sistema". O prazo existe como piso de segurança pra
+# sessão abandonada (token roubado não vale pra sempre).
+DIAS_SESSAO = 30
+
+def criar_sessao(usuario, dias=DIAS_SESSAO):
     token = secrets.token_urlsafe(18)
     agora = int(time.time())
     expires = agora + dias * 86400
@@ -569,17 +575,24 @@ def limpar_sessoes_expiradas():
 JANELA_ONLINE_MIN = 5
 
 def tocar_sessao(token):
-    """Marca atividade da sessão agora (heartbeat de presença).
+    """Marca atividade da sessão agora (heartbeat de presença) E RENOVA a
+    validade da sessão.
 
-    Best-effort: nunca levanta — presença é enfeite, não pode derrubar o
-    app se o banco estiver ocupado.
+    A renovação é o que faz o login "não cair sozinho": a cada interação o
+    vencimento volta a ser daqui a DIAS_SESSAO. Quem usa o sistema só é
+    deslogado apertando "Sair do Sistema".
+
+    Best-effort: nunca levanta — isto roda no boot de toda página e não
+    pode derrubar o app se o banco estiver ocupado.
     """
     if not token:
         return
     try:
+        agora = int(time.time())
         conn = conectar(); c = conn.cursor()
-        c.execute("UPDATE sessoes SET ultima_atividade = %s WHERE token = %s",
-                  (int(time.time()), token))
+        c.execute("UPDATE sessoes SET ultima_atividade = %s, expires_at = %s "
+                  "WHERE token = %s",
+                  (agora, agora + DIAS_SESSAO * 86400, token))
         conn.commit(); conn.close()
     except Exception as e:
         log.debug("tocar_sessao falhou (ignorado): %s", e)
