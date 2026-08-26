@@ -163,7 +163,8 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
     pasta de PROJETO, como sempre. O card em si é idêntico nos dois casos —
     só muda de onde vêm as linhas.
     """
-    if autor_pessoal is not None:
+    _eh_pasta_pessoal = autor_pessoal is not None
+    if _eh_pasta_pessoal:
         df_proj_d = pd.read_sql_query(
             "SELECT * FROM diario WHERE COALESCE(escopo,'projeto') = 'pessoa'"
             " AND autor = %s ORDER BY id DESC",
@@ -248,15 +249,23 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
         # Corpo do relato: era #1E1E1E fixo, que ficava preto no tema claro.
         _c_diario = _cores_tema()
 
+        # Título do card = disciplina. Em atividade pessoal não existe
+        # disciplina, então a linha inteira sai (antes aparecia "Geral",
+        # um rótulo técnico de projeto num registro que não é de projeto).
+        _disc_card = str(d.get("disciplina") or "").strip()
+        _titulo_card = (
+            f'<div style="font-size:16px;font-weight:700;margin-top:6px;">'
+            f'{_disc_card}</div>'
+            if (_disc_card and not _eh_pasta_pessoal) else ""
+        )
+
         st.markdown(f"""
             {_wrap_pre}
             <div style="background-color:{cor_topo};color:white; padding:12px 15px;border-radius:10px 10px 0 0;margin-top:10px;">
             <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:10px;text-transform:uppercase;letter-spacing:1px;">
                 <span style="background:rgba(0,0,0,0.3);padding:2px 8px;border-radius:4px;">{tag}</span>{_right_chip}
             </div>
-            <div style="font-size:16px;font-weight:700;margin-top:6px;">
-                {d['disciplina'] if d['disciplina'] else 'Geral'}
-            </div>
+            {_titulo_card}
             <div style="font-size:11px;opacity:.85;">Por: {d['autor']}{_ed_relato}</div>
             </div>
             <div style="background:{_c_diario['superficie']};color:{_c_diario['superficie_txt']};padding:14px 15px;border:1px solid {cor_topo};border-top:none;border-radius:0 0 10px 10px;font-size:13px;line-height:1.6;margin-bottom:4px;">
@@ -325,12 +334,27 @@ def _render_relatos_proj(proj_id, busca, so_pendentes, usuarios_para_render,
                 "Editar o relato:", value=_txt_atual,
                 key=f"area_edit_{d['id']}",
             )
+            # Horas também editáveis aqui — antes só dava pra acertar o
+            # apontamento apagando e recriando o registro.
+            try:
+                _horas_atual = float(d.get("horas") or 0)
+            except (TypeError, ValueError):
+                _horas_atual = 0.0
+            _novas_horas = st.number_input(
+                "⏱ Horas trabalhadas",
+                min_value=0.0, max_value=24.0, step=0.25,
+                value=_horas_atual, format="%.2f",
+                key=f"horas_edit_{d['id']}",
+                help="Tempo dedicado a este registro. 0 = não preenchido.",
+            )
             _ce1, _ce2 = st.columns(2)
             if _ce1.button("💾 Salvar edição", key=f"save_edit_{d['id']}",
                            width="stretch"):
                 if _novo_relato.strip():
                     db.editar_relato_diario(
                         d["id"], _pref + _novo_relato.strip())
+                    if float(_novas_horas or 0) != _horas_atual:
+                        db.atualizar_horas_diario(d["id"], _novas_horas)
                     st.session_state[f"edit_relato_{d['id']}"] = False
                     st.rerun(scope="fragment")
                 else:
@@ -648,16 +672,28 @@ if _pode_editar():
         else:
             p_sel = st.selectbox("Projeto", _proj_opts, key="diario_proj_sel")
 
-        c_d1, c_d2 = st.columns(2)
-        tipo_relato = c_d1.selectbox(
-            "Tipo",
-            ["Relato de Atividade", "❓ Dúvida Técnica", "🛑 Impedimento"],
-            key="diario_tipo",
-        )
-        lista_disc = st.session_state.get(
-            "lista_checklist", ["Geral", "Elétrica", "HVAC", "Hidráulica"],
-        )
-        r_disc = c_d2.selectbox("Disciplina", lista_disc, key="diario_disc")
+        # Disciplina é vocabulário técnico DE PROJETO (Elétrica, HVAC...);
+        # numa atividade pessoal ela não faz sentido — e pior, virava o
+        # título do card. No modo pessoal o campo nem aparece e vai NULL.
+        if _eh_pessoal:
+            tipo_relato = st.selectbox(
+                "Tipo",
+                ["Relato de Atividade", "❓ Dúvida Técnica", "🛑 Impedimento"],
+                key="diario_tipo",
+            )
+            r_disc = None
+        else:
+            c_d1, c_d2 = st.columns(2)
+            tipo_relato = c_d1.selectbox(
+                "Tipo",
+                ["Relato de Atividade", "❓ Dúvida Técnica", "🛑 Impedimento"],
+                key="diario_tipo",
+            )
+            lista_disc = st.session_state.get(
+                "lista_checklist", ["Geral", "Elétrica", "HVAC", "Hidráulica"],
+            )
+            r_disc = c_d2.selectbox("Disciplina", lista_disc,
+                                    key="diario_disc")
 
         r_rel = st.text_area("Descrição do Relato", key="diario_texto")
 
@@ -769,26 +805,85 @@ if _pode_editar():
 
     st.divider()
 
+# Separa os registros por escopo. Fica ANTES do relatório porque tanto o
+# PDF por pessoa quanto as pastas lá embaixo precisam desse recorte.
+if "escopo" not in df_d.columns:
+    df_d["escopo"] = "projeto"          # banco antigo, antes da migração
+df_d["escopo"] = df_d["escopo"].fillna("projeto")
+_df_proj_d_all = df_d[df_d["escopo"] != "pessoa"]
+_df_pessoa_d_all = df_d[df_d["escopo"] == "pessoa"]
+
 # ── RELATÓRIO PDF ───────────────────────────────────────────
-st.markdown("#### 📤 Gerar Relatório do Diário por Projeto")
-_projs_diario = df_p["projeto"].tolist() if not df_p.empty else []
+st.markdown("#### 📤 Gerar Relatório do Diário")
+_modo_rel = _pill_select(
+    st, "Relatório de",
+    options=["📁 Por Projeto", "👤 Por Pessoa"],
+    default="📁 Por Projeto",
+    key="diario_rel_modo",
+    help="Por Projeto: os relatos daquela obra. Por Pessoa: as atividades "
+         "que a pessoa registrou, com o total de horas.",
+)
+_rel_por_pessoa = str(_modo_rel).endswith("Por Pessoa")
+
+if _rel_por_pessoa:
+    # Autores que têm atividade pessoal registrada.
+    _opts_rel = sorted(
+        _df_pessoa_d_all["autor"].dropna().astype(str).unique().tolist(),
+        key=str.lower,
+    ) if not _df_pessoa_d_all.empty else []
+    _rotulo_rel = "Selecionar pessoa para relatório:"
+    _aviso_vazio = "Ninguém tem atividade pessoal registrada ainda."
+else:
+    _opts_rel = df_p["projeto"].tolist() if not df_p.empty else []
+    _rotulo_rel = "Selecionar projeto para relatório:"
+    _aviso_vazio = "Nenhum projeto disponível."
+
 _col_rp1, _col_rp2 = st.columns([3, 1])
 _proj_rel_sel = _col_rp1.selectbox(
-    "Selecionar projeto para relatório:",
-    options=["— Selecione —"] + _projs_diario,
-    key="diario_rel_proj",
+    _rotulo_rel,
+    options=["— Selecione —"] + _opts_rel,
+    key=("diario_rel_pessoa" if _rel_por_pessoa else "diario_rel_proj"),
     label_visibility="collapsed",
 )
 
 if _col_rp2.button("📄 Gerar PDF", key="btn_gerar_rel_diario",
                    width="stretch"):
-    if _proj_rel_sel != "— Selecione —":
+    if not _opts_rel:
+        st.warning(_aviso_vazio)
+    elif _proj_rel_sel == "— Selecione —":
+        st.warning("Selecione " + ("uma pessoa" if _rel_por_pessoa
+                                   else "um projeto") + " antes de gerar.")
+    elif _rel_por_pessoa:
+        # Relatório da pessoa = as atividades pessoais dela (escopo
+        # 'pessoa'). Os relatos de projeto dela seguem no relatório do
+        # projeto correspondente, que é onde eles vivem.
+        _d_pessoa = (
+            _df_pessoa_d_all[_df_pessoa_d_all["autor"] == _proj_rel_sel]
+            if not _df_pessoa_d_all.empty else pd.DataFrame()
+        )
+        try:
+            with carregando(f"Gerando PDF de '{_proj_rel_sel}'..."):
+                _pdf_diario = relatorios.gerar_pdf_diario_pessoa(
+                    _proj_rel_sel, _d_pessoa,
+                )
+            st.session_state["_pdf_diario_bytes"] = _pdf_diario
+            st.session_state["_pdf_diario_nome"] = _proj_rel_sel
+            st.rerun()
+        except Exception as exc:
+            erro_humano(
+                f"Geração do PDF de atividades de '{_proj_rel_sel}'", exc,
+                sugestao=(
+                    "Tente de novo em alguns segundos. Se persistir, "
+                    "confira se há relatos com caracteres incomuns."
+                ),
+            )
+    else:
         _proj_info = df_p[df_p["projeto"] == _proj_rel_sel]
         if not _proj_info.empty:
             _pid_rel = int(_proj_info.iloc[0]["id"])
             _d_diario = (
-                df_d[df_d["projeto_id"] == _pid_rel] if not df_d.empty
-                else pd.DataFrame()
+                _df_proj_d_all[_df_proj_d_all["projeto_id"] == _pid_rel]
+                if not _df_proj_d_all.empty else pd.DataFrame()
             )
             try:
                 with carregando(
@@ -808,8 +903,6 @@ if _col_rp2.button("📄 Gerar PDF", key="btn_gerar_rel_diario",
                         "confira se há relatos com caracteres incomuns."
                     ),
                 )
-    else:
-        st.warning("Selecione um projeto antes de gerar.")
 
 if st.session_state.get("_pdf_diario_bytes"):
     _nome_arq = st.session_state.get("_pdf_diario_nome", "projeto")
@@ -901,12 +994,6 @@ def _render_pastas_pessoas(df_pessoal):
 # A dinâmica de projeto continua exatamente a mesma. O seletor abaixo só
 # troca QUAIS pastas aparecem: as dos projetos (registros com escopo
 # 'projeto') ou as das pessoas (registros de "Minhas Atividades").
-if "escopo" not in df_d.columns:
-    df_d["escopo"] = "projeto"          # banco antigo, antes da migração
-df_d["escopo"] = df_d["escopo"].fillna("projeto")
-_df_proj_d_all = df_d[df_d["escopo"] != "pessoa"]
-_df_pessoa_d_all = df_d[df_d["escopo"] == "pessoa"]
-
 _visao_diario = _pill_select(
     st, "Pastas",
     options=["📁 Projetos", "👤 Pessoas"],

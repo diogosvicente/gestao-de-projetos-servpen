@@ -29,6 +29,12 @@ import streamlit as st
 
 import database as db
 from core import sessao
+# Regra de visibilidade da Agenda — usada aqui no toast de alertas do dia
+# (seção 6) e também dentro de views/agenda.py, pra as duas telas não
+# divergirem. Import no topo: core.helpers só define funções, não depende
+# de nada já renderizado (diferente de `_eh_tema_claro`, importado lá
+# embaixo de propósito, depois do CSS).
+from core.helpers import _mascara_agenda, _nomes_visiveis_agenda
 
 
 # PERSISTÊNCIA DE LOGIN: via cookie `servpen_sessao` (core/sessao.py).
@@ -208,6 +214,29 @@ try:
             ).dt.date
             alertas_hoje = df_agenda_boot[
                 df_agenda_boot["data_inicio_dt"] == hoje
+            ]
+            # Só avisa sobre o que É DESTE usuário. Antes daqui saía um
+            # toast por evento do dia pra QUALQUER pessoa logada — a
+            # queixa de "alerta de demanda de outra pessoa". Usa a mesma
+            # regra da página Agenda (Gestor Geral vê tudo; gestor de
+            # equipe vê a equipe; projetista vê só onde é responsável).
+            # `equipe` pode ainda não estar na sessão neste ponto: o login
+            # manual (auth.validar_login) grava só usuario/perfil, e quem
+            # preenche a equipe é a seção 8.1, mais abaixo. Como o toast
+            # dispara 1× por dia, se caísse aqui sem equipe o filtro sairia
+            # errado justamente no primeiro acesso do dia — então buscamos
+            # no banco quando faltar.
+            _eq_toast = st.session_state.get("equipe")
+            if not _eq_toast:
+                _eq_toast = (db.obter_usuario(
+                    st.session_state.get("usuario")) or {}).get("equipe")
+            _nomes_vis = _nomes_visiveis_agenda(
+                st.session_state.get("usuario"),
+                st.session_state.get("perfil"),
+                _eq_toast,
+            )
+            alertas_hoje = alertas_hoje[
+                _mascara_agenda(alertas_hoje, _nomes_vis)
             ]
             for _, alerta in alertas_hoje.iterrows():
                 st.toast(

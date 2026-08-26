@@ -1307,7 +1307,13 @@ def adicionar_tag_projeto(projeto_id, texto, criado_por=None):
 
 def atualizar_tag_projeto(id_tag, texto=None, concluida=None):
     """Edita o texto e/ou o estado de um passo. Qualquer passo pode ser
-    editado a qualquer momento, mesmo depois de já existirem outros."""
+    editado a qualquer momento, mesmo depois de já existirem outros.
+
+    Recusa renomear pra um texto que já existe na MESMA trilha — a mesma
+    regra que `adicionar_tag_projeto` sempre teve. Antes só a criação
+    checava, então dava pra renomear um passo e ficar com dois idênticos;
+    com a lista fixa de status isso passaria a acontecer com frequência.
+    """
     conn = conectar(); c = conn.cursor()
     try:
         c.execute("SELECT projeto_id FROM projeto_tags WHERE id=%s",
@@ -1319,6 +1325,11 @@ def atualizar_tag_projeto(id_tag, texto=None, concluida=None):
         if texto is not None:
             _t = str(texto).strip()
             if not _t:
+                return False
+            c.execute("SELECT 1 FROM projeto_tags WHERE projeto_id=%s "
+                      "AND LOWER(texto)=LOWER(%s) AND id<>%s",
+                      (pid, _t, int(id_tag)))
+            if c.fetchone():
                 return False
             c.execute("UPDATE projeto_tags SET texto=%s WHERE id=%s",
                       (_t, int(id_tag)))
@@ -1797,6 +1808,30 @@ def editar_relato_diario(id_relato, novo_executado):
             (novo_executado, int(id_relato)),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def atualizar_horas_diario(id_relato, novas_horas):
+    """Atualiza só as horas trabalhadas de um registro do diário.
+
+    Vale tanto pra atividade pessoal quanto pra relato de projeto — é a
+    mesma coluna `horas` nos dois casos. Não mexe em `editado_em`: mudar a
+    hora lançada não é "editar o relato", e marcar como editado poluiria o
+    card com "· editado" por um ajuste de apontamento.
+    """
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute(
+            "UPDATE diario SET horas = %s WHERE id = %s",
+            (float(novas_horas or 0), int(id_relato)),
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        log.exception("Erro ao atualizar horas do relato %s: %s", id_relato, e)
+        conn.rollback()
+        return False
     finally:
         conn.close()
 

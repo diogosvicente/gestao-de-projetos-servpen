@@ -19,6 +19,7 @@ import database as db
 
 from core.data import _invalidar_dados, _load_df_d, _load_df_p, _load_df_u
 from core.helpers import (
+    TRILHA_STATUS_OPCOES,
     _badge_status,
     _eh_tema_claro,
     _empty_state,
@@ -30,6 +31,7 @@ from core.helpers import (
     _render_tag_chips,
     _render_trilha_chips,
     _ve_tudo,
+    opcoes_trilha_para_edicao,
 )
 from core.ui_feedback import carregando, confirmar_sucesso, erro_humano
 
@@ -171,15 +173,20 @@ def _render_lista_kanban(df_kanban, df_d):
                              "🛑 Parado", "Cancelado", "Concluído"],
                     key="bulk_novo_status",
                 )
-                _tags_disp = db.listar_tags_existentes()
-                _opcoes_tag = ["— (não mudar)"] + _tags_disp
+                # Antes esta lista vinha de `db.listar_tags_existentes()`,
+                # ou seja, do texto livre já gravado — o que reinjetava as
+                # grafias antigas e não-padronizadas na mesma coluna que a
+                # Trilha sincroniza. Agora usa o mesmo vocabulário oficial
+                # da Trilha de Status.
+                _opcoes_tag = ["— (não mudar)"] + TRILHA_STATUS_OPCOES
                 _tag_add = bc2.selectbox(
-                    "Adicionar tag",
+                    "Adicionar status",
                     options=_opcoes_tag,
                     key="bulk_tag_add",
                     help=(
-                        "Adiciona a tag a TODOS os projetos selecionados. "
-                        "Não remove tags existentes — só acrescenta."
+                        "Adiciona o status a TODOS os projetos "
+                        "selecionados. Não remove os existentes — só "
+                        "acrescenta."
                     ),
                 )
                 _aplicar = bc3.form_submit_button(
@@ -1486,7 +1493,13 @@ if "projeto_em_edicao" in st.session_state:
             # Voltou pro valor antigo (ou apagou tudo): restaura e não grava.
             st.session_state[chave] = texto_antigo
             return
-        db.atualizar_tag_projeto(id_tag, texto=_novo)
+        if not db.atualizar_tag_projeto(id_tag, texto=_novo):
+            # Recusado (esse status já está na trilha): volta o seletor pro
+            # valor antigo, senão a tela mostraria uma troca que não foi
+            # gravada.
+            st.session_state[chave] = texto_antigo
+            st.session_state["_tag_dup_aviso"] = _novo
+            return
         db.log_aud(usuario, "tag", "projeto", id_ed,
                    f"renomeada: '{texto_antigo}' -> '{_novo}'")
         _invalidar_dados()
@@ -1500,6 +1513,11 @@ if "projeto_em_edicao" in st.session_state:
         db.log_aud(usuario, "tag", "projeto", id_ed, f"removida: '{texto}'")
         _invalidar_dados()
 
+    # Aviso de renomeação recusada (o callback não pode escrever na tela).
+    _dup = st.session_state.pop("_tag_dup_aviso", None)
+    if _dup:
+        st.warning(f"'{_dup}' já está na trilha deste projeto.")
+
     for _i, _tg in enumerate(_trilha_ed):
         tc1, tc2, tc3, tc4, tc5 = st.columns(
             [0.09, 0.55, 0.12, 0.12, 0.12], vertical_alignment="center")
@@ -1512,8 +1530,16 @@ if "projeto_em_edicao" in st.session_state:
             help="Passo já cumprido",
             on_change=_cb_tag_ok, args=(_tg["id"], _k_ok, _tg["texto"]),
         )
-        tc2.text_input(
-            "Passo", value=_tg["texto"], key=_k_txt,
+        # Editar também é pela lista fixa. `opcoes_trilha_para_edicao`
+        # mantém no topo o texto atual quando ele é de antes da
+        # padronização — assim o passo antigo continua selecionável e não
+        # é trocado sozinho.
+        _opts_tag = opcoes_trilha_para_edicao(_tg["texto"])
+        tc2.selectbox(
+            "Passo", options=_opts_tag,
+            index=_opts_tag.index(_tg["texto"]) if _tg["texto"] in _opts_tag
+            else 0,
+            key=_k_txt,
             label_visibility="collapsed", disabled=_ro_tags,
             on_change=_cb_tag_txt, args=(_tg["id"], _k_txt, _tg["texto"]),
         )
@@ -1536,24 +1562,27 @@ if "projeto_em_edicao" in st.session_state:
         with st.form(f"form_add_tag_{id_ed}", clear_on_submit=True):
             ac1, ac2 = st.columns([0.75, 0.25],
                                   vertical_alignment="bottom")
-            _nova_tag = ac1.text_input(
+            # Lista fixa em vez de texto livre: padroniza o texto entre
+            # projetos (e, de quebra, a cor do chip, que é derivada dele).
+            _nova_tag = ac1.selectbox(
                 "Novo passo",
-                placeholder="ex.: Aguardando Aprovação SERVPEN",
+                options=TRILHA_STATUS_OPCOES,
+                index=None,
+                placeholder="Escolha o status…",
                 help="Entra no fim da trilha.",
             )
             if ac2.form_submit_button("➕ Adicionar", width="stretch"):
-                if not _nova_tag.strip():
-                    st.warning("Escreva o nome do passo.")
+                if not _nova_tag:
+                    st.warning("Escolha o status na lista.")
                 elif db.adicionar_tag_projeto(id_ed, _nova_tag,
                                               criado_por=usuario):
                     db.log_aud(usuario, "tag", "projeto", id_ed,
-                               f"adicionada: '{_nova_tag.strip()}'")
+                               f"adicionada: '{_nova_tag}'")
                     _invalidar_dados()
                     st.rerun()
                 else:
                     st.warning(
-                        f"'{_nova_tag.strip()}' já está na trilha deste "
-                        "projeto."
+                        f"'{_nova_tag}' já está na trilha deste projeto."
                     )
 
     # ════════════════════════════════════════════════════════

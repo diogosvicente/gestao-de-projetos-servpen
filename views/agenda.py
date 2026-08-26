@@ -20,7 +20,13 @@ import streamlit.components.v1 as _stc
 import database as db
 
 from core.data import _load_df_u
-from core.helpers import _empty_state, _equipe_atual, _pill_select, _ve_tudo
+from core.helpers import (
+    _empty_state,
+    _equipe_atual,
+    _mascara_agenda,
+    _nomes_visiveis_agenda,
+    _pill_select,
+)
 from core.ui_feedback import carregando, confirmar_sucesso
 
 
@@ -114,27 +120,19 @@ except Exception:
 #   - Líder SERVPEN/SERVPAR .. eventos de projetistas da sua equipe.
 #   - Projetista/Visualizador  só os próprios eventos (regra antiga).
 # `_nomes_agenda = None` significa "vê tudo".
-if _ve_tudo():
-    _nomes_agenda = None
-elif perfil_atual == "Gestor":
-    _nomes_agenda = db.nomes_por_equipe(_equipe_atual())
-else:
-    _nomes_agenda = {usuario_atual}
+#
+# A regra em si mora em core.helpers pra ser compartilhada com o toast de
+# alertas do dia (app.py, seção 6). Enquanto ela vivia só aqui, o toast
+# tinha uma lógica própria — na verdade, nenhuma — e avisava todo mundo
+# sobre compromisso dos outros.
+_nomes_agenda = _nomes_visiveis_agenda(
+    usuario_atual, perfil_atual, _equipe_atual(),
+)
 
 
 def _agenda_mask(df):
-    """Máscara booleana: True nas linhas cujo `responsaveis` intersecta os
-    nomes visíveis. Compara por CONJUNTO de nomes (split por vírgula +
-    strip) — evita o falso-positivo de substring ('Ana' em 'Mariana').
-    Se `_nomes_agenda is None`, tudo visível."""
-    if _nomes_agenda is None or df.empty:
-        return pd.Series(True, index=df.index)
-    return df["responsaveis"].apply(
-        lambda v: bool(
-            {n.strip() for n in str(v).split(",") if n.strip()}
-            & _nomes_agenda
-        )
-    )
+    """Máscara de visibilidade desta página (ver `_mascara_agenda`)."""
+    return _mascara_agenda(df, _nomes_agenda)
 
 # ── MÉTRICAS NO TOPO (4 cards) ────────────────────────────────
 _hoje_ag = datetime.now().date()

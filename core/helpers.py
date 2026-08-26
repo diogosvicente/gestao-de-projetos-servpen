@@ -12,6 +12,7 @@ import html as _html
 import re as _re
 from datetime import datetime
 
+import pandas as pd
 import streamlit as st
 
 import database as db
@@ -34,6 +35,44 @@ def _init_etapas():
 # ─── TEMA (claro/escuro) ─────────────────────────────────────────────
 def _eh_tema_claro():
     return st.session_state.get("tema", "dark") == "light"
+
+
+def _nomes_visiveis_agenda(usuario, perfil, equipe):
+    """Conjunto de nomes cujos compromissos este usuário pode ver.
+
+    `None` = vê tudo (sem filtro). Regra (a mesma da página Agenda):
+      - Gestor Geral ............ tudo;
+      - Gestor de equipe ........ quem é da equipe dele;
+      - Projetista/Visualizador . só ele mesmo.
+
+    Vive aqui, e não dentro de views/agenda.py, porque o toast de alertas
+    do dia (no boot, em app.py) precisa da MESMA regra. Antes ele fazia
+    `SELECT * FROM agenda` sem filtro nenhum e avisava todo mundo sobre o
+    compromisso de qualquer um — era o "alerta de demanda de outra pessoa".
+    """
+    if str(equipe or "").strip().upper() == "GERAL":
+        return None
+    if perfil == "Gestor":
+        return db.nomes_por_equipe(equipe)
+    return {usuario}
+
+
+def _mascara_agenda(df, nomes_visiveis):
+    """Máscara booleana: True nas linhas cujo `responsaveis` intersecta
+    `nomes_visiveis`.
+
+    Compara por CONJUNTO de nomes (split por vírgula + strip) — não por
+    substring, senão "Ana" casaria dentro de "Mariana".
+    `nomes_visiveis is None` → tudo visível.
+    """
+    if nomes_visiveis is None or df.empty or "responsaveis" not in df.columns:
+        return pd.Series(True, index=df.index)
+    return df["responsaveis"].apply(
+        lambda v: bool(
+            {n.strip() for n in str(v).split(",") if n.strip()}
+            & nomes_visiveis
+        )
+    )
 
 
 def _cores_tema():
@@ -158,6 +197,45 @@ def _badge_status(status):
         f"font-weight:600; letter-spacing:0.5px; text-transform:uppercase;'>"
         f"{s}</span>"
     )
+
+
+# Vocabulário oficial da Trilha de Status (definido pela Sara em
+# 26/08/2026). Antes cada passo era texto livre, então a mesma etapa
+# aparecia escrita de N jeitos entre projetos ("Aguardando Aprovação
+# SERVPEN", "Aprovado direto pela COODPRO"...). Fixar a lista padroniza o
+# texto E a cor do chip, porque a cor é derivada do próprio texto.
+#
+# Passos ANTIGOS fora desta lista continuam sendo exibidos normalmente —
+# só a criação/edição é que passa a escolher daqui. Ver
+# `opcoes_trilha_para_edicao`.
+TRILHA_STATUS_OPCOES = [
+    "EM EXECUÇÃO NO SERVPEN",
+    "EM EXECUÇÃO NO SERVPAR",
+    "CONCLUIDO NO SERVPEN",
+    "CONCLUIDO NO SERVPAR",
+    "AGUARDANDO APROVAÇÃO DO COODPRO",
+    "AGUARDANDO INFORMAÇÕES",
+    "ENTREGUE A COODPRO",
+    "APROVADO PELA COODPRO",
+    "AGUARDANDO A DIRTEC",
+    "AGUARDANDO APROVAÇÃO DO USUÁRIO",
+    "DEMANDA PAUSADA",
+    "FALTA ATUALIZAR DADOS NO SISTEMA",
+]
+
+
+def opcoes_trilha_para_edicao(texto_atual):
+    """Opções do dropdown ao EDITAR um passo já existente.
+
+    Se o texto salvo não estiver na lista oficial (passo criado antes da
+    padronização), ele entra como primeira opção — senão o selectbox não
+    teria como representar o valor atual e a tela quebraria ou trocaria o
+    dado sem a pessoa pedir.
+    """
+    atual = str(texto_atual or "").strip()
+    if atual and atual not in TRILHA_STATUS_OPCOES:
+        return [atual] + TRILHA_STATUS_OPCOES
+    return list(TRILHA_STATUS_OPCOES)
 
 
 # Status do projeto → (rótulo curto, cor). Os VALORES das chaves são os

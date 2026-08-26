@@ -837,76 +837,39 @@ def gerar_pdf_gantt(df_projetos, df_etapas):
 # ═════════════════════════════════════════════════════════════
 #  4. PDF DIÁRIO
 # ═════════════════════════════════════════════════════════════
-def gerar_pdf_diario(projeto_row, df_diario):
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buf, pagesize=A4,
-        leftMargin=1.5*cm, rightMargin=1.5*cm,
-        topMargin=3.2*cm, bottomMargin=2*cm,
-    )
-    st = _estilos()
-    story = []
-    w_util = A4[0] - 3*cm
+def _hr_diario():
+    """Régua fina entre registros do diário."""
+    return HRFlowable(width='100%', thickness=0.5,
+                      color=CINZA_BORDA, spaceAfter=4, spaceBefore=4)
 
-    def _hr():
-        return HRFlowable(width='100%', thickness=0.5,
-                          color=CINZA_BORDA, spaceAfter=4, spaceBefore=4)
 
-    proj_nome = _txt(projeto_row.get('projeto', 'Projeto'))
+def _total_horas(df_diario):
+    """Soma a coluna `horas`, tolerando NULL/texto. 0.0 se não houver."""
+    if df_diario is None or df_diario.empty or 'horas' not in df_diario.columns:
+        return 0.0
+    return float(pd.to_numeric(df_diario['horas'],
+                               errors='coerce').fillna(0).sum())
 
-    capa = Table([[
-        Paragraph('DIÁRIO DE EVOLUÇÃO DO PROJETO', st['titulo']),
-        Paragraph(proj_nome, st['subtitulo']),
-        Paragraph(f'Emissão: {datetime.now().strftime("%d/%m/%Y %H:%M")}', st['subtitulo']),
-    ]], colWidths=[w_util])
-    capa.setStyle(TableStyle([
-        ('BACKGROUND',    (0,0),(-1,-1), AZUL_ESCURO),
-        ('TOPPADDING',    (0,0),(-1,-1), 10),
-        ('BOTTOMPADDING', (0,0),(-1,-1), 10),
-        ('LEFTPADDING',   (0,0),(-1,-1), 12),
-    ]))
-    story.append(capa)
-    story.append(Spacer(1, 0.4*cm))
 
-    story.append(Paragraph('<b>Identificação do Projeto</b>', st['secao']))
-    info_rows = [
-        [Paragraph('Nome',        st['campo_label']),
-         Paragraph(_txt(projeto_row.get('projeto','')), st['campo_valor']),
-         Paragraph('Status',      st['campo_label']),
-         Paragraph(_txt(projeto_row.get('status','')),  st['campo_valor'])],
-        [Paragraph('Projetista',  st['campo_label']),
-         Paragraph(_txt(projeto_row.get('projetista','')), st['campo_valor']),
-         Paragraph('Prioridade',  st['campo_label']),
-         Paragraph(_txt(projeto_row.get('prioridade','')), st['campo_valor'])],
-        [Paragraph('Solicitante', st['campo_label']),
-         Paragraph(_txt(projeto_row.get('solicitante','')), st['campo_valor']),
-         Paragraph('Nº SEI',      st['campo_label']),
-         Paragraph(_txt(projeto_row.get('numero_sei','')), st['campo_valor'])],
-        [Paragraph('Início',      st['campo_label']),
-         Paragraph(_data_fmt(projeto_row.get('data_inicio','')), st['campo_valor']),
-         Paragraph('Término',     st['campo_label']),
-         Paragraph(_data_fmt(projeto_row.get('data_termino', projeto_row.get('data_fim',''))), st['campo_valor'])],
-    ]
-    t_inf = Table(info_rows, colWidths=[3*cm, w_util/2-3*cm, 3*cm, w_util/2-3*cm])
-    t_inf.setStyle(TableStyle([
-        ('VALIGN',       (0,0),(-1,-1), 'TOP'),
-        ('TOPPADDING',   (0,0),(-1,-1), 4),
-        ('BOTTOMPADDING',(0,0),(-1,-1), 4),
-        ('LINEBELOW',    (0,0),(-1,-2), 0.3, CINZA_BORDA),
-    ]))
-    story.append(t_inf)
-    story.append(Spacer(1, 0.4*cm))
+def _corpo_pdf_diario(story, st, w_util, df_diario, msg_vazio):
+    """Resumo + histórico completo dos registros do diário.
 
+    É a parte que NÃO depende de projeto — por isso serve igual pro
+    relatório por projeto e pro relatório por pessoa. Quem chama monta a
+    capa (que é o que muda entre os dois) e depois entrega o `story` aqui.
+
+    Retorna False se não havia registro (quem chamou já pode fechar o PDF).
+    """
     if df_diario is None or df_diario.empty:
-        story.append(Paragraph('Nenhum registro no diário para este projeto.', st['corpo']))
-        doc.build(story, onFirstPage=_cabecalho_pagina, onLaterPages=_cabecalho_pagina)
-        return buf.getvalue()
+        story.append(Paragraph(msg_vazio, st['corpo']))
+        return False
 
     # Resumo numérico
     n_relatos    = len(df_diario[~df_diario['executado'].astype(str).str.contains('Impedimento|Dúvida|❓|🛑', na=False)])
     n_duvidas    = len(df_diario[df_diario['executado'].astype(str).str.contains('Dúvida|❓', na=False)])
     n_impedim    = len(df_diario[df_diario['executado'].astype(str).str.contains('Impedimento|🛑', na=False)])
     n_resolvidos = len(df_diario[df_diario['resolvido'] == 1])
+    _horas = _total_horas(df_diario)
 
     res_rows = [[
         Paragraph('Relatos', st['cabecalho_tab']),
@@ -914,21 +877,23 @@ def gerar_pdf_diario(projeto_row, df_diario):
         Paragraph('Impedimentos', st['cabecalho_tab']),
         Paragraph('Resolvidos', st['cabecalho_tab']),
         Paragraph('Total', st['cabecalho_tab']),
+        Paragraph('Horas', st['cabecalho_tab']),
     ], [
         Paragraph(str(n_relatos),      st['celula']),
         Paragraph(str(n_duvidas),      st['celula']),
         Paragraph(str(n_impedim),      st['celula']),
         Paragraph(str(n_resolvidos),   st['celula']),
         Paragraph(str(len(df_diario)), st['celula']),
+        Paragraph(f'{_horas:.2f} h',   st['celula']),
     ]]
-    t_res = Table(res_rows, colWidths=[w_util/5]*5)
-    t_res.setStyle(_tabela_estilo(5))
+    t_res = Table(res_rows, colWidths=[w_util/6]*6)
+    t_res.setStyle(_tabela_estilo(6))
     story.append(Paragraph('<b>Resumo do Histórico</b>', st['secao']))
     story.append(t_res)
     story.append(Spacer(1, 0.5*cm))
 
     story.append(Paragraph('<b>Histórico Completo — ordem cronológica</b>', st['secao']))
-    story.append(_hr())
+    story.append(_hr_diario())
 
     # Estilos específicos do diário
     st_diario_hdr_l = ParagraphStyle('DiaHdrL', fontName='Helvetica-Bold', fontSize=9, textColor=BRANCO, leading=12)
@@ -953,10 +918,25 @@ def gerar_pdf_diario(projeto_row, df_diario):
         resolvido = bool(reg.get('resolvido', 0))
         cor_status_d = VERDE if resolvido else cor_tipo
 
+        # Disciplina só aparece quando existe (atividade pessoal não tem);
+        # horas do registro entram no cabeçalho quando preenchidas.
+        _disc = _txt(reg.get('disciplina', '') or '', fallback='')
+        _h_reg = reg.get('horas') or 0
+        try:
+            _h_reg = float(_h_reg)
+        except (TypeError, ValueError):
+            _h_reg = 0.0
+        _partes_cab = [p for p in (
+            _disc,
+            f'Por: {_txt(reg.get("autor",""))}',
+            _txt(reg.get('data', '')),
+            (f'⏱ {_h_reg:.2f} h' if _h_reg else ''),
+        ) if p and p != '—']
+
         # Cabeçalho de cada entrada do diário
         cab_d = Table([[
             Paragraph(f'<b>#{i+1} — {tipo_str}</b>', st_diario_hdr_l),
-            Paragraph(f'<font size="8">{_txt(reg.get("disciplina","Geral"))}  ·  Por: {_txt(reg.get("autor",""))}  ·  {_txt(reg.get("data",""))}</font>', st_diario_hdr_r),
+            Paragraph(f'<font size="8">{"  ·  ".join(_partes_cab)}</font>', st_diario_hdr_r),
         ]], colWidths=[w_util*0.55, w_util*0.45])
         cab_d.setStyle(TableStyle([
             ('BACKGROUND',    (0,0),(-1,-1), cor_status_d),
@@ -1029,7 +1009,132 @@ def gerar_pdf_diario(projeto_row, df_diario):
         # Status RESOLVIDO/PENDENTE
         status_text = f'<font color="{"#10b981" if resolvido else "#ef4444"}">{"✔ RESOLVIDO" if resolvido else "✗ PENDENTE"}</font>'
         story.append(Paragraph(status_text, st_diario_status))
-        story.append(_hr())
+        story.append(_hr_diario())
 
+    return True
+
+
+def gerar_pdf_diario_pessoa(pessoa_nome, df_diario):
+    """PDF do diário de UMA PESSOA (as "Minhas Atividades" dela).
+
+    Mesma estrutura do relatório por projeto — muda só a capa: em vez da
+    identificação do projeto, traz o nome da pessoa e o total de horas.
+    """
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=1.5*cm, rightMargin=1.5*cm,
+        topMargin=3.2*cm, bottomMargin=2*cm,
+    )
+    st = _estilos()
+    story = []
+    w_util = A4[0] - 3*cm
+
+    _horas = _total_horas(df_diario)
+    _n = 0 if df_diario is None or df_diario.empty else len(df_diario)
+
+    capa = Table([[
+        Paragraph('DIÁRIO DE ATIVIDADES — POR PESSOA', st['titulo']),
+        Paragraph(_txt(pessoa_nome), st['subtitulo']),
+        Paragraph(f'Emissão: {datetime.now().strftime("%d/%m/%Y %H:%M")}', st['subtitulo']),
+    ]], colWidths=[w_util])
+    capa.setStyle(TableStyle([
+        ('BACKGROUND',    (0,0),(-1,-1), AZUL_ESCURO),
+        ('TOPPADDING',    (0,0),(-1,-1), 10),
+        ('BOTTOMPADDING', (0,0),(-1,-1), 10),
+        ('LEFTPADDING',   (0,0),(-1,-1), 12),
+    ]))
+    story.append(capa)
+    story.append(Spacer(1, 0.4*cm))
+
+    story.append(Paragraph('<b>Identificação</b>', st['secao']))
+    info_rows = [
+        [Paragraph('Pessoa',    st['campo_label']),
+         Paragraph(_txt(pessoa_nome), st['campo_valor']),
+         Paragraph('Registros', st['campo_label']),
+         Paragraph(str(_n), st['campo_valor'])],
+        [Paragraph('Horas totais', st['campo_label']),
+         Paragraph(f'{_horas:.2f} h', st['campo_valor']),
+         Paragraph('Emissão',    st['campo_label']),
+         Paragraph(datetime.now().strftime('%d/%m/%Y %H:%M'), st['campo_valor'])],
+    ]
+    t_inf = Table(info_rows, colWidths=[3*cm, w_util/2-3*cm, 3*cm, w_util/2-3*cm])
+    t_inf.setStyle(TableStyle([
+        ('VALIGN',       (0,0),(-1,-1), 'TOP'),
+        ('TOPPADDING',   (0,0),(-1,-1), 4),
+        ('BOTTOMPADDING',(0,0),(-1,-1), 4),
+        ('LINEBELOW',    (0,0),(-1,-2), 0.3, CINZA_BORDA),
+    ]))
+    story.append(t_inf)
+    story.append(Spacer(1, 0.4*cm))
+
+    _corpo_pdf_diario(
+        story, st, w_util, df_diario,
+        'Nenhuma atividade registrada por esta pessoa.',
+    )
+    doc.build(story, onFirstPage=_cabecalho_pagina, onLaterPages=_cabecalho_pagina)
+    return buf.getvalue()
+
+
+def gerar_pdf_diario(projeto_row, df_diario):
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=1.5*cm, rightMargin=1.5*cm,
+        topMargin=3.2*cm, bottomMargin=2*cm,
+    )
+    st = _estilos()
+    story = []
+    w_util = A4[0] - 3*cm
+
+    proj_nome = _txt(projeto_row.get('projeto', 'Projeto'))
+
+    capa = Table([[
+        Paragraph('DIÁRIO DE EVOLUÇÃO DO PROJETO', st['titulo']),
+        Paragraph(proj_nome, st['subtitulo']),
+        Paragraph(f'Emissão: {datetime.now().strftime("%d/%m/%Y %H:%M")}', st['subtitulo']),
+    ]], colWidths=[w_util])
+    capa.setStyle(TableStyle([
+        ('BACKGROUND',    (0,0),(-1,-1), AZUL_ESCURO),
+        ('TOPPADDING',    (0,0),(-1,-1), 10),
+        ('BOTTOMPADDING', (0,0),(-1,-1), 10),
+        ('LEFTPADDING',   (0,0),(-1,-1), 12),
+    ]))
+    story.append(capa)
+    story.append(Spacer(1, 0.4*cm))
+
+    story.append(Paragraph('<b>Identificação do Projeto</b>', st['secao']))
+    info_rows = [
+        [Paragraph('Nome',        st['campo_label']),
+         Paragraph(_txt(projeto_row.get('projeto','')), st['campo_valor']),
+         Paragraph('Status',      st['campo_label']),
+         Paragraph(_txt(projeto_row.get('status','')),  st['campo_valor'])],
+        [Paragraph('Projetista',  st['campo_label']),
+         Paragraph(_txt(projeto_row.get('projetista','')), st['campo_valor']),
+         Paragraph('Prioridade',  st['campo_label']),
+         Paragraph(_txt(projeto_row.get('prioridade','')), st['campo_valor'])],
+        [Paragraph('Solicitante', st['campo_label']),
+         Paragraph(_txt(projeto_row.get('solicitante','')), st['campo_valor']),
+         Paragraph('Nº SEI',      st['campo_label']),
+         Paragraph(_txt(projeto_row.get('numero_sei','')), st['campo_valor'])],
+        [Paragraph('Início',      st['campo_label']),
+         Paragraph(_data_fmt(projeto_row.get('data_inicio','')), st['campo_valor']),
+         Paragraph('Término',     st['campo_label']),
+         Paragraph(_data_fmt(projeto_row.get('data_termino', projeto_row.get('data_fim',''))), st['campo_valor'])],
+    ]
+    t_inf = Table(info_rows, colWidths=[3*cm, w_util/2-3*cm, 3*cm, w_util/2-3*cm])
+    t_inf.setStyle(TableStyle([
+        ('VALIGN',       (0,0),(-1,-1), 'TOP'),
+        ('TOPPADDING',   (0,0),(-1,-1), 4),
+        ('BOTTOMPADDING',(0,0),(-1,-1), 4),
+        ('LINEBELOW',    (0,0),(-1,-2), 0.3, CINZA_BORDA),
+    ]))
+    story.append(t_inf)
+    story.append(Spacer(1, 0.4*cm))
+
+    _corpo_pdf_diario(
+        story, st, w_util, df_diario,
+        'Nenhum registro no diário para este projeto.',
+    )
     doc.build(story, onFirstPage=_cabecalho_pagina, onLaterPages=_cabecalho_pagina)
     return buf.getvalue()
