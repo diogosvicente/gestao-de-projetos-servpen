@@ -653,8 +653,10 @@ with st.expander("⏱ Horas registradas", expanded=False):
 if _pode_editar():
     with st.expander("➕ Novo Relato, Dúvida ou Impedimento", expanded=False):
         # Onde o registro vai morar: na pasta do PROJETO (como sempre) ou na
-        # pasta da PESSOA ("Minhas Atividades"). Só isso muda — tipo,
-        # disciplina, horas e anexo seguem iguais nos dois casos.
+        # pasta da PESSOA ("Minhas Atividades"). O que muda entre os dois:
+        # a atividade pessoal não tem projeto nem disciplina, e o Tipo fica
+        # só em "Relato de Atividade" (dúvida/impedimento pressupõem um
+        # projeto pra resolver contra). Horas e anexo seguem iguais.
         _escopo_novo = st.radio(
             "Registrar em",
             ["📁 Projeto", "👤 Minha atividade"],
@@ -676,10 +678,17 @@ if _pode_editar():
         # numa atividade pessoal ela não faz sentido — e pior, virava o
         # título do card. No modo pessoal o campo nem aparece e vai NULL.
         if _eh_pessoal:
+            # Só "Relato de Atividade": dúvida e impedimento são coisas que
+            # alguém precisa resolver DENTRO de um projeto — não fazem
+            # sentido num registro pessoal, que não tem projeto.
+            # `key` própria (não a mesma do modo projeto): se as duas
+            # compartilhassem a chave, alternar de "🛑 Impedimento" para o
+            # modo pessoal deixaria o session_state com um valor fora da
+            # lista de opções e o selectbox quebraria.
             tipo_relato = st.selectbox(
                 "Tipo",
-                ["Relato de Atividade", "❓ Dúvida Técnica", "🛑 Impedimento"],
-                key="diario_tipo",
+                ["Relato de Atividade"],
+                key="diario_tipo_pessoal",
             )
             r_disc = None
         else:
