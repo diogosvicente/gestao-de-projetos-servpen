@@ -158,10 +158,76 @@ def db_tarefas_proj_rec():
     conn.commit(); conn.close()
 
 
+def db_documentos_etapas():
+    print("Documentações geradas + % das etapas:")
+    nm = "ZZsmoke_docs"
+    conn = db.conectar(); c = conn.cursor()
+    c.execute("INSERT INTO projetos (projetista,projeto,status) "
+              "VALUES (%s,%s,%s) RETURNING id",
+              (nm, "ZZ Smoke Docs", "Ativo"))
+    pid = c.fetchone()[0]
+    conn.commit(); conn.close()
+
+    def _espelho():
+        cc = db.conectar(); cx = cc.cursor()
+        cx.execute("SELECT documentacoes_geradas FROM projetos WHERE id=%s",
+                   (pid,))
+        v = cx.fetchone()[0]
+        cc.close()
+        return v or ""
+
+    try:
+        reg, rep = db.adicionar_documentos_projeto(
+            pid, ["Memorial.pdf", "ART.pdf", "memorial.PDF", "  "],
+            criado_por=nm)
+        _check("registra nomes; ignora repetido e vazio",
+               reg == ["Memorial.pdf", "ART.pdf"] and rep == ["memorial.PDF"],
+               f"{reg} / {rep}")
+        _docs = {d["nome"]: d for d in db.listar_documentos_projeto(pid)}
+        _check("lista traz autor e data do registro",
+               set(_docs) == {"Memorial.pdf", "ART.pdf"}
+               and all(d["criado_por"] == nm and d["criado_em"]
+                       for d in _docs.values()))
+        _dia = _docs["ART.pdf"]["criado_em"].strftime("%d/%m/%Y")
+        _check("espelho em texto (Excel/PDF), na ordem de registro",
+               _espelho() == f"Memorial.pdf ({_dia}); ART.pdf ({_dia})",
+               _espelho())
+        _check("excluir devolve o nome removido",
+               db.excluir_documento_projeto(_docs["ART.pdf"]["id"])
+               == "ART.pdf")
+        _check("espelho atualizado depois de excluir",
+               _espelho() == f"Memorial.pdf ({_dia})", _espelho())
+
+        db.salvar_etapas(pid, [
+            {"nome": "Levantamento", "duracao_dias": 5, "dias_offset": 0,
+             "ordem": 0, "percentual": 10},
+            {"nome": "Projeto", "duracao_dias": 10, "dias_offset": 5,
+             "ordem": 1, "percentual": 0},
+        ])
+        _et = db.listar_etapas(pid)
+        _n = db.atualizar_percentual_etapas(
+            pid, [(_et[1]["id"], 60), (999999999, 50)])
+        _et2 = db.listar_etapas(pid)
+        _check("% da etapa gravado sem mexer no resto",
+               _n == 1 and _et2[1]["percentual"] == 60
+               and _et2[0]["percentual"] == 10
+               and [e["nome"] for e in _et2] == ["Levantamento", "Projeto"],
+               f"n={_n} {_et2}")
+    finally:
+        db.excluir_projeto(pid)
+        cc = db.conectar(); cx = cc.cursor()
+        cx.execute("SELECT COUNT(*) FROM projeto_documentos "
+                   "WHERE projeto_id=%s", (pid,))
+        _sobra = cx.fetchone()[0]
+        cc.close()
+        _check("excluir o projeto leva as documentações junto", _sobra == 0)
+
+
 def main():
     db.criar_tabelas()
     db_tarefas()
     db_tarefas_proj_rec()
+    db_documentos_etapas()
     # 1 tarefa pro usuário das views, pra exercitar o data_editor de Tarefas.
     db.criar_tarefa("ZZsmoke_gestor", "render check", privada=True,
                     criado_por="ZZsmoke_gestor", data=date.today())

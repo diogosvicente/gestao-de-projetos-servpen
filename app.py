@@ -463,11 +463,18 @@ if _eh_tema_claro():
             color: #1f2937 !important;
         }
 
-        /* Texto-fantasma (placeholder) — mesma história: era branco. */
+        /* Texto-fantasma (placeholder) — mesma história: era branco. No
+           select/multiselect do BaseWeb não existe classe "placeholder" (as
+           classes são atômicas, tipo "st-gf"): o texto-fantasma é o div logo
+           DEPOIS do que contém o <input role="combobox">. Com valor
+           escolhido esse div não existe (o valor vem ANTES do input), então
+           o seletor não acinzenta valor. O texto também vem com
+           -webkit-text-fill-color, que ganha de `color` — por isso os dois. */
         .stApp input::placeholder,
         .stApp textarea::placeholder,
-        .stApp div[data-baseweb="select"] div[class*="placeholder"] {
+        .stApp div[data-baseweb="select"] div:has(> input[role="combobox"]) + div {
             color: #9ca3af !important;
+            -webkit-text-fill-color: #9ca3af !important;
             opacity: 1 !important;
         }
 
@@ -492,6 +499,14 @@ if _eh_tema_claro():
         div[data-baseweb="select"] input {
             color: #1f2937 !important;
         }
+        /* Seta do select (▾): vinha branca do tema escuro e sumia no fundo
+           branco. Só a seta (title="open") — o × das etiquetas escolhidas
+           mantém a cor do BaseWeb, pelo mesmo motivo das etiquetas acima. */
+        div[data-baseweb="select"] svg[title="open"],
+        div[data-baseweb="select"] svg[title="open"] path {
+            color: #6b7280 !important;
+            fill: #6b7280 !important;
+        }
 
         /* ── Achados da varredura de contraste (auditoria no DOM) ──
            Sobraram brancos do tema escuro nestes três: rótulo de aba não
@@ -515,6 +530,15 @@ if _eh_tema_claro():
         }
         .stMarkdown a, [data-testid="stMarkdownContainer"] a {
             color: #1d4ed8 !important;
+        }
+
+        /* Campo desabilitado (ex.: formulário do Kanban em modo leitura pra
+           quem não é Gestor). O tema base é escuro e o Streamlit pinta o
+           texto desabilitado com -webkit-text-fill-color quase branco
+           (rgba(250,250,250,.4)) — no fundo branco o valor sumia. */
+        .stApp input:disabled, .stApp textarea:disabled {
+            -webkit-text-fill-color: #6b7280 !important;
+            color: #6b7280 !important;
         }
 
         /* Menu suspenso aberto (lista de opções) */

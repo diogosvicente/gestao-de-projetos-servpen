@@ -19,6 +19,7 @@ import secrets
 import threading
 import time
 import os
+import re
 from functools import lru_cache
 from urllib.parse import quote_plus
 
@@ -828,6 +829,22 @@ def _criar_tabelas_impl():
         c.execute("CREATE INDEX IF NOT EXISTS idx_projeto_tags_proj "
                   "ON projeto_tags(projeto_id, ordem)")
 
+        # ── DOCUMENTAÇÕES GERADAS (nomes de arquivos por projeto) ──
+        # Pedido de 10/09/2026: em vez de texto livre, quem edita o projeto
+        # seleciona os arquivos e o sistema guarda SÓ O NOME (o arquivo não é
+        # enviado), com quando e quem registrou. `projetos.documentacoes_
+        # geradas` continua existindo como espelho em texto (ver
+        # _sincronizar_documentos_txt) — é o que o Excel e o PDF leem.
+        c.execute('''CREATE TABLE IF NOT EXISTS projeto_documentos (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            projeto_id BIGINT NOT NULL,
+            nome TEXT NOT NULL,
+            criado_por TEXT,
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
+        c.execute("CREATE INDEX IF NOT EXISTS idx_projeto_documentos_proj "
+                  "ON projeto_documentos(projeto_id)")
+
         # ── PASTAS (hierarquia de arquivos por projeto) ──
         # Auto-referenciada: pasta_pai_id NULL = pasta na raiz do projeto.
         # As pastas existem SÓ no banco — o arquivo físico continua caindo em
@@ -1153,6 +1170,73 @@ def _criar_tabelas_impl():
             c.execute("ROLLBACK TO SAVEPOINT bf_tags")
             log.warning("backfill da trilha de tags pulado: %s", e)
 
+        # ── BACKFILL DAS DOCUMENTAÇÕES GERADAS (texto → lista) ──
+        # O campo era texto livre ("Memorial descritivo, ART, Planta baixa").
+        # Cada item vira uma linha da lista, SEM data (não dá pra saber quando
+        # foi digitado) e com autor "migração" — nada do que foi escrito se
+        # perde. Idempotente pelo mesmo critério da trilha: só popula projeto
+        # com texto e NENHUMA linha; em seguida o sync reescreve o texto a
+        # partir da lista.
+        try:
+            c.execute("SAVEPOINT bf_docs")
+            c.execute("""
+                SELECT p.id, p.documentacoes_geradas FROM projetos p
+                 WHERE COALESCE(TRIM(p.documentacoes_geradas),'') <> ''
+                   AND NOT EXISTS (SELECT 1 FROM projeto_documentos d
+                                    WHERE d.projeto_id = p.id)
+            """)
+            _pend_docs = c.fetchall()
+            for _pid, _txt in _pend_docs:
+                _vistos = set()
+                for _nome in re.split(r"[;,\n]+", _txt):
+                    _nome = _nome.strip()
+                    if _nome and _nome.lower() not in _vistos:
+                        _vistos.add(_nome.lower())
+                        c.execute(
+                            "INSERT INTO projeto_documentos "
+                            "(projeto_id, nome, criado_por, criado_em) "
+                            "VALUES (%s,%s,%s,NULL)",
+                            (_pid, _nome, "migração"),
+                        )
+                _sincronizar_documentos_txt(_pid, c)
+            if _pend_docs:
+                log.info("backfill documentações geradas: %d projeto(s)",
+                         len(_pend_docs))
+            c.execute("RELEASE SAVEPOINT bf_docs")
+        except Exception as e:
+            c.execute("ROLLBACK TO SAVEPOINT bf_docs")
+            log.warning("backfill das documentações geradas pulado: %s", e)
+
+        # ── "CHECKLIST ADICIONAL / DEMANDAS" SAI DO CADASTRO ──
+        # Pedido de 10/09/2026. O texto livre desse campo ia pra `demandas`
+        # depois de um " | " (antes dele ficam as disciplinas, que a Evolução
+        # Técnica usa). Com "Observações" existindo, o campo ficou redundante
+        # e saiu dos formulários. O texto que já existia é MOVIDO pro fim de
+        # Observações — nada se perde — e `demandas` fica só com as
+        # disciplinas. Idempotente: depois de rodar, nenhum `demandas` tem "|".
+        try:
+            c.execute("SAVEPOINT mig_checklist")
+            c.execute("SELECT id, demandas, observacoes FROM projetos "
+                      "WHERE POSITION('|' IN COALESCE(demandas,'')) > 0")
+            _pend_chk = c.fetchall()
+            for _pid, _dem, _obs in _pend_chk:
+                _discs, _, _extra = _dem.partition("|")
+                _discs = _discs.strip().strip(",").strip()
+                _extra = _extra.strip()
+                _obs = (_obs or "").strip()
+                if _extra:
+                    _nota = f"Checklist adicional: {_extra}"
+                    _obs = f"{_obs}\n\n{_nota}" if _obs else _nota
+                c.execute("UPDATE projetos SET demandas=%s, observacoes=%s "
+                          "WHERE id=%s", (_discs, _obs or None, _pid))
+            if _pend_chk:
+                log.info("checklist adicional -> observações: %d projeto(s)",
+                         len(_pend_chk))
+            c.execute("RELEASE SAVEPOINT mig_checklist")
+        except Exception as e:
+            c.execute("ROLLBACK TO SAVEPOINT mig_checklist")
+            log.warning("migração do checklist adicional pulada: %s", e)
+
         conn.commit()
     except Exception as e:
         log.exception("Erro ao inicializar banco: %s", e)
@@ -1402,6 +1486,106 @@ def mover_tag_projeto(id_tag, delta):
         conn.close()
 
 
+# ─── DOCUMENTAÇÕES GERADAS (nomes de arquivos) ────────────
+# Documentos que o projeto produziu. Guarda SÓ O NOME do arquivo — o navegador
+# não entrega o caminho e o arquivo não é enviado ao servidor —, com data e
+# autor do registro. Na tela o nome abre o "Link da Pasta" do projeto. Toda
+# alteração re-sincroniza `projetos.documentacoes_geradas`, o espelho em texto
+# que o Excel e o PDF leem (mesmo esquema da trilha com `projetos.tags`).
+def _sincronizar_documentos_txt(projeto_id, cur=None):
+    """Reescreve projetos.documentacoes_geradas a partir da lista, na ordem
+    de registro: "Memorial.pdf (10/09/2026); ART.pdf (10/09/2026)"."""
+    _fechar = cur is None
+    conn = None
+    if _fechar:
+        conn = conectar(); cur = conn.cursor()
+    try:
+        cur.execute("SELECT nome, criado_em FROM projeto_documentos "
+                    "WHERE projeto_id=%s ORDER BY criado_em NULLS FIRST, id",
+                    (int(projeto_id),))
+        _itens = [
+            f"{nome} ({quando.strftime('%d/%m/%Y')})" if quando else nome
+            for nome, quando in cur.fetchall()
+        ]
+        cur.execute("UPDATE projetos SET documentacoes_geradas=%s WHERE id=%s",
+                    ("; ".join(_itens) or None, int(projeto_id)))
+        if _fechar:
+            conn.commit()
+    finally:
+        if _fechar and conn:
+            conn.close()
+
+
+def listar_documentos_projeto(projeto_id):
+    """Documentações de um projeto, as mais recentes primeiro:
+    [{id, nome, criado_por, criado_em}]. `criado_em` None = veio do texto
+    antigo, na migração."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("SELECT id, nome, criado_por, criado_em "
+                  "FROM projeto_documentos WHERE projeto_id=%s "
+                  "ORDER BY criado_em DESC NULLS LAST, id DESC",
+                  (int(projeto_id),))
+        return [{"id": r[0], "nome": r[1], "criado_por": r[2],
+                 "criado_em": r[3]} for r in c.fetchall()]
+    finally:
+        conn.close()
+
+
+def adicionar_documentos_projeto(projeto_id, nomes, criado_por=None):
+    """Registra vários nomes de uma vez. Ignora vazios e nomes que o projeto
+    já tem (sem diferenciar maiúsculas), então selecionar o mesmo arquivo de
+    novo não duplica. Retorna (registrados, repetidos) — listas de nomes.
+
+    A comparação é feita em Python, não com LOWER() do Postgres: dependendo
+    do locale do banco, LOWER() não mexe em letra acentuada ("MEMÓRIA")."""
+    registrados, repetidos = [], []
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("SELECT nome FROM projeto_documentos WHERE projeto_id=%s",
+                  (int(projeto_id),))
+        _ja = {str(r[0]).lower() for r in c.fetchall()}
+        for nome in nomes or []:
+            nome = str(nome or "").strip()
+            if not nome:
+                continue
+            if nome.lower() in _ja:
+                repetidos.append(nome)
+                continue
+            _ja.add(nome.lower())
+            c.execute("INSERT INTO projeto_documentos "
+                      "(projeto_id, nome, criado_por) VALUES (%s,%s,%s)",
+                      (int(projeto_id), nome, criado_por or ""))
+            registrados.append(nome)
+        if registrados:
+            _sincronizar_documentos_txt(projeto_id, c)
+        conn.commit()
+        return registrados, repetidos
+    except Exception as e:
+        log.exception("Erro ao registrar documentações do projeto %s: %s",
+                      projeto_id, e)
+        conn.rollback()
+        return [], []
+    finally:
+        conn.close()
+
+
+def excluir_documento_projeto(id_doc):
+    """Tira um documento da lista. Retorna o nome removido, ou None."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("DELETE FROM projeto_documentos WHERE id=%s "
+                  "RETURNING projeto_id, nome", (int(id_doc),))
+        row = c.fetchone()
+        if not row:
+            return None
+        _sincronizar_documentos_txt(row[0], c)
+        conn.commit()
+        return row[1]
+    finally:
+        conn.close()
+
+
 # ─── PROJETOS ─────────────────────────────────────────────
 def salvar_projeto(dados, codigo=None, local=None, fonte_recurso=None,
                    observacoes=None, documentacoes_geradas=None):
@@ -1595,10 +1779,13 @@ def excluir_projeto(id_p):
         # CASCADE manual das menções (acesso + notificações) para não deixar órfãos
         c.execute("DELETE FROM mencoes_acesso WHERE projeto_id = %s", (int(id_p),))
         c.execute("DELETE FROM mencoes_notificacoes WHERE projeto_id = %s", (int(id_p),))
-        # Trilha de tags e pastas também são do projeto — sem isso ficariam
-        # órfãs (a trilha inclusive seria "herdada" por um id reaproveitado).
+        # Trilha de tags, pastas e documentações geradas também são do
+        # projeto — sem isso ficariam órfãs (e seriam "herdadas" por um id
+        # reaproveitado).
         c.execute("DELETE FROM projeto_tags WHERE projeto_id = %s", (int(id_p),))
         c.execute("DELETE FROM pastas WHERE projeto_id = %s", (int(id_p),))
+        c.execute("DELETE FROM projeto_documentos WHERE projeto_id = %s",
+                  (int(id_p),))
         c.execute("DELETE FROM projetos WHERE id = %s", (int(id_p),))
         conn.commit()
     finally:
@@ -1610,14 +1797,15 @@ def clonar_projeto(id_origem, sufixo=" (cópia)"):
 
     O que é COPIADO:
       - Dados básicos: projetista, endereço, solicitante, contato, número SEI,
-        link, demandas (checklist), solicitação/escopo, prioridade, tags,
-        fonte de recurso, observações e documentações geradas
+        link, disciplinas (coluna `demandas`), solicitação/escopo, prioridade,
+        tags, fonte de recurso e observações
       - Estrutura de etapas (nomes, durações, offsets, ordem)
 
     O que NÃO é copiado (o novo projeto começa do zero nestes):
       - Status (vai pra "Em Espera")
       - Datas concretas (recebimento/início/fim → hoje, previsão → hoje)
       - Diário / arquivos / progresso de disciplinas
+      - Documentações geradas (são registros do projeto original)
       - Menções (acesso e notificações)
 
     O nome ganha um `sufixo` (default " (cópia)") pra distinguir do original.
@@ -1632,7 +1820,7 @@ def clonar_projeto(id_origem, sufixo=" (cópia)"):
             """SELECT projetista, projeto, endereco, solicitante, contato,
                       numero_sei, link_projeto, demandas, solicitacao,
                       prioridade, tags, local,
-                      fonte_recurso, observacoes, documentacoes_geradas
+                      fonte_recurso, observacoes
                  FROM projetos WHERE id = %s""",
             (int(id_origem),),
         )
@@ -1643,7 +1831,7 @@ def clonar_projeto(id_origem, sufixo=" (cópia)"):
         # nasce sem código (NULL); o usuário define um na edição se quiser.
         (projetista, projeto, endereco, solicitante, contato, numero_sei,
          link_projeto, demandas, solicitacao, prioridade, tags, local,
-         fonte_recurso, observacoes, documentacoes_geradas) = row
+         fonte_recurso, observacoes) = row
 
         novo_nome = f"{projeto}{sufixo}" if sufixo else projeto
 
@@ -1655,14 +1843,14 @@ def clonar_projeto(id_origem, sufixo=" (cópia)"):
                 data_inicio, data_termino, data_fim,
                 status, link_projeto, demandas, solicitacao, prioridade,
                 tags, local,
-                fonte_recurso, observacoes, documentacoes_geradas)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                fonte_recurso, observacoes)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                RETURNING id""",
             (projetista, novo_nome, endereco, solicitante, contato,
              numero_sei, hoje, hoje, hoje, hoje, hoje,
              "Em Espera", link_projeto, demandas, solicitacao, prioridade,
              tags, local,
-             fonte_recurso, observacoes, documentacoes_geradas),
+             fonte_recurso, observacoes),
         )
         novo_id = c.fetchone()[0]
 
@@ -1740,6 +1928,27 @@ def listar_etapas(projeto_id):
     rows = [dict(zip(cols, r)) for r in c.fetchall()]
     conn.close()
     return rows
+
+def atualizar_percentual_etapas(projeto_id, percentuais):
+    """Grava SÓ o % concluído — `percentuais` = [(id_etapa, pct), ...] —, sem
+    tocar em nome, duração ou início: é a parte que o Projetista pode alterar
+    (pedido de 10/09/2026). Filtra pelo projeto pra nunca mexer em etapa de
+    outro. Retorna quantas etapas foram gravadas; menos que o pedido quer
+    dizer que o Gestor regravou as etapas nesse meio tempo (salvar_etapas
+    recria as linhas, com ids novos)."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        _n = 0
+        for id_et, pct in percentuais:
+            c.execute("UPDATE etapas_projeto SET percentual=%s "
+                      "WHERE id=%s AND projeto_id=%s",
+                      (max(0, min(100, int(pct or 0))), int(id_et),
+                       int(projeto_id)))
+            _n += c.rowcount
+        conn.commit()
+        return _n
+    finally:
+        conn.close()
 
 def listar_etapas_todos_projetos():
     """Retorna todas as etapas com nome do projeto — usado no Gantt."""

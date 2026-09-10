@@ -254,7 +254,7 @@ def gerar_excel(df, df_etapas=None, df_progresso=None):
                 ('Término',            'data_termino',       13),
                 ('Link Drive',         'link_projeto',       30),
                 ('Escopo',             'solicitacao',        45),
-                ('Disciplinas/Demandas','demandas',          40),
+                ('Disciplinas',        'demandas',           40),
                 ('Fonte de Recurso',   'fonte_recurso',      25),
                 ('Documentações Geradas', 'documentacoes_geradas', 35),
                 ('Observações',        'observacoes',        40),
@@ -610,7 +610,7 @@ def gerar_pdf(df, df_etapas=None, df_progresso=None):
 
             dem_ind = _txt(proj.get('demandas',''))
             if dem_ind != '—':
-                story.append(_secao('Disciplinas e Demandas Detalhadas'))
+                story.append(_secao('Disciplinas'))
                 story.append(Paragraph(dem_ind, st['corpo']))
                 story.append(Spacer(1, 0.15*cm))
 

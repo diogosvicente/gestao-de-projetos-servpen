@@ -130,6 +130,81 @@ else:
 st.divider()
 
 
+# ── SITUAÇÃO DOS PROJETOS (pedido de 10/09/2026) ─────────────
+# Quantos projetos estão aguardando, em andamento, parados e concluídos. É o
+# status do Kanban (mesmas cores), com os nomes que a Sara usou; o nome da
+# coluna do Kanban aparece no hover. Cancelados não foram pedidos: ficam fora
+# do gráfico e viram só uma nota embaixo.
+_section_header(
+    "🚦", "Situação dos Projetos",
+    "Quantos projetos estão aguardando, em andamento, parados e concluídos "
+    "— contados pelo status do Kanban.",
+    cor="#0ea5e9",
+)
+
+_SITUACOES = [
+    # (status no banco, rótulo no gráfico)
+    ("Em Espera", "⏳ Aguardando"),
+    ("Ativo",     "🚀 Em andamento"),
+    ("🛑 Parado", "🛑 Parados"),
+    ("Concluído", "✅ Concluídos"),
+]
+if df_p_limpo.empty:
+    _empty_state(
+        "🚦", "Nenhum projeto para contar",
+        "Os projetos cadastrados aparecem aqui agrupados pelo status do "
+        "Kanban.",
+        cor_borda="#0ea5e9",
+    )
+else:
+    _cont_sit = (
+        df_p_limpo["status"].fillna("").astype(str).str.strip().value_counts()
+    )
+    _df_sit = pd.DataFrame([
+        {
+            "Situação": _rot,
+            "Projetos": int(_cont_sit.get(_st, 0)),
+            "Kanban": STATUS_PROJETO[_st][0],
+        }
+        for _st, _rot in _SITUACOES
+    ])
+    _max_sit = int(_df_sit["Projetos"].max())
+    fig_sit = px.bar(
+        _df_sit, x="Situação", y="Projetos", color="Situação",
+        text="Projetos", custom_data=["Kanban"],
+        color_discrete_map={
+            _rot: STATUS_PROJETO[_st][1] for _st, _rot in _SITUACOES
+        },
+    )
+    fig_sit.update_traces(
+        textposition="outside", cliponaxis=False, textfont_size=14,
+        hovertemplate=(
+            "<b>%{x}</b><br>%{y} projeto(s)<br>"
+            "Coluna do Kanban: %{customdata[0]}<extra></extra>"
+        ),
+    )
+    fig_sit.update_layout(
+        height=320, showlegend=False, bargap=0.35,
+        margin=dict(t=30, b=10, l=10, r=10),
+        xaxis=dict(title=None, fixedrange=True),
+        yaxis=dict(
+            title="Projetos", fixedrange=True,
+            range=[0, _max_sit * 1.25 + 1],
+            dtick=1 if _max_sit <= 10 else None,
+        ),
+    )
+    _estiliza_plotly(fig_sit)
+    st.plotly_chart(fig_sit, width="stretch")
+
+    _n_canc = int(_cont_sit.get("Cancelado", 0))
+    if _n_canc:
+        st.caption(
+            f"❌ {_n_canc} projeto(s) cancelado(s) não entram no gráfico."
+        )
+
+st.divider()
+
+
 # 3. GRÁFICO DE GANTT
 _section_header(
     "📅", "Cronograma Integrado (Gantt)",
@@ -600,13 +675,27 @@ try:
                     n_cols_f = 2 if len(_proj_com_dados) <= 4 else 3
                     n_linhas_f = -(-len(_proj_com_dados) // n_cols_f)
 
+                    # Medidas em PIXELS, fixas por linha de subgráficos. O
+                    # Plotly recebe o vão entre linhas como FRAÇÃO da área
+                    # de plotagem e recusa fração > 1/(linhas-1): o 0.18
+                    # fixo quebrava a partir de 7 linhas (19+ projetos) e,
+                    # antes disso, já espremia as barras (o vão crescia com
+                    # a altura). Convertendo px → fração pela área total, o
+                    # vão fica sempre igual e nunca passa do limite.
+                    _alt_linha_px = 250   # altura de cada subgráfico
+                    _vao_linhas_px = 110  # rótulos inclinados + título
+                    _area_px = (
+                        n_linhas_f * _alt_linha_px
+                        + (n_linhas_f - 1) * _vao_linhas_px
+                    )
+
                     fig_disc = px.bar(
                         df_graf_v,
                         x="disciplina", y="percentual",
                         color="disciplina",
                         facet_col="projeto",
                         facet_col_wrap=n_cols_f,
-                        facet_row_spacing=0.18,
+                        facet_row_spacing=_vao_linhas_px / _area_px,
                         facet_col_spacing=0.05,
                         text_auto=".0f",
                         range_y=[0, 110],
@@ -663,7 +752,8 @@ try:
                         )
                     )
                     fig_disc.update_layout(
-                        height=max(360, n_linhas_f * 330 + 100),
+                        # área de plotagem (_area_px) + margens t+b (40+110)
+                        height=_area_px + 150,
                         margin=dict(t=40, b=110, l=50, r=10),
                         legend=dict(
                             title=dict(text="<b>Disciplina</b>"),
@@ -762,10 +852,14 @@ try:
             cR3.metric("🐢 Mais atrasado", _gap_proj,
                        delta=f"{_gap_pct:.0f}%", delta_color="off")
 
-            # Cards de resumo
+            # Cards de resumo — no máximo 6 por linha: com muitos projetos
+            # numa linha só, cada card ficava com ~30px e o % quebrava
+            # dígito a dígito.
             st.markdown("**Progresso médio por projeto:**")
-            res_cols = st.columns(len(projetos_sel))
+            _cards_linha = min(len(projetos_sel), 6)
             for i, proj in enumerate(projetos_sel):
+                if i % _cards_linha == 0:
+                    res_cols = st.columns(_cards_linha)
                 _media = df_graf[
                     df_graf["projeto"] == proj
                 ]["percentual"].mean()
@@ -774,7 +868,7 @@ try:
                     else "#f59e0b" if _media >= 40
                     else "#ef4444"
                 )
-                with res_cols[i]:
+                with res_cols[i % _cards_linha]:
                     st.markdown(
                         f"<div style='border:1px solid {_cor};"
                         f"border-top:4px solid {_cor};border-radius:8px;"

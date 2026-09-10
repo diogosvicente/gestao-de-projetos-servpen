@@ -86,10 +86,14 @@ with st.form("form_novo_projeto_v2", clear_on_submit=False):
         placeholder="ex.: FAPERJ, Tesouro, Convênio nº ...",
         help="De onde vem a verba deste projeto.",
     )
-    f_dg = r2b2.text_input(
-        "📄 Documentações Geradas",
-        placeholder="ex.: Memorial descritivo, ART, Planta baixa",
-        help="Documentos que o projeto produziu (texto livre).",
+    # "Documentações Geradas" deixou de ser texto livre (pedido de 10/09/2026):
+    # virou uma lista de nomes de arquivos, registrada na edição do projeto no
+    # Kanban — por isso só dá pra registrar depois que o projeto existe.
+    r2b2.markdown(
+        "<div style='font-size:.82rem;opacity:.75;padding-top:26px'>"
+        "📄 As <b>Documentações Geradas</b> são registradas no Kanban, "
+        "ao abrir o projeto depois de criado.</div>",
+        unsafe_allow_html=True,
     )
 
     # Endereço da Obra: select do cadastro mestre (item 12) com opção de digitar
@@ -156,7 +160,8 @@ with st.form("form_novo_projeto_v2", clear_on_submit=False):
     f_chk = st.multiselect("Disciplinas do Projeto",
                            st.session_state.lista_checklist)
     f_esc = st.text_area("Descrição do Escopo", height=90)
-    f_dem = st.text_area("Checklist Adicional / Demandas", height=70)
+    # "Checklist Adicional / Demandas" saiu (pedido de 10/09/2026): era texto
+    # livre que só repetia o papel de Observações, logo abaixo.
     f_obs = st.text_area(
         "📝 Observações", height=70,
         help="Anotações gerais sobre o projeto.",
@@ -270,9 +275,9 @@ if submit_novo:
             )
             st.stop()
         with carregando(f"Criando projeto '{f_nm}'..."):
-            checklist_final = (
-                ", ".join(f_chk) + (" | " + f_dem if f_dem.strip() else "")
-            )
+            # `demandas` guarda só as disciplinas — o texto livre depois de
+            # " | " era o "Checklist Adicional", que saiu em 10/09/2026.
+            checklist_final = ", ".join(f_chk)
             _tags_csv = db.serializar_tags(db.parse_tags(f_tags)) or None
             dados_sql = (
                 ", ".join(f_eq),   # projetista
@@ -296,7 +301,6 @@ if submit_novo:
             novo_id = db.salvar_projeto(
                 dados_sql, codigo=_cod, local=f_lo,
                 fonte_recurso=f_fr, observacoes=f_obs,
-                documentacoes_geradas=f_dg,
             )
             if novo_id:
                 # Endereço usado entra no cadastro mestre (item 12).

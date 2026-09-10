@@ -7,6 +7,7 @@ técnica por disciplina). Os helpers `_render_lista_kanban` e
 
 from __future__ import annotations
 
+import html as _html
 import time
 from datetime import datetime
 
@@ -21,6 +22,7 @@ from core.data import _invalidar_dados, _load_df_d, _load_df_p, _load_df_u
 from core.helpers import (
     TRILHA_STATUS_OPCOES,
     _badge_status,
+    _cores_tema,
     _eh_tema_claro,
     _empty_state,
     _equipe_atual,
@@ -33,6 +35,7 @@ from core.helpers import (
     _ve_tudo,
     opcoes_trilha_para_edicao,
 )
+from core.seletor_arquivos import seletor_nomes_arquivos
 from core.ui_feedback import carregando, confirmar_sucesso, erro_humano
 
 
@@ -1030,6 +1033,11 @@ if "projeto_em_edicao" in st.session_state:
     # JS robusto (_KB_SCROLL_JS) que rola o scroller real em loop curto.
     if st.session_state.get("_kb_edit_open_for") != id_ed:
         st.session_state["_kb_edit_open_for"] = id_ed
+        # Etapas relidas do banco a cada abertura: desde 10/09/2026 o
+        # projetista também grava o % delas, então a cópia guardada na sessão
+        # numa abertura anterior pode estar velha — e o "Salvar Etapas" do
+        # Gestor regravaria o % antigo por cima.
+        st.session_state.pop(f"etapas_edit_{id_ed}", None)
         st.markdown(
             "<div id='kanban-edit-top' "
             "style='height:0;scroll-margin-top:12px;'></div>",
@@ -1116,12 +1124,14 @@ if "projeto_em_edicao" in st.session_state:
             help="De onde vem a verba deste projeto.",
             disabled=_ro_edit,
         )
-        ed_dg = r2b2.text_input(
-            "📄 Documentações Geradas",
-            value=str(dados.get("documentacoes_geradas") or ""),
-            placeholder="ex.: Memorial descritivo, ART, Planta baixa",
-            help="Documentos que o projeto produziu (texto livre).",
-            disabled=_ro_edit,
+        # "Documentações Geradas" virou lista de nomes de arquivos (pedido de
+        # 10/09/2026), numa seção própria abaixo deste formulário: ela age na
+        # hora e é aberta a todo projetista, enquanto este form é do Gestor.
+        r2b2.markdown(
+            "<div style='font-size:.82rem;opacity:.75;padding-top:26px'>"
+            "📄 As <b>Documentações Geradas</b> ficam na seção própria, "
+            "logo abaixo deste formulário.</div>",
+            unsafe_allow_html=True,
         )
 
         # Endereço: select do cadastro mestre (item 12) + digitar novo;
@@ -1226,13 +1236,9 @@ if "projeto_em_edicao" in st.session_state:
         ed_esc = st.text_area("Descrição do Escopo",
                               value=str(dados["solicitacao"]), height=90,
                               disabled=_ro_edit)
-        _dem_extra = (
-            str(dados.get("demandas", "")).split("|")[-1].strip()
-            if "|" in str(dados.get("demandas", "")) else ""
-        )
-        ed_dem = st.text_area("Checklist Adicional / Demandas",
-                              value=_dem_extra, height=70,
-                              disabled=_ro_edit)
+        # "Checklist Adicional / Demandas" saiu (pedido de 10/09/2026): era
+        # texto livre com o mesmo papel de Observações. O que já existia foi
+        # movido pra Observações pela migração do banco.
         ed_obs = st.text_area("📝 Observações",
                               value=str(dados.get("observacoes") or ""),
                               height=70,
@@ -1247,8 +1253,12 @@ if "projeto_em_edicao" in st.session_state:
         if _ro_edit:
             st.info(
                 "🔒 Modo leitura — edição do projeto é exclusiva do Gestor. "
-                "Use a seção **Evolução Técnica por Disciplina** abaixo para "
-                "marcar seu progresso."
+                + ("Nas seções abaixo você pode registrar as **Documentações "
+                   "Geradas**, atualizar o **% concluído das etapas** e "
+                   "marcar a **Evolução Técnica por Disciplina**."
+                   if _pode_editar() else
+                   "As seções abaixo mostram as documentações, as etapas e a "
+                   "evolução do projeto.")
             )
             _fechar = st.form_submit_button("❌ Fechar",
                                             width="stretch")
@@ -1285,10 +1295,9 @@ if "projeto_em_edicao" in st.session_state:
         # o user clica "Salvar" e a tela fica congelada parecendo bug.
         with carregando(f"Salvando projeto '{ed_nm}'..."):
             equipe_str = ", ".join(ed_eq)
-            checklist_final = (
-                ", ".join(ed_chk)
-                + (" | " + ed_dem if ed_dem.strip() else "")
-            )
+            # `demandas` guarda só as disciplinas (o "Checklist Adicional",
+            # texto livre depois de " | ", saiu em 10/09/2026).
+            checklist_final = ", ".join(ed_chk)
             dados_finais = (
                 equipe_str, ed_nm, _end_save, ed_so, ed_co,
                 ed_sei, ed_drec, ed_di, ed_dt, ed_dt,
@@ -1319,7 +1328,7 @@ if "projeto_em_edicao" in st.session_state:
                  ed_dt, True),
                 ("Link",               dados.get("link_projeto"),
                  ed_li, False),
-                ("Demandas/Checklist", dados.get("demandas"),
+                ("Disciplinas",        dados.get("demandas"),
                  checklist_final, False),
                 ("Solicitação",        dados.get("solicitacao"),
                  ed_esc, False),
@@ -1329,8 +1338,6 @@ if "projeto_em_edicao" in st.session_state:
                  ed_fr, False),
                 ("Observações",        dados.get("observacoes"),
                  ed_obs, False),
-                ("Documentações Geradas", dados.get("documentacoes_geradas"),
-                 ed_dg, False),
             ]
             _alteracoes = []
             for _lbl, _ant, _nov, _isd in _campos_hist:
@@ -1350,9 +1357,10 @@ if "projeto_em_edicao" in st.session_state:
                 id_ed, "local", (ed_lo or "").strip() or None
             )
             # Campos de 29/07/2026 — mesmo padrão de UPDATE separado.
+            # (Documentações Geradas não passa mais por aqui: desde 10/09/2026
+            # tem seção e tabela próprias.)
             for _col, _val in (("fonte_recurso", ed_fr),
-                               ("observacoes", ed_obs),
-                               ("documentacoes_geradas", ed_dg)):
+                               ("observacoes", ed_obs)):
                 db.atualizar_campo_projeto(
                     id_ed, _col, (_val or "").strip() or None
                 )
@@ -1439,6 +1447,93 @@ if "projeto_em_edicao" in st.session_state:
     if _fechar:
         del st.session_state.projeto_em_edicao
         st.rerun()
+
+    # ════════════════════════════════════════════════════════
+    #  DOCUMENTAÇÕES GERADAS (nomes de arquivos)
+    # ════════════════════════════════════════════════════════
+    # Pedido de 10/09/2026. Quem edita seleciona os arquivos (vários de uma
+    # vez) e o sistema registra SÓ O NOME, com data e autor — o arquivo não é
+    # enviado. Clicar no nome abre o "Link da Pasta (Drive/Nuvem)" do projeto,
+    # onde os arquivos de fato ficam. Aberto a todo projetista (_pode_editar);
+    # Visualizador só vê. Tirar da lista: o Gestor tira qualquer um, o
+    # projetista só os que ele mesmo registrou.
+    st.markdown("### 📄 Documentações Geradas")
+
+    _link_pasta = str(dados.get("link_projeto") or "").strip()
+    _link_web = _link_pasta.lower().startswith(("http://", "https://"))
+
+    if _pode_editar():
+        _nomes_sel = seletor_nomes_arquivos(
+            key=f"docs_sel_{id_ed}",
+            claro=_eh_tema_claro(),
+            dica=("Pode marcar vários de uma vez, ou arrastar para cá. Só o "
+                  "nome é registrado — o arquivo não é enviado."),
+        )
+        # O seletor devolve os nomes só no run da seleção: grava aqui mesmo,
+        # antes de desenhar a lista, e a lista abaixo já sai atualizada.
+        if _nomes_sel:
+            _reg, _rep = db.adicionar_documentos_projeto(
+                id_ed, _nomes_sel, criado_por=usuario)
+            if _reg:
+                db.log_aud(usuario, "documentação", "projeto", id_ed,
+                           "registrada(s): " + ", ".join(_reg))
+                _invalidar_dados()
+                st.toast(f"📄 {len(_reg)} documentação(ões) registrada(s).")
+            if _rep:
+                st.toast("Já estava(m) na lista: " + ", ".join(_rep),
+                         icon="ℹ️")
+
+    def _cb_doc_del(id_doc):
+        _nome_rm = db.excluir_documento_projeto(id_doc)
+        if _nome_rm:
+            db.log_aud(usuario, "documentação", "projeto", id_ed,
+                       f"removida: '{_nome_rm}'")
+            _invalidar_dados()
+
+    _docs_ed = db.listar_documentos_projeto(id_ed)
+    if not _docs_ed:
+        st.caption("Nenhuma documentação registrada ainda.")
+    else:
+        _ct_docs = _cores_tema()
+        for _doc in _docs_ed:
+            _nm_doc = _html.escape(str(_doc["nome"]))
+            if _link_web:
+                _titulo_doc = (
+                    f"<a href='{_html.escape(_link_pasta, quote=True)}' "
+                    "target='_blank' rel='noopener noreferrer' "
+                    f"title='Abrir a pasta do projeto'>🔗 {_nm_doc}</a>"
+                )
+            else:
+                _titulo_doc = f"📄 {_nm_doc}"
+            _quando_doc = (
+                _doc["criado_em"].strftime("%d/%m/%Y") if _doc["criado_em"]
+                else "data não registrada"
+            )
+            _autor_doc = _html.escape(str(_doc["criado_por"] or "—"))
+            dc1, dc2 = st.columns([0.92, 0.08], vertical_alignment="center")
+            dc1.markdown(
+                f"<div style='line-height:1.4'>{_titulo_doc}"
+                f"<span style='color:{_ct_docs['texto_fraco']};"
+                f"font-size:.8rem'> &nbsp;·&nbsp; {_quando_doc} · "
+                f"{_autor_doc}</span></div>",
+                unsafe_allow_html=True,
+            )
+            if _pode_gestor() or (
+                _pode_editar() and _doc["criado_por"] == usuario
+            ):
+                dc2.button("🗑", key=f"doc_del_{id_ed}_{_doc['id']}",
+                           width="stretch", help="Tirar da lista",
+                           on_click=_cb_doc_del, args=(_doc["id"],))
+        if _link_web:
+            st.caption("🔗 Clique no nome para abrir a pasta do projeto "
+                       "(Link da Pasta).")
+        elif _link_pasta:
+            st.caption("O Link da Pasta deste projeto não é um endereço web "
+                       "(http/https), então os nomes ficam sem link.")
+        else:
+            st.caption("Este projeto ainda não tem **Link da Pasta "
+                       "(Drive/Nuvem)**. Com ele cadastrado no formulário "
+                       "acima, os nomes viram link para a pasta.")
 
     # ════════════════════════════════════════════════════════
     #  TRILHA DE STATUS (tags em sequência)
@@ -1637,8 +1732,79 @@ if "projeto_em_edicao" in st.session_state:
             f"font-weight:700;padding:2px 8px;border-radius:10px;'>{lbl}</span>"
         )
 
-    if _ro_etapas:
-        # Não-gestor: read-only — vê etapas + % + situação, sem editar.
+    # Aviso deixado pelo "Salvar % das etapas" antes do rerun (ver abaixo).
+    if st.session_state.pop("_etapas_pct_aviso", None):
+        st.warning(
+            "As etapas foram alteradas pelo Gestor enquanto você editava. "
+            "Confira os valores abaixo e salve de novo."
+        )
+
+    if _ro_etapas and _pode_editar() and _et_list:
+        # Projetista (pedido de 10/09/2026): atualiza SÓ o % concluído de cada
+        # etapa. Nome, duração e início continuam exclusivos do Gestor.
+        with st.form(f"form_etapas_pct_{id_ed}"):
+            _pct_novos = []
+            for i, et in enumerate(_et_list):
+                pc1, pc2, pc3 = st.columns([2.4, 1.0, 1.6],
+                                           vertical_alignment="center")
+                pc1.markdown(
+                    f"**{i+1}. {et.get('nome', '—')}** "
+                    f"<small style='color:#94a3b8'>· "
+                    f"{int(et.get('duracao_dias', 1) or 1)} dia(s)</small>",
+                    unsafe_allow_html=True,
+                )
+                _pc = pc2.number_input(
+                    "% concl.", value=int(et.get("percentual", 0) or 0),
+                    min_value=0, max_value=100, step=5,
+                    label_visibility="collapsed",
+                    key=f"etpp_{id_ed}_{et['id']}",
+                )
+                _lbl, _cor, _esp = _situacao_etapa(
+                    et.get("dias_offset", 0), et.get("duracao_dias", 1), _pc,
+                )
+                _esp_txt = (
+                    f" <small style='color:#94a3b8'>(esp. {_esp}%)</small>"
+                    if _esp is not None else ""
+                )
+                pc3.markdown(f"{_badge_sit(_lbl, _cor)}{_esp_txt}",
+                             unsafe_allow_html=True)
+                _pct_novos.append((et, int(_pc)))
+            _salv_pct = st.form_submit_button("💾 Salvar % das etapas",
+                                              width="stretch")
+        st.caption(
+            "✏️ Você atualiza o **% concluído**. Nome, duração e início das "
+            "etapas são definidos pelo Gestor."
+        )
+        if _salv_pct:
+            _mudou = [
+                (et, p) for et, p in _pct_novos
+                if p != int(et.get("percentual", 0) or 0)
+            ]
+            if not _mudou:
+                st.toast("Nenhum % foi alterado.", icon="ℹ️")
+            else:
+                with carregando("Salvando % das etapas..."):
+                    _gravadas = db.atualizar_percentual_etapas(
+                        id_ed, [(et["id"], p) for et, p in _mudou],
+                    )
+                    db.log_aud(
+                        usuario, "etapas", "projeto", id_ed,
+                        "; ".join(
+                            f"'{et.get('nome')}': "
+                            f"{int(et.get('percentual', 0) or 0)}% -> {p}%"
+                            for et, p in _mudou
+                        ),
+                    )
+                    st.session_state[_key_et] = db.listar_etapas(id_ed)
+                if _gravadas < len(_mudou):
+                    st.session_state["_etapas_pct_aviso"] = True
+                else:
+                    confirmar_sucesso("% das etapas salvo",
+                                      "Situação das etapas atualizada.")
+                st.rerun()
+    elif _ro_etapas:
+        # Visualizador, ou projeto ainda sem etapas: read-only — vê etapas +
+        # % + situação, sem editar.
         if not _et_list:
             st.caption("Nenhuma etapa cadastrada.")
         else:
