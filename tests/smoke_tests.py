@@ -223,11 +223,117 @@ def db_documentos_etapas():
         _check("excluir o projeto leva as documentações junto", _sobra == 0)
 
 
+def db_revisoes():
+    print("Revisões da demanda:")
+    nm = "ZZsmoke_rev"
+    conn = db.conectar(); c = conn.cursor()
+    c.execute("INSERT INTO projetos (projetista,projeto,status,demandas,"
+              "data_recebimento,data_termino,data_fim) "
+              "VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+              (nm, "ZZ Smoke Rev", "Concluído", "Elétrica, CFTV",
+               date(2026, 1, 10), date(2026, 2, 10), date(2026, 2, 10)))
+    pid = c.fetchone()[0]
+    for _d in ("Elétrica", "CFTV"):
+        c.execute("INSERT INTO progresso_disciplinas (projeto_id, disciplina,"
+                  " concluido, percentual) VALUES (%s,%s,1,100)", (pid, _d))
+    conn.commit(); conn.close()
+
+    def _proj():
+        cc = db.conectar(); cx = cc.cursor()
+        cx.execute("SELECT demandas, projetista, status, data_recebimento, "
+                   "data_termino, revisao_atual FROM projetos WHERE id=%s",
+                   (pid,))
+        r = cx.fetchone()
+        cc.close()
+        return r
+
+    try:
+        db.criar_revisao_inicial(pid)
+        _r = db.listar_revisoes(pid)
+        _check("emissão inicial nasce com os dados do projeto",
+               len(_r) == 1 and _r[0]["rotulo"] == "Emissão inicial"
+               and _r[0]["projetista"] == nm
+               and _r[0]["entregue_em"] == date(2026, 2, 10), _r)
+
+        db.salvar_etapas(pid, [{"nome": "Projeto", "duracao_dias": 5,
+                                "dias_offset": 0, "ordem": 0,
+                                "percentual": 100}])
+        _id_rv, _num_rv = db.abrir_revisao(
+            pid, "acréscimo de tomadas", disciplinas="Elétrica, SPDA",
+            projetista="ZZsmoke_outro", solicitado_em=date(2026, 5, 2),
+            previsao=date(2026, 6, 1), do_zero=True, criado_por=nm)
+        _check("numeração automática (R01)", _num_rv == 1 and bool(_id_rv),
+               (_id_rv, _num_rv))
+        _r = db.listar_revisoes(pid)
+        _check("abrir a nova fecha a anterior",
+               len(_r) == 2 and _r[0]["entregue_em"] is not None
+               and _r[1]["rotulo"] == "R01")
+
+        _dem, _eq, _stt, _drec, _dterm, _ratual = _proj()
+        _check("disciplina nova entra no projeto; equipe soma o designado",
+               "SPDA" in _dem and "ZZsmoke_outro" in _eq and nm in _eq,
+               (_dem, _eq))
+        _check("projeto passa a seguir as datas da revisão e volta a executar",
+               _stt == "Ativo" and _drec == date(2026, 5, 2)
+               and _dterm == date(2026, 6, 1), (_stt, _drec, _dterm))
+        _check("rótulo da revisão espelhado no projeto", _ratual == "R01",
+               _ratual)
+
+        cc = db.conectar(); cx = cc.cursor()
+        cx.execute("SELECT disciplina, percentual FROM progresso_disciplinas "
+                   "WHERE projeto_id=%s", (pid,))
+        _prog = dict(cx.fetchall())
+        cx.execute("SELECT percentual FROM etapas_projeto WHERE projeto_id=%s",
+                   (pid,))
+        _pct_et = [r[0] for r in cx.fetchall()]
+        cc.close()
+        _check("começa do zero: zera só as disciplinas da revisão e as etapas",
+               _prog.get("Elétrica") == 0 and _prog.get("CFTV") == 100
+               and _pct_et == [0], (_prog, _pct_et))
+
+        _id_r0 = db.listar_revisoes(pid)[0]["id"]
+        db.adicionar_documentos_projeto(pid, ["Planta.dwg"], criado_por=nm,
+                                        revisao_id=_id_r0)
+        db.adicionar_documentos_projeto(pid, ["Planta.dwg"], criado_por=nm,
+                                        revisao_id=_id_rv)
+        _docs = db.listar_documentos_projeto(pid)
+        _check("mesmo documento pode ser reemitido noutra revisão",
+               len(_docs) == 2
+               and {d["revisao"] for d in _docs} == {"Emissão inicial", "R01"},
+               [(d["nome"], d["revisao"]) for d in _docs])
+        _rep = db.adicionar_documentos_projeto(pid, ["planta.DWG"],
+                                               criado_por=nm,
+                                               revisao_id=_id_rv)[1]
+        _check("repetido na MESMA revisão é ignorado", _rep == ["planta.DWG"],
+               _rep)
+
+        _check("desfazer devolve o rótulo da revisão",
+               db.excluir_revisao(_id_rv) == "R01")
+        _docs = db.listar_documentos_projeto(pid)
+        _check("documentos da revisão desfeita voltam pra anterior",
+               all(d["revisao"] == "Emissão inicial" for d in _docs),
+               [(d["nome"], d["revisao"]) for d in _docs])
+        _check("anterior é reaberta e o rótulo do projeto volta",
+               db.listar_revisoes(pid)[0]["entregue_em"] is None
+               and _proj()[5] == "Emissão inicial")
+        _check("emissão inicial não pode ser desfeita",
+               db.excluir_revisao(db.listar_revisoes(pid)[0]["id"]) is None)
+    finally:
+        db.excluir_projeto(pid)
+        cc = db.conectar(); cx = cc.cursor()
+        cx.execute("SELECT COUNT(*) FROM projeto_revisoes WHERE projeto_id=%s",
+                   (pid,))
+        _sobra = cx.fetchone()[0]
+        cc.close()
+        _check("excluir o projeto leva as revisões junto", _sobra == 0)
+
+
 def main():
     db.criar_tabelas()
     db_tarefas()
     db_tarefas_proj_rec()
     db_documentos_etapas()
+    db_revisoes()
     # 1 tarefa pro usuário das views, pra exercitar o data_editor de Tarefas.
     db.criar_tarefa("ZZsmoke_gestor", "render check", privada=True,
                     criado_por="ZZsmoke_gestor", data=date.today())

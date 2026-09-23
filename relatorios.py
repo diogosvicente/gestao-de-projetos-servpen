@@ -255,6 +255,7 @@ def gerar_excel(df, df_etapas=None, df_progresso=None):
                 ('Link Drive',         'link_projeto',       30),
                 ('Escopo',             'solicitacao',        45),
                 ('Disciplinas',        'demandas',           40),
+                ('Revisão atual',      'revisao_atual',      14),
                 ('Fonte de Recurso',   'fonte_recurso',      25),
                 ('Documentações Geradas', 'documentacoes_geradas', 35),
                 ('Observações',        'observacoes',        40),
@@ -403,7 +404,7 @@ def gerar_excel_historico(df):
 
 
 # ═════════════════════════════════════════════════════════════
-def gerar_pdf(df, df_etapas=None, df_progresso=None):
+def gerar_pdf(df, df_etapas=None, df_progresso=None, df_revisoes=None):
     # ── SOLUÇÃO CONTRA DUPLICIDADE: HIGIENIZAÇÃO DE ÍNDICES E COLUNAS ──
     if df is not None:
         df = df.copy().reset_index(drop=True)
@@ -601,6 +602,43 @@ def gerar_pdf(df, df_etapas=None, df_progresso=None):
                 ('Data de Término',        _data_fmt(proj.get('data_termino', proj.get('data_fim','')))),
             ]))
             story.append(Spacer(1, 0.2*cm))
+
+            # Revisões/emissões da demanda (pedido de 23/09/2026): o histórico
+            # de cada volta do pedido, com responsável, datas e o que mudou.
+            if df_revisoes is not None and not df_revisoes.empty:
+                rev_proj = (df_revisoes[df_revisoes['projeto_id'] == proj.get('id')]
+                            if 'projeto_id' in df_revisoes.columns else pd.DataFrame())
+                if not rev_proj.empty:
+                    story.append(_secao('Revisões e Emissões'))
+                    rv_rows = [[
+                        Paragraph('Revisão', st['cabecalho_tab']),
+                        Paragraph('Pedido', st['cabecalho_tab']),
+                        Paragraph('Previsão', st['cabecalho_tab']),
+                        Paragraph('Entrega', st['cabecalho_tab']),
+                        Paragraph('Responsável', st['cabecalho_tab']),
+                        Paragraph('O que foi pedido', st['cabecalho_tab']),
+                    ]]
+                    for _, rv in rev_proj.sort_values('numero').iterrows():
+                        num_rv = int(rv.get('numero', 0) or 0)
+                        rot_rv = ('Emissão inicial' if num_rv <= 0
+                                  else f'R{num_rv:02d}')
+                        desc_rv = _txt(rv.get('descricao', ''))
+                        disc_rv = _txt(rv.get('disciplinas', ''), '')
+                        if disc_rv:
+                            desc_rv += f' (disciplinas: {disc_rv})'
+                        rv_rows.append([
+                            Paragraph(rot_rv, st['celula']),
+                            Paragraph(_data_fmt(rv.get('solicitado_em', '')), st['celula']),
+                            Paragraph(_data_fmt(rv.get('previsao', '')), st['celula']),
+                            Paragraph(_data_fmt(rv.get('entregue_em', '')), st['celula']),
+                            Paragraph(_txt(rv.get('projetista', '')), st['celula']),
+                            Paragraph(desc_rv, st['celula']),
+                        ])
+                    t_rv = Table(rv_rows, colWidths=[2.2*cm, 2*cm, 2*cm, 2*cm,
+                                                     3.4*cm, w_util - 11.6*cm])
+                    t_rv.setStyle(_tabela_estilo(6))
+                    story.append(t_rv)
+                    story.append(Spacer(1, 0.2*cm))
 
             esc = _txt(proj.get('solicitacao',''))
             if esc != '—':

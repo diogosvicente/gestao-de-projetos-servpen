@@ -845,6 +845,30 @@ def _criar_tabelas_impl():
         c.execute("CREATE INDEX IF NOT EXISTS idx_projeto_documentos_proj "
                   "ON projeto_documentos(projeto_id)")
 
+        # ── REVISÕES / EMISSÕES DA DEMANDA ──
+        # Pedido de 23/09/2026: a mesma demanda volta meses depois pedindo
+        # modificação ou acréscimo, com outro projetista e prazo próprios —
+        # é uma revisão do MESMO projeto, não um projeto novo. Cada linha
+        # guarda o que foi pedido, as disciplinas que a revisão cobre (vazio
+        # = demanda inteira), quem foi designado, as datas e se ela recomeçou
+        # do zero. numero 0 = emissão inicial; 1, 2… = R01, R02.
+        c.execute('''CREATE TABLE IF NOT EXISTS projeto_revisoes (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            projeto_id BIGINT NOT NULL,
+            numero INT NOT NULL,
+            descricao TEXT,
+            disciplinas TEXT,
+            projetista TEXT,
+            solicitado_em DATE,
+            previsao DATE,
+            entregue_em DATE,
+            do_zero INT DEFAULT 0,
+            criado_por TEXT,
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
+        c.execute("CREATE INDEX IF NOT EXISTS idx_projeto_revisoes_proj "
+                  "ON projeto_revisoes(projeto_id, numero)")
+
         # ── PASTAS (hierarquia de arquivos por projeto) ──
         # Auto-referenciada: pasta_pai_id NULL = pasta na raiz do projeto.
         # As pastas existem SÓ no banco — o arquivo físico continua caindo em
@@ -1073,6 +1097,13 @@ def _criar_tabelas_impl():
             # arquivos que já existem hoje ficam NULL — ou seja, na raiz —
             # sem precisar de migração de dados.
             ("arquivos",              "pasta_id",           "BIGINT"),
+            # Revisões (pedido de 23/09/2026): a que revisão cada arquivo e
+            # cada documentação pertence, e o rótulo da revisão atual
+            # espelhado no projeto — é o que o card do Kanban e o Excel leem
+            # sem precisar consultar a tabela de revisões.
+            ("arquivos",              "revisao_id",         "BIGINT"),
+            ("projeto_documentos",    "revisao_id",         "BIGINT"),
+            ("projetos",              "revisao_atual",      "TEXT"),
         ]
         # PASSO 1: lê o schema atual via information_schema (SELECT, só
         # pega AccessShareLock — NÃO conflita com nada). Migrations cujo
@@ -1236,6 +1267,63 @@ def _criar_tabelas_impl():
         except Exception as e:
             c.execute("ROLLBACK TO SAVEPOINT mig_checklist")
             log.warning("migração do checklist adicional pulada: %s", e)
+
+        # ── BACKFILL DAS REVISÕES (emissão inicial) ──
+        # Todo projeto que já existe ganha a "Emissão inicial" com os dados
+        # que ele tem hoje, e os arquivos e documentações passam a apontar
+        # pra ela — nada muda de lugar, só ganha a marca da revisão.
+        # Idempotente: só cria pra projeto sem nenhuma revisão, e os UPDATEs
+        # só tocam linha com revisao_id nulo.
+        try:
+            c.execute("SAVEPOINT bf_revisoes")
+            c.execute("""
+                SELECT p.id, p.projetista, p.data_recebimento,
+                       p.previsao_execucao, p.data_termino, p.data_fim,
+                       p.status
+                  FROM projetos p
+                 WHERE NOT EXISTS (SELECT 1 FROM projeto_revisoes r
+                                    WHERE r.projeto_id = p.id)
+            """)
+            _pend_rev = c.fetchall()
+            for _pid, _eq, _drec, _prev, _dterm, _dfim, _stt in _pend_rev:
+                _entregue = ((_dterm or _dfim)
+                             if str(_stt or "").strip() == "Concluído" else None)
+                c.execute(
+                    "INSERT INTO projeto_revisoes (projeto_id, numero, "
+                    "projetista, solicitado_em, previsao, entregue_em, "
+                    "criado_por) VALUES (%s,0,%s,%s,%s,%s,%s)",
+                    (_pid, _eq, _drec, _prev or _dterm or _dfim, _entregue,
+                     "migração"),
+                )
+            c.execute("""
+                UPDATE arquivos a SET revisao_id = (
+                    SELECT r.id FROM projeto_revisoes r
+                     WHERE r.projeto_id = a.projeto_id
+                     ORDER BY r.numero LIMIT 1)
+                 WHERE a.revisao_id IS NULL
+            """)
+            c.execute("""
+                UPDATE projeto_documentos d SET revisao_id = (
+                    SELECT r.id FROM projeto_revisoes r
+                     WHERE r.projeto_id = d.projeto_id
+                     ORDER BY r.numero LIMIT 1)
+                 WHERE d.revisao_id IS NULL
+            """)
+            c.execute("""
+                UPDATE projetos p SET revisao_atual = (
+                    SELECT CASE WHEN MAX(r.numero) = 0 THEN 'Emissão inicial'
+                                ELSE 'R' || LPAD(MAX(r.numero)::text, 2, '0')
+                           END
+                      FROM projeto_revisoes r WHERE r.projeto_id = p.id)
+                 WHERE EXISTS (SELECT 1 FROM projeto_revisoes r
+                                WHERE r.projeto_id = p.id)
+            """)
+            if _pend_rev:
+                log.info("backfill revisões: %d projeto(s)", len(_pend_rev))
+            c.execute("RELEASE SAVEPOINT bf_revisoes")
+        except Exception as e:
+            c.execute("ROLLBACK TO SAVEPOINT bf_revisoes")
+            log.warning("backfill das revisões pulado: %s", e)
 
         conn.commit()
     except Exception as e:
@@ -1494,19 +1582,29 @@ def mover_tag_projeto(id_tag, delta):
 # que o Excel e o PDF leem (mesmo esquema da trilha com `projetos.tags`).
 def _sincronizar_documentos_txt(projeto_id, cur=None):
     """Reescreve projetos.documentacoes_geradas a partir da lista, na ordem
-    de registro: "Memorial.pdf (10/09/2026); ART.pdf (10/09/2026)"."""
+    de registro: "Memorial.pdf (R01, 23/09/2026); ART.pdf (12/03/2026)".
+    O rótulo da revisão só aparece a partir da R01 — o que é da emissão
+    inicial fica só com a data, como antes."""
     _fechar = cur is None
     conn = None
     if _fechar:
         conn = conectar(); cur = conn.cursor()
     try:
-        cur.execute("SELECT nome, criado_em FROM projeto_documentos "
-                    "WHERE projeto_id=%s ORDER BY criado_em NULLS FIRST, id",
+        cur.execute("SELECT d.nome, d.criado_em, r.numero "
+                    "FROM projeto_documentos d "
+                    "LEFT JOIN projeto_revisoes r ON r.id = d.revisao_id "
+                    "WHERE d.projeto_id=%s "
+                    "ORDER BY d.criado_em NULLS FIRST, d.id",
                     (int(projeto_id),))
-        _itens = [
-            f"{nome} ({quando.strftime('%d/%m/%Y')})" if quando else nome
-            for nome, quando in cur.fetchall()
-        ]
+        _itens = []
+        for _nome, _quando, _num in cur.fetchall():
+            _partes = []
+            if _num:
+                _partes.append(rotulo_revisao(_num))
+            if _quando:
+                _partes.append(_quando.strftime('%d/%m/%Y'))
+            _itens.append(f"{_nome} ({', '.join(_partes)})" if _partes
+                          else _nome)
         cur.execute("UPDATE projetos SET documentacoes_geradas=%s WHERE id=%s",
                     ("; ".join(_itens) or None, int(projeto_id)))
         if _fechar:
@@ -1518,32 +1616,46 @@ def _sincronizar_documentos_txt(projeto_id, cur=None):
 
 def listar_documentos_projeto(projeto_id):
     """Documentações de um projeto, as mais recentes primeiro:
-    [{id, nome, criado_por, criado_em}]. `criado_em` None = veio do texto
-    antigo, na migração."""
+    [{id, nome, criado_por, criado_em, revisao_id, revisao}]. `criado_em`
+    None = veio do texto antigo, na migração; `revisao` é o rótulo
+    ('Emissão inicial', 'R01'…) da revisão em que o documento entrou."""
     conn = conectar(); c = conn.cursor()
     try:
-        c.execute("SELECT id, nome, criado_por, criado_em "
-                  "FROM projeto_documentos WHERE projeto_id=%s "
-                  "ORDER BY criado_em DESC NULLS LAST, id DESC",
+        c.execute("SELECT d.id, d.nome, d.criado_por, d.criado_em, "
+                  "d.revisao_id, r.numero FROM projeto_documentos d "
+                  "LEFT JOIN projeto_revisoes r ON r.id = d.revisao_id "
+                  "WHERE d.projeto_id=%s "
+                  "ORDER BY d.criado_em DESC NULLS LAST, d.id DESC",
                   (int(projeto_id),))
         return [{"id": r[0], "nome": r[1], "criado_por": r[2],
-                 "criado_em": r[3]} for r in c.fetchall()]
+                 "criado_em": r[3], "revisao_id": r[4],
+                 "revisao": rotulo_revisao(r[5]) if r[5] is not None else None}
+                for r in c.fetchall()]
     finally:
         conn.close()
 
 
-def adicionar_documentos_projeto(projeto_id, nomes, criado_por=None):
-    """Registra vários nomes de uma vez. Ignora vazios e nomes que o projeto
-    já tem (sem diferenciar maiúsculas), então selecionar o mesmo arquivo de
-    novo não duplica. Retorna (registrados, repetidos) — listas de nomes.
+def adicionar_documentos_projeto(projeto_id, nomes, criado_por=None,
+                                 revisao_id=None):
+    """Registra vários nomes de uma vez, na revisão indicada.
+
+    Ignora vazios e nomes que a MESMA REVISÃO já tem (sem diferenciar
+    maiúsculas), então selecionar o mesmo arquivo duas vezes não duplica —
+    mas o mesmo documento pode ser registrado de novo numa revisão seguinte,
+    que é justamente a nova emissão dele. Retorna (registrados, repetidos).
 
     A comparação é feita em Python, não com LOWER() do Postgres: dependendo
     do locale do banco, LOWER() não mexe em letra acentuada ("MEMÓRIA")."""
     registrados, repetidos = [], []
     conn = conectar(); c = conn.cursor()
     try:
-        c.execute("SELECT nome FROM projeto_documentos WHERE projeto_id=%s",
-                  (int(projeto_id),))
+        if revisao_id is None:
+            c.execute("SELECT nome FROM projeto_documentos WHERE projeto_id=%s "
+                      "AND revisao_id IS NULL", (int(projeto_id),))
+        else:
+            c.execute("SELECT nome FROM projeto_documentos WHERE projeto_id=%s "
+                      "AND revisao_id=%s",
+                      (int(projeto_id), int(revisao_id)))
         _ja = {str(r[0]).lower() for r in c.fetchall()}
         for nome in nomes or []:
             nome = str(nome or "").strip()
@@ -1554,8 +1666,10 @@ def adicionar_documentos_projeto(projeto_id, nomes, criado_por=None):
                 continue
             _ja.add(nome.lower())
             c.execute("INSERT INTO projeto_documentos "
-                      "(projeto_id, nome, criado_por) VALUES (%s,%s,%s)",
-                      (int(projeto_id), nome, criado_por or ""))
+                      "(projeto_id, nome, criado_por, revisao_id) "
+                      "VALUES (%s,%s,%s,%s)",
+                      (int(projeto_id), nome, criado_por or "",
+                       int(revisao_id) if revisao_id else None))
             registrados.append(nome)
         if registrados:
             _sincronizar_documentos_txt(projeto_id, c)
@@ -1582,6 +1696,263 @@ def excluir_documento_projeto(id_doc):
         _sincronizar_documentos_txt(row[0], c)
         conn.commit()
         return row[1]
+    finally:
+        conn.close()
+
+
+# ─── REVISÕES / EMISSÕES DA DEMANDA ───────────────────────
+# A mesma demanda volta meses depois pedindo modificação ou acréscimo, com
+# outro projetista e prazo próprios (pedido de 23/09/2026). Cada volta é uma
+# REVISÃO do mesmo projeto — não um projeto novo, que é o que a clonagem
+# fazia e deixava o Kanban com dois cards da mesma demanda. Abrir revisão é
+# do Gestor. O rótulo da revisão atual fica espelhado em
+# `projetos.revisao_atual` (mesmo esquema da trilha e das documentações), que
+# é o que o card do Kanban e o Excel leem.
+def rotulo_revisao(numero):
+    """0 → 'Emissão inicial'; 1 → 'R01'; 2 → 'R02'…"""
+    numero = int(numero or 0)
+    return "Emissão inicial" if numero <= 0 else f"R{numero:02d}"
+
+
+def _sincronizar_revisao_txt(projeto_id, cur):
+    """Reescreve projetos.revisao_atual a partir da maior revisão."""
+    cur.execute("SELECT MAX(numero) FROM projeto_revisoes WHERE projeto_id=%s",
+                (int(projeto_id),))
+    _n = cur.fetchone()[0]
+    cur.execute("UPDATE projetos SET revisao_atual=%s WHERE id=%s",
+                (rotulo_revisao(_n) if _n is not None else None,
+                 int(projeto_id)))
+
+
+def listar_revisoes(projeto_id):
+    """Revisões do projeto, da emissão inicial pra mais nova:
+    [{id, numero, rotulo, descricao, disciplinas, projetista, solicitado_em,
+      previsao, entregue_em, do_zero, criado_por, criado_em}]."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("SELECT id, numero, descricao, disciplinas, projetista, "
+                  "solicitado_em, previsao, entregue_em, do_zero, criado_por, "
+                  "criado_em FROM projeto_revisoes WHERE projeto_id=%s "
+                  "ORDER BY numero, id", (int(projeto_id),))
+        return [{"id": r[0], "numero": r[1], "rotulo": rotulo_revisao(r[1]),
+                 "descricao": r[2], "disciplinas": r[3], "projetista": r[4],
+                 "solicitado_em": r[5], "previsao": r[6], "entregue_em": r[7],
+                 "do_zero": bool(r[8]), "criado_por": r[9], "criado_em": r[10]}
+                for r in c.fetchall()]
+    finally:
+        conn.close()
+
+
+def revisao_atual(projeto_id):
+    """A revisão mais recente do projeto (maior número), ou None."""
+    revs = listar_revisoes(projeto_id)
+    return revs[-1] if revs else None
+
+
+def criar_revisao_inicial(projeto_id, cur=None):
+    """Cria a 'Emissão inicial' (número 0) com os dados do próprio projeto.
+
+    Usada no cadastro, na clonagem e no backfill. Não faz nada se o projeto
+    já tem alguma revisão."""
+    _fechar = cur is None
+    conn = None
+    if _fechar:
+        conn = conectar(); cur = conn.cursor()
+    try:
+        cur.execute("SELECT 1 FROM projeto_revisoes WHERE projeto_id=%s "
+                    "LIMIT 1", (int(projeto_id),))
+        if cur.fetchone():
+            return None
+        cur.execute("SELECT projetista, data_recebimento, previsao_execucao, "
+                    "data_termino, data_fim, status FROM projetos WHERE id=%s",
+                    (int(projeto_id),))
+        row = cur.fetchone()
+        if not row:
+            return None
+        _eq, _drec, _prev, _dterm, _dfim, _stt = row
+        _entregue = ((_dterm or _dfim)
+                     if str(_stt or "").strip() == "Concluído" else None)
+        cur.execute(
+            "INSERT INTO projeto_revisoes (projeto_id, numero, projetista, "
+            "solicitado_em, previsao, entregue_em, criado_por) "
+            "VALUES (%s,0,%s,%s,%s,%s,%s) RETURNING id",
+            (int(projeto_id), _eq, _drec, _prev or _dterm or _dfim, _entregue,
+             "cadastro"),
+        )
+        novo = cur.fetchone()[0]
+        _sincronizar_revisao_txt(projeto_id, cur)
+        if _fechar:
+            conn.commit()
+        return novo
+    finally:
+        if _fechar and conn:
+            conn.close()
+
+
+def abrir_revisao(projeto_id, descricao, disciplinas=None, projetista=None,
+                  solicitado_em=None, previsao=None, do_zero=False,
+                  criado_por=None, entrega_anterior=None):
+    """Abre a próxima revisão da demanda. Retorna (id, numero) ou (None, None).
+
+    O que acontece junto — é o fluxo que a Sara descreveu em 23/09/2026:
+      - a revisão anterior ainda aberta é marcada como ENTREGUE
+        (`entrega_anterior`, ou hoje);
+      - disciplina escolhida que o projeto ainda não tinha É ACRESCENTADA a
+        ele ("acréscimo do que não tem"); revisão sem disciplina nenhuma vale
+        pela demanda inteira;
+      - o projetista designado entra na equipe do projeto, sem tirar ninguém
+        (o histórico de quem passou pela demanda não se perde);
+      - `do_zero=True` zera o progresso das disciplinas da revisão (todas, se
+        for da demanda inteira) e o % das etapas — é o caso "recomeçar";
+        `False` mantém tudo, que é o caso "modificar a anterior";
+      - o projeto passa a seguir as datas da revisão (recebimento, início e
+        entrega), que é o que o Kanban, o Gantt e o cálculo de atraso leem;
+      - projeto Concluído ou Parado volta pra Em Execução.
+    """
+    from datetime import date as _date
+    hoje = _date.today()
+    _discs = [d.strip() for d in str(disciplinas or "").split(",") if d.strip()]
+    _novos = [p.strip() for p in str(projetista or "").split(",") if p.strip()]
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("SELECT COALESCE(MAX(numero), -1) FROM projeto_revisoes "
+                  "WHERE projeto_id=%s", (int(projeto_id),))
+        _numero = int(c.fetchone()[0]) + 1
+        c.execute("UPDATE projeto_revisoes SET entregue_em=%s "
+                  "WHERE projeto_id=%s AND entregue_em IS NULL",
+                  (entrega_anterior or hoje, int(projeto_id)))
+        c.execute(
+            "INSERT INTO projeto_revisoes (projeto_id, numero, descricao, "
+            "disciplinas, projetista, solicitado_em, previsao, do_zero, "
+            "criado_por) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+            (int(projeto_id), _numero, (descricao or "").strip() or None,
+             ", ".join(_discs) or None, ", ".join(_novos) or None,
+             solicitado_em or hoje, previsao, 1 if do_zero else 0,
+             criado_por or ""),
+        )
+        _id_rev = c.fetchone()[0]
+
+        c.execute("SELECT demandas, projetista, status FROM projetos "
+                  "WHERE id=%s", (int(projeto_id),))
+        _dem, _equipe, _status = c.fetchone()
+        _dem_atual = [d.strip() for d
+                      in str(_dem or "").split("|")[0].split(",") if d.strip()]
+        _vistos = {d.lower() for d in _dem_atual}
+        _dem_final = _dem_atual + [d for d in _discs
+                                   if d.lower() not in _vistos]
+        _eq_atual = [p.strip() for p in str(_equipe or "").split(",")
+                     if p.strip()]
+        _eq_vistos = {p.lower() for p in _eq_atual}
+        _eq_final = _eq_atual + [p for p in _novos
+                                 if p.lower() not in _eq_vistos]
+        _status_novo = ("Ativo" if str(_status or "").strip()
+                        in ("Concluído", "🛑 Parado") else _status)
+        c.execute("UPDATE projetos SET demandas=%s, projetista=%s, status=%s, "
+                  "data_recebimento=%s, previsao_execucao=%s, "
+                  "data_inicio=%s, data_termino=%s, data_fim=%s WHERE id=%s",
+                  (", ".join(_dem_final), ", ".join(_eq_final), _status_novo,
+                   solicitado_em or hoje, hoje, hoje, previsao, previsao,
+                   int(projeto_id)))
+
+        if do_zero:
+            if _discs:
+                c.execute("UPDATE progresso_disciplinas SET concluido=0, "
+                          "percentual=0 WHERE projeto_id=%s "
+                          "AND disciplina = ANY(%s)",
+                          (int(projeto_id), _discs))
+            else:
+                c.execute("UPDATE progresso_disciplinas SET concluido=0, "
+                          "percentual=0 WHERE projeto_id=%s",
+                          (int(projeto_id),))
+            c.execute("UPDATE etapas_projeto SET percentual=0 "
+                      "WHERE projeto_id=%s", (int(projeto_id),))
+
+        _sincronizar_revisao_txt(projeto_id, c)
+        conn.commit()
+        return _id_rev, _numero
+    except Exception as e:
+        log.exception("Erro ao abrir revisão do projeto %s: %s", projeto_id, e)
+        conn.rollback()
+        return None, None
+    finally:
+        conn.close()
+
+
+def marcar_revisao_entregue(id_rev, data=None):
+    """Fecha uma revisão com a data de entrega (sem data, usa hoje)."""
+    from datetime import date as _date
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("UPDATE projeto_revisoes SET entregue_em=%s WHERE id=%s "
+                  "RETURNING projeto_id", (data or _date.today(), int(id_rev)))
+        _ok = bool(c.fetchone())
+        conn.commit()
+        return _ok
+    finally:
+        conn.close()
+
+
+def excluir_revisao(id_rev):
+    """Desfaz a ÚLTIMA revisão de um projeto — nunca a emissão inicial.
+
+    Serve pra corrigir revisão aberta por engano: os arquivos e as
+    documentações que entraram nela voltam pra revisão anterior, e a anterior
+    é reaberta (perde a data de entrega que ganhou quando esta foi aberta).
+    Retorna o rótulo removido, ou None se não for a última."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        c.execute("SELECT projeto_id, numero FROM projeto_revisoes WHERE id=%s",
+                  (int(id_rev),))
+        row = c.fetchone()
+        if not row:
+            return None
+        _pid, _num = int(row[0]), int(row[1])
+        if _num <= 0:
+            return None
+        c.execute("SELECT MAX(numero) FROM projeto_revisoes WHERE projeto_id=%s",
+                  (_pid,))
+        if int(c.fetchone()[0]) != _num:
+            return None
+        c.execute("SELECT id FROM projeto_revisoes WHERE projeto_id=%s "
+                  "AND numero=%s", (_pid, _num - 1))
+        _ant = c.fetchone()
+        _id_ant = _ant[0] if _ant else None
+        c.execute("UPDATE arquivos SET revisao_id=%s WHERE revisao_id=%s",
+                  (_id_ant, int(id_rev)))
+        c.execute("UPDATE projeto_documentos SET revisao_id=%s "
+                  "WHERE revisao_id=%s", (_id_ant, int(id_rev)))
+        c.execute("DELETE FROM projeto_revisoes WHERE id=%s", (int(id_rev),))
+        if _id_ant:
+            c.execute("UPDATE projeto_revisoes SET entregue_em=NULL "
+                      "WHERE id=%s", (_id_ant,))
+        _sincronizar_revisao_txt(_pid, c)
+        conn.commit()
+        return rotulo_revisao(_num)
+    except Exception as e:
+        log.exception("Erro ao excluir revisão %s: %s", id_rev, e)
+        conn.rollback()
+        return None
+    finally:
+        conn.close()
+
+
+def contar_por_revisao(projeto_id):
+    """{revisao_id: (arquivos, documentações)} — o tamanho de cada revisão
+    em duas consultas, em vez de duas por revisão."""
+    conn = conectar(); c = conn.cursor()
+    try:
+        saida = {}
+        c.execute("SELECT revisao_id, COUNT(*) FROM arquivos "
+                  "WHERE projeto_id=%s GROUP BY revisao_id",
+                  (int(projeto_id),))
+        for _rid, _n in c.fetchall():
+            saida.setdefault(_rid, [0, 0])[0] = _n
+        c.execute("SELECT revisao_id, COUNT(*) FROM projeto_documentos "
+                  "WHERE projeto_id=%s GROUP BY revisao_id",
+                  (int(projeto_id),))
+        for _rid, _n in c.fetchall():
+            saida.setdefault(_rid, [0, 0])[1] = _n
+        return {k: tuple(v) for k, v in saida.items()}
     finally:
         conn.close()
 
@@ -1628,6 +1999,9 @@ def salvar_projeto(dados, codigo=None, local=None, fonte_recurso=None,
                   (*dados, codigo, local, fonte_recurso, observacoes,
                    documentacoes_geradas))
         novo_id = c.fetchone()[0]
+        # Todo projeto nasce com a "Emissão inicial" (revisão 0); as
+        # revisões seguintes são abertas no Kanban, pelo Gestor.
+        criar_revisao_inicial(novo_id, c)
         conn.commit()
         return novo_id
     except Exception as e:
@@ -1786,6 +2160,8 @@ def excluir_projeto(id_p):
         c.execute("DELETE FROM pastas WHERE projeto_id = %s", (int(id_p),))
         c.execute("DELETE FROM projeto_documentos WHERE projeto_id = %s",
                   (int(id_p),))
+        c.execute("DELETE FROM projeto_revisoes WHERE projeto_id = %s",
+                  (int(id_p),))
         c.execute("DELETE FROM projetos WHERE id = %s", (int(id_p),))
         conn.commit()
     finally:
@@ -1806,6 +2182,7 @@ def clonar_projeto(id_origem, sufixo=" (cópia)"):
       - Datas concretas (recebimento/início/fim → hoje, previsão → hoje)
       - Diário / arquivos / progresso de disciplinas
       - Documentações geradas (são registros do projeto original)
+      - Revisões (o clone começa na sua própria Emissão inicial)
       - Menções (acesso e notificações)
 
     O nome ganha um `sufixo` (default " (cópia)") pra distinguir do original.
@@ -1883,6 +2260,10 @@ def clonar_projeto(id_origem, sufixo=" (cópia)"):
                 "VALUES (%s,%s,0,%s,%s)",
                 (novo_id, _txt, _ord, "clone"),
             )
+
+        # O clone é outra demanda: começa na própria Emissão inicial, sem
+        # herdar o histórico de revisões do original.
+        criar_revisao_inicial(novo_id, c)
 
         conn.commit()
         log.info("clonar_projeto: id_origem=%s -> novo_id=%s, %d etapas copiadas",
@@ -2717,23 +3098,27 @@ def listar_auditoria(limit=200, filtro_usuario=None, filtro_acao=None):
 PASTA_ANEXOS = 'anexos'
 
 def salvar_arquivo(projeto_id, nome_original, path_arquivo, descricao, autor,
-                   tamanho_bytes, mime_type='', pasta_id=None):
+                   tamanho_bytes, mime_type='', pasta_id=None,
+                   revisao_id=None):
     """Insere a linha de metadados do arquivo.
 
     `pasta_id=None` = arquivo na raiz do projeto (comportamento de sempre).
+    `revisao_id` marca em qual revisão da demanda o arquivo entrou — quem
+    envia não escolhe: é sempre a revisão aberta no momento.
     """
     conn = conectar(); c = conn.cursor()
     c.execute('''INSERT INTO arquivos
                  (projeto_id, nome_original, path_arquivo, descricao, autor,
-                  tamanho_bytes, mime_type, pasta_id)
-                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s)''',
+                  tamanho_bytes, mime_type, pasta_id, revisao_id)
+                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
               (int(projeto_id), nome_original, path_arquivo, descricao or '',
                autor or '', int(tamanho_bytes or 0), mime_type or '',
-               int(pasta_id) if pasta_id else None))
+               int(pasta_id) if pasta_id else None,
+               int(revisao_id) if revisao_id else None))
     conn.commit(); conn.close()
 
 def listar_arquivos(projeto_id=None, pasta_id=None, so_da_pasta=False):
-    """Lista arquivos (tupla de 9: ..., tamanho_bytes, pasta_id).
+    """Lista arquivos (tupla de 10: ..., tamanho_bytes, pasta_id, revisao_id).
 
     - `so_da_pasta=False` (default): traz TODOS os arquivos do escopo, sem
       olhar pasta — é o que alimenta as métricas e a busca global.
@@ -2743,7 +3128,8 @@ def listar_arquivos(projeto_id=None, pasta_id=None, so_da_pasta=False):
     """
     conn = conectar(); c = conn.cursor()
     _cols = ('''SELECT id, projeto_id, nome_original, path_arquivo,
-                       descricao, autor, data_upload, tamanho_bytes, pasta_id
+                       descricao, autor, data_upload, tamanho_bytes, pasta_id,
+                       revisao_id
                   FROM arquivos''')
     _where, _par = [], []
     if projeto_id is not None:

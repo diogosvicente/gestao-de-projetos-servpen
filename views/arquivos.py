@@ -174,9 +174,18 @@ else:
     st.caption("ℹ️ Criar e excluir pastas é função do Gestor. Você pode "
                "enviar e baixar arquivos normalmente.")
 
-# ── UPLOAD (cai na pasta atual) ──────────────────────────────────────
+# ── UPLOAD (cai na pasta atual e na revisão aberta) ──────────────────
+# Pedido de 23/09/2026: o arquivo enviado entra na revisão que está aberta,
+# sem ninguém precisar escolher — é o que separa, na lista, o que foi da
+# emissão inicial e o que veio em cada revisão.
+_revs_proj = db.listar_revisoes(proj_id)
+_rev_ativa = _revs_proj[-1] if _revs_proj else None
+_rotulos_rev = {r["id"]: r["rotulo"] for r in _revs_proj}
 _dest = _trilha[-1]["nome"] if _trilha else "Raiz"
-with st.expander(f"⬆️ Anexar arquivo em: {_dest}", expanded=False):
+_titulo_upload = f"⬆️ Anexar arquivo em: {_dest}" + (
+    f"  ·  {_rev_ativa['rotulo']}" if _rev_ativa else ""
+)
+with st.expander(_titulo_upload, expanded=False):
     with st.form("form_upload_arquivo", clear_on_submit=True):
         desc_upload = st.text_input("Descrição (opcional)", key="upload_desc")
         arquivos_novos = st.file_uploader(
@@ -222,6 +231,7 @@ with st.expander(f"⬆️ Anexar arquivo em: {_dest}", expanded=False):
                         tamanho_bytes=arq.size,
                         mime_type=arq.type or "",
                         pasta_id=pasta_atual,
+                        revisao_id=(_rev_ativa or {}).get("id"),
                     )
                     db.log_aud(usuario, "upload", "arquivo", proj_id,
                                f"nome='{arq.name}', {arq.size}B, "
@@ -315,7 +325,9 @@ if _arqs:
     }
     for row in _arqs:
         (arq_id, _pid_row, nome_original, path_arquivo, descricao,
-         autor, data_upload, tamanho_bytes, _pasta_id_row) = row
+         autor, data_upload, tamanho_bytes, _pasta_id_row,
+         _rev_id_row) = row
+        _rot_arq = _rotulos_rev.get(_rev_id_row)
         ext = os.path.splitext(nome_original)[1].lower()
         icone = _icones.get(ext, "📎")
 
@@ -347,6 +359,7 @@ if _arqs:
                 st.caption(
                     f"👤 {autor or '—'}  ·  📅 {data_fmt}  ·  "
                     f"💾 {tamanho_str}"
+                    + (f"  ·  🔁 {_rot_arq}" if _rot_arq else "")
                 )
                 if descricao:
                     st.markdown(

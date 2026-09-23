@@ -972,9 +972,15 @@ try:
         FROM progresso_disciplinas pd
         JOIN projetos p ON pd.projeto_id = p.id
     """, _eng_rel)
+    # Histórico de revisões da demanda — vai pro PDF completo.
+    _df_rev_rel = pd.read_sql("""
+        SELECT r.* FROM projeto_revisoes r
+        ORDER BY r.projeto_id, r.numero
+    """, _eng_rel)
 except Exception:
     _df_etapas_rel = pd.DataFrame()
     _df_prog_rel = pd.DataFrame()
+    _df_rev_rel = pd.DataFrame()
 
 c_r1, c_r2, c_r3 = st.columns(3)
 
@@ -1012,6 +1018,7 @@ with c_r2:
                 df_p_limpo,
                 df_etapas=_df_etapas_rel if not _df_etapas_rel.empty else None,
                 df_progresso=_df_prog_rel if not _df_prog_rel.empty else None,
+                df_revisoes=_df_rev_rel if not _df_rev_rel.empty else None,
             )
         if dados_pdf:
             st.download_button(

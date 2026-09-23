@@ -804,6 +804,19 @@ else:
         background: var(--kc-bg, #444);
         overflow: hidden;
     }
+    /* Selo da revisão atual (R01, R02…) ao lado do nome. O card tem fundo
+       colorido e texto branco nos dois temas, então o selo é um véu branco
+       por cima — funciona em qualquer cor de coluna. */
+    .kc .rev {
+        display: inline-block;
+        margin-left: 6px;
+        padding: 0 6px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.22);
+        font-size: .68rem;
+        font-weight: 700;
+        vertical-align: middle;
+    }
     .kc.kc-d-c { padding: 6px 8px; font-size: 11px;   line-height: 1.3;
                  margin-bottom: 5px; }
     .kc.kc-d-n { padding: 9px 11px; font-size: 12.5px; line-height: 1.4;
@@ -984,10 +997,15 @@ else:
                         f'<div class="meta">💰 {_fr}</div>' if _fr else ""
                     )
 
+                    # Revisão atual no card: só a partir da R01 — emissão
+                    # inicial não vira selo, pra não poluir o quadro.
+                    _rev_lbl = str(p.get("revisao_atual") or "").strip()
+                    _rev_selo = (f'<span class="rev">{_rev_lbl}</span>'
+                                 if _rev_lbl.startswith("R") else "")
                     card_html = (
                         f'<div class="kc {cfg["card_cls"]} {_density_cls}">'
                         f'<div class="row1">{badge_alerta}{badge_pri}</div>'
-                        f'<div class="nome">{p["projeto"]}</div>'
+                        f'<div class="nome">{p["projeto"]}{_rev_selo}</div>'
                         f'<div class="meta">👤 {p["projetista"]} · 📅 {prazo_str}</div>'
                         f'{_fr_html}'
                         f'{_tags_wrap}'
@@ -1449,6 +1467,195 @@ if "projeto_em_edicao" in st.session_state:
         st.rerun()
 
     # ════════════════════════════════════════════════════════
+    #  REVISÕES / EMISSÕES DA DEMANDA
+    # ════════════════════════════════════════════════════════
+    # Pedido de 23/09/2026: a demanda volta meses depois pedindo modificação
+    # ou acréscimo, com outro projetista e prazo próprios. Cada volta é uma
+    # revisão do MESMO projeto (antes, o jeito era clonar, e o quadro ficava
+    # com dois cards da mesma demanda). Abrir revisão é só do Gestor; a lista
+    # todo mundo vê.
+    st.markdown("### 🔁 Revisões e Emissões")
+
+    _revs = db.listar_revisoes(id_ed)
+    _cont_rev = db.contar_por_revisao(id_ed)
+    _rev_ativa = _revs[-1] if _revs else None
+    _ct_rev = _cores_tema()
+
+    def _cb_rev_entregue(id_rev, rotulo):
+        db.marcar_revisao_entregue(id_rev)
+        db.log_aud(usuario, "revisão", "projeto", id_ed,
+                   f"{rotulo} marcada como entregue")
+        _invalidar_dados()
+
+    def _cb_rev_del(id_rev):
+        _rot_rm = db.excluir_revisao(id_rev)
+        if _rot_rm:
+            db.log_aud(usuario, "revisão", "projeto", id_ed,
+                       f"{_rot_rm} desfeita")
+            _invalidar_dados()
+
+    if not _revs:
+        st.caption("Nenhuma revisão registrada.")
+
+    for _rv in reversed(_revs):
+        _n_arq_rv, _n_doc_rv = _cont_rev.get(_rv["id"], (0, 0))
+        _sit_rv = (
+            f"✅ entregue em {_rv['entregue_em'].strftime('%d/%m/%Y')}"
+            if _rv["entregue_em"] else "⏳ em execução"
+        )
+        _meta_rv = [f"👤 {_html.escape(str(_rv['projetista'] or '—'))}"]
+        if _rv["solicitado_em"]:
+            _meta_rv.append(
+                f"📥 pedido {_rv['solicitado_em'].strftime('%d/%m/%Y')}")
+        if _rv["previsao"]:
+            _meta_rv.append(
+                f"🎯 previsão {_rv['previsao'].strftime('%d/%m/%Y')}")
+        _meta_rv.append(f"📎 {_n_arq_rv} arquivo(s) · 📄 {_n_doc_rv} doc(s)")
+        with st.container(border=True):
+            rc1, rc2 = st.columns([0.78, 0.22], vertical_alignment="center")
+            rc1.markdown(
+                f"<div style='font-weight:700'>{_rv['rotulo']} "
+                f"<span style='font-weight:500;font-size:.82rem;"
+                f"color:{_ct_rev['texto_fraco']}'>· {_sit_rv}</span></div>"
+                f"<div style='font-size:.82rem;"
+                f"color:{_ct_rev['texto_fraco']}'>"
+                + " · ".join(_meta_rv) + "</div>"
+                + (f"<div style='margin-top:4px'>"
+                   f"{_html.escape(str(_rv['descricao']))}</div>"
+                   if _rv["descricao"] else "")
+                + (f"<div style='font-size:.8rem;"
+                   f"color:{_ct_rev['texto_fraco']};margin-top:2px'>"
+                   f"📐 {_html.escape(str(_rv['disciplinas']))}</div>"
+                   if _rv["disciplinas"] else "")
+                + ("<div style='font-size:.8rem;color:#f59e0b;"
+                   "margin-top:2px'>🔄 recomeçou do zero</div>"
+                   if _rv["do_zero"] else ""),
+                unsafe_allow_html=True,
+            )
+            if _pode_gestor():
+                if not _rv["entregue_em"]:
+                    rc2.button(
+                        "✅ Entregue", key=f"rev_ok_{id_ed}_{_rv['id']}",
+                        width="stretch",
+                        help="Marca esta revisão como entregue hoje.",
+                        on_click=_cb_rev_entregue,
+                        args=(_rv["id"], _rv["rotulo"]),
+                    )
+                if (_rv["numero"] > 0 and _rev_ativa
+                        and _rv["id"] == _rev_ativa["id"]):
+                    rc2.button(
+                        "🗑 Desfazer", key=f"rev_del_{id_ed}_{_rv['id']}",
+                        width="stretch",
+                        help=("Desfaz esta revisão: os arquivos e as "
+                              "documentações dela voltam pra revisão "
+                              "anterior, que é reaberta."),
+                        on_click=_cb_rev_del, args=(_rv["id"],),
+                    )
+
+    if _pode_gestor():
+        with st.expander("➕ Abrir nova revisão", expanded=not _revs):
+            _discs_rv = [
+                d.strip() for d
+                in str(dados.get("demandas", "")).split("|")[0].split(",")
+                if d.strip()
+            ]
+            _opts_disc_rv = list(dict.fromkeys(
+                _discs_rv + (st.session_state.get("lista_checklist") or [])
+            ))
+            _eq_rv = [p.strip() for p
+                      in str(dados.get("projetista", "")).split(",")
+                      if p.strip()]
+            _opts_eq_rv = list(dict.fromkeys(df_u["nome"].tolist() + _eq_rv))
+            with st.form(f"form_nova_revisao_{id_ed}"):
+                _rv_desc = st.text_area(
+                    "O que foi pedido nesta revisão *", height=80,
+                    placeholder="ex.: acréscimo de tomadas no 2º pavimento",
+                )
+                nv1, nv2 = st.columns(2)
+                _rv_disc = nv1.multiselect(
+                    "Disciplinas afetadas", options=_opts_disc_rv,
+                    accept_new_options=True,
+                    help=("Deixe vazio se a revisão é da demanda inteira. "
+                          "Disciplina que o projeto ainda não tem pode ser "
+                          "escolhida aqui: ela é acrescentada ao projeto. "
+                          "Se nem no cadastro ela existe, dá pra digitar o "
+                          "nome — entra no cadastro de disciplinas junto."),
+                )
+                _rv_eq = nv2.multiselect(
+                    "Projetista(s) designado(s)", options=_opts_eq_rv,
+                    default=_eq_rv,
+                    help="Quem entrar aqui passa a fazer parte da equipe.",
+                )
+                nv3, nv4, nv5 = st.columns(3)
+                _rv_ped = nv3.date_input("Data do pedido",
+                                         value=datetime.now(),
+                                         format="DD/MM/YYYY")
+                _rv_prev = nv4.date_input("Previsão de entrega",
+                                          value=datetime.now(),
+                                          format="DD/MM/YYYY")
+                _rv_ent_ant = nv5.date_input(
+                    "Entrega da revisão anterior", value=datetime.now(),
+                    format="DD/MM/YYYY",
+                    help=("Fecha a revisão que ainda está aberta. Se ela já "
+                          "estiver entregue, este campo é ignorado."),
+                )
+                _rv_modo = st.radio(
+                    "Como esta revisão começa",
+                    ["Continua a anterior", "Começa do zero"],
+                    horizontal=True,
+                    help=("Continua: mantém o progresso como está. Começa do "
+                          "zero: zera o progresso das disciplinas escolhidas "
+                          "(ou de todas, se for da demanda inteira) e o % "
+                          "das etapas."),
+                )
+                if st.form_submit_button("🔁 Abrir revisão", width="stretch"):
+                    if not (_rv_desc or "").strip():
+                        st.warning(
+                            "Descreva o que foi pedido nesta revisão.")
+                    else:
+                        with carregando("Abrindo revisão..."):
+                            # Disciplina digitada na hora ("acréscimo do que
+                            # não tem") entra no cadastro mestre, senão ela
+                            # ficaria só neste projeto e sumiria da lista.
+                            _mestre = st.session_state.get(
+                                "lista_checklist") or []
+                            for _d_nova in _rv_disc:
+                                if _d_nova not in _mestre:
+                                    db.adicionar_disciplina(_d_nova)
+                            st.session_state.lista_checklist = (
+                                db.listar_disciplinas())
+                            _id_nv, _num_nv = db.abrir_revisao(
+                                id_ed, _rv_desc,
+                                disciplinas=", ".join(_rv_disc),
+                                projetista=", ".join(_rv_eq),
+                                solicitado_em=_rv_ped, previsao=_rv_prev,
+                                do_zero=(_rv_modo == "Começa do zero"),
+                                criado_por=usuario,
+                                entrega_anterior=_rv_ent_ant,
+                            )
+                            if _id_nv:
+                                db.log_aud(
+                                    usuario, "revisão", "projeto", id_ed,
+                                    f"{db.rotulo_revisao(_num_nv)} aberta: "
+                                    f"{_rv_desc.strip()[:120]}",
+                                )
+                                # Etapas relidas do banco: o "começa do zero"
+                                # zera o % delas.
+                                st.session_state.pop(
+                                    f"etapas_edit_{id_ed}", None)
+                                _invalidar_dados()
+                        if _id_nv:
+                            confirmar_sucesso(
+                                f"{db.rotulo_revisao(_num_nv)} aberta",
+                                "O projeto passou a seguir as datas desta "
+                                "revisão.",
+                            )
+                            st.rerun()
+                        else:
+                            st.error("Não foi possível abrir a revisão. "
+                                     "Veja o log do servidor.")
+
+    # ════════════════════════════════════════════════════════
     #  DOCUMENTAÇÕES GERADAS (nomes de arquivos)
     # ════════════════════════════════════════════════════════
     # Pedido de 10/09/2026. Quem edita seleciona os arquivos (vários de uma
@@ -1472,8 +1679,11 @@ if "projeto_em_edicao" in st.session_state:
         # O seletor devolve os nomes só no run da seleção: grava aqui mesmo,
         # antes de desenhar a lista, e a lista abaixo já sai atualizada.
         if _nomes_sel:
+            # Entra na revisão aberta: é o que separa o que foi emitido na
+            # inicial do que veio em cada revisão.
             _reg, _rep = db.adicionar_documentos_projeto(
-                id_ed, _nomes_sel, criado_por=usuario)
+                id_ed, _nomes_sel, criado_por=usuario,
+                revisao_id=(_rev_ativa or {}).get("id"))
             if _reg:
                 db.log_aud(usuario, "documentação", "projeto", id_ed,
                            "registrada(s): " + ", ".join(_reg))
@@ -1510,12 +1720,14 @@ if "projeto_em_edicao" in st.session_state:
                 else "data não registrada"
             )
             _autor_doc = _html.escape(str(_doc["criado_por"] or "—"))
+            _rev_doc = (f" · {_html.escape(str(_doc['revisao']))}"
+                        if _doc.get("revisao") else "")
             dc1, dc2 = st.columns([0.92, 0.08], vertical_alignment="center")
             dc1.markdown(
                 f"<div style='line-height:1.4'>{_titulo_doc}"
                 f"<span style='color:{_ct_docs['texto_fraco']};"
                 f"font-size:.8rem'> &nbsp;·&nbsp; {_quando_doc} · "
-                f"{_autor_doc}</span></div>",
+                f"{_autor_doc}{_rev_doc}</span></div>",
                 unsafe_allow_html=True,
             )
             if _pode_gestor() or (
