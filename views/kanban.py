@@ -1055,7 +1055,11 @@ if "projeto_em_edicao" in st.session_state:
         # projetista também grava o % delas, então a cópia guardada na sessão
         # numa abertura anterior pode estar velha — e o "Salvar Etapas" do
         # Gestor regravaria o % antigo por cima.
-        st.session_state.pop(f"etapas_edit_{id_ed}", None)
+        for _k_et in [k for k in st.session_state.keys()
+                      if str(k).startswith(f"etapas_edit_{id_ed}_")]:
+            st.session_state.pop(_k_et, None)
+        # Reabrir o projeto volta o seletor pra revisão atual.
+        st.session_state.pop(f"rev_sel_{id_ed}", None)
         st.markdown(
             "<div id='kanban-edit-top' "
             "style='height:0;scroll-margin-top:12px;'></div>",
@@ -1467,287 +1471,6 @@ if "projeto_em_edicao" in st.session_state:
         st.rerun()
 
     # ════════════════════════════════════════════════════════
-    #  REVISÕES / EMISSÕES DA DEMANDA
-    # ════════════════════════════════════════════════════════
-    # Pedido de 23/09/2026: a demanda volta meses depois pedindo modificação
-    # ou acréscimo, com outro projetista e prazo próprios. Cada volta é uma
-    # revisão do MESMO projeto (antes, o jeito era clonar, e o quadro ficava
-    # com dois cards da mesma demanda). Abrir revisão é só do Gestor; a lista
-    # todo mundo vê.
-    st.markdown("### 🔁 Revisões e Emissões")
-
-    _revs = db.listar_revisoes(id_ed)
-    _cont_rev = db.contar_por_revisao(id_ed)
-    _rev_ativa = _revs[-1] if _revs else None
-    _ct_rev = _cores_tema()
-
-    def _cb_rev_entregue(id_rev, rotulo):
-        db.marcar_revisao_entregue(id_rev)
-        db.log_aud(usuario, "revisão", "projeto", id_ed,
-                   f"{rotulo} marcada como entregue")
-        _invalidar_dados()
-
-    def _cb_rev_del(id_rev):
-        _rot_rm = db.excluir_revisao(id_rev)
-        if _rot_rm:
-            db.log_aud(usuario, "revisão", "projeto", id_ed,
-                       f"{_rot_rm} desfeita")
-            _invalidar_dados()
-
-    if not _revs:
-        st.caption("Nenhuma revisão registrada.")
-
-    for _rv in reversed(_revs):
-        _n_arq_rv, _n_doc_rv = _cont_rev.get(_rv["id"], (0, 0))
-        _sit_rv = (
-            f"✅ entregue em {_rv['entregue_em'].strftime('%d/%m/%Y')}"
-            if _rv["entregue_em"] else "⏳ em execução"
-        )
-        _meta_rv = [f"👤 {_html.escape(str(_rv['projetista'] or '—'))}"]
-        if _rv["solicitado_em"]:
-            _meta_rv.append(
-                f"📥 pedido {_rv['solicitado_em'].strftime('%d/%m/%Y')}")
-        if _rv["previsao"]:
-            _meta_rv.append(
-                f"🎯 previsão {_rv['previsao'].strftime('%d/%m/%Y')}")
-        _meta_rv.append(f"📎 {_n_arq_rv} arquivo(s) · 📄 {_n_doc_rv} doc(s)")
-        with st.container(border=True):
-            rc1, rc2 = st.columns([0.78, 0.22], vertical_alignment="center")
-            rc1.markdown(
-                f"<div style='font-weight:700'>{_rv['rotulo']} "
-                f"<span style='font-weight:500;font-size:.82rem;"
-                f"color:{_ct_rev['texto_fraco']}'>· {_sit_rv}</span></div>"
-                f"<div style='font-size:.82rem;"
-                f"color:{_ct_rev['texto_fraco']}'>"
-                + " · ".join(_meta_rv) + "</div>"
-                + (f"<div style='margin-top:4px'>"
-                   f"{_html.escape(str(_rv['descricao']))}</div>"
-                   if _rv["descricao"] else "")
-                + (f"<div style='font-size:.8rem;"
-                   f"color:{_ct_rev['texto_fraco']};margin-top:2px'>"
-                   f"📐 {_html.escape(str(_rv['disciplinas']))}</div>"
-                   if _rv["disciplinas"] else "")
-                + ("<div style='font-size:.8rem;color:#f59e0b;"
-                   "margin-top:2px'>🔄 recomeçou do zero</div>"
-                   if _rv["do_zero"] else ""),
-                unsafe_allow_html=True,
-            )
-            if _pode_gestor():
-                if not _rv["entregue_em"]:
-                    rc2.button(
-                        "✅ Entregue", key=f"rev_ok_{id_ed}_{_rv['id']}",
-                        width="stretch",
-                        help="Marca esta revisão como entregue hoje.",
-                        on_click=_cb_rev_entregue,
-                        args=(_rv["id"], _rv["rotulo"]),
-                    )
-                if (_rv["numero"] > 0 and _rev_ativa
-                        and _rv["id"] == _rev_ativa["id"]):
-                    rc2.button(
-                        "🗑 Desfazer", key=f"rev_del_{id_ed}_{_rv['id']}",
-                        width="stretch",
-                        help=("Desfaz esta revisão: os arquivos e as "
-                              "documentações dela voltam pra revisão "
-                              "anterior, que é reaberta."),
-                        on_click=_cb_rev_del, args=(_rv["id"],),
-                    )
-
-    if _pode_gestor():
-        with st.expander("➕ Abrir nova revisão", expanded=not _revs):
-            _discs_rv = [
-                d.strip() for d
-                in str(dados.get("demandas", "")).split("|")[0].split(",")
-                if d.strip()
-            ]
-            _opts_disc_rv = list(dict.fromkeys(
-                _discs_rv + (st.session_state.get("lista_checklist") or [])
-            ))
-            _eq_rv = [p.strip() for p
-                      in str(dados.get("projetista", "")).split(",")
-                      if p.strip()]
-            _opts_eq_rv = list(dict.fromkeys(df_u["nome"].tolist() + _eq_rv))
-            with st.form(f"form_nova_revisao_{id_ed}"):
-                _rv_desc = st.text_area(
-                    "O que foi pedido nesta revisão *", height=80,
-                    placeholder="ex.: acréscimo de tomadas no 2º pavimento",
-                )
-                nv1, nv2 = st.columns(2)
-                _rv_disc = nv1.multiselect(
-                    "Disciplinas afetadas", options=_opts_disc_rv,
-                    accept_new_options=True,
-                    help=("Deixe vazio se a revisão é da demanda inteira. "
-                          "Disciplina que o projeto ainda não tem pode ser "
-                          "escolhida aqui: ela é acrescentada ao projeto. "
-                          "Se nem no cadastro ela existe, dá pra digitar o "
-                          "nome — entra no cadastro de disciplinas junto."),
-                )
-                _rv_eq = nv2.multiselect(
-                    "Projetista(s) designado(s)", options=_opts_eq_rv,
-                    default=_eq_rv,
-                    help="Quem entrar aqui passa a fazer parte da equipe.",
-                )
-                nv3, nv4, nv5 = st.columns(3)
-                _rv_ped = nv3.date_input("Data do pedido",
-                                         value=datetime.now(),
-                                         format="DD/MM/YYYY")
-                _rv_prev = nv4.date_input("Previsão de entrega",
-                                          value=datetime.now(),
-                                          format="DD/MM/YYYY")
-                _rv_ent_ant = nv5.date_input(
-                    "Entrega da revisão anterior", value=datetime.now(),
-                    format="DD/MM/YYYY",
-                    help=("Fecha a revisão que ainda está aberta. Se ela já "
-                          "estiver entregue, este campo é ignorado."),
-                )
-                _rv_modo = st.radio(
-                    "Como esta revisão começa",
-                    ["Continua a anterior", "Começa do zero"],
-                    horizontal=True,
-                    help=("Continua: mantém o progresso como está. Começa do "
-                          "zero: zera o progresso das disciplinas escolhidas "
-                          "(ou de todas, se for da demanda inteira) e o % "
-                          "das etapas."),
-                )
-                if st.form_submit_button("🔁 Abrir revisão", width="stretch"):
-                    if not (_rv_desc or "").strip():
-                        st.warning(
-                            "Descreva o que foi pedido nesta revisão.")
-                    else:
-                        with carregando("Abrindo revisão..."):
-                            # Disciplina digitada na hora ("acréscimo do que
-                            # não tem") entra no cadastro mestre, senão ela
-                            # ficaria só neste projeto e sumiria da lista.
-                            _mestre = st.session_state.get(
-                                "lista_checklist") or []
-                            for _d_nova in _rv_disc:
-                                if _d_nova not in _mestre:
-                                    db.adicionar_disciplina(_d_nova)
-                            st.session_state.lista_checklist = (
-                                db.listar_disciplinas())
-                            _id_nv, _num_nv = db.abrir_revisao(
-                                id_ed, _rv_desc,
-                                disciplinas=", ".join(_rv_disc),
-                                projetista=", ".join(_rv_eq),
-                                solicitado_em=_rv_ped, previsao=_rv_prev,
-                                do_zero=(_rv_modo == "Começa do zero"),
-                                criado_por=usuario,
-                                entrega_anterior=_rv_ent_ant,
-                            )
-                            if _id_nv:
-                                db.log_aud(
-                                    usuario, "revisão", "projeto", id_ed,
-                                    f"{db.rotulo_revisao(_num_nv)} aberta: "
-                                    f"{_rv_desc.strip()[:120]}",
-                                )
-                                # Etapas relidas do banco: o "começa do zero"
-                                # zera o % delas.
-                                st.session_state.pop(
-                                    f"etapas_edit_{id_ed}", None)
-                                _invalidar_dados()
-                        if _id_nv:
-                            confirmar_sucesso(
-                                f"{db.rotulo_revisao(_num_nv)} aberta",
-                                "O projeto passou a seguir as datas desta "
-                                "revisão.",
-                            )
-                            st.rerun()
-                        else:
-                            st.error("Não foi possível abrir a revisão. "
-                                     "Veja o log do servidor.")
-
-    # ════════════════════════════════════════════════════════
-    #  DOCUMENTAÇÕES GERADAS (nomes de arquivos)
-    # ════════════════════════════════════════════════════════
-    # Pedido de 10/09/2026. Quem edita seleciona os arquivos (vários de uma
-    # vez) e o sistema registra SÓ O NOME, com data e autor — o arquivo não é
-    # enviado. Clicar no nome abre o "Link da Pasta (Drive/Nuvem)" do projeto,
-    # onde os arquivos de fato ficam. Aberto a todo projetista (_pode_editar);
-    # Visualizador só vê. Tirar da lista: o Gestor tira qualquer um, o
-    # projetista só os que ele mesmo registrou.
-    st.markdown("### 📄 Documentações Geradas")
-
-    _link_pasta = str(dados.get("link_projeto") or "").strip()
-    _link_web = _link_pasta.lower().startswith(("http://", "https://"))
-
-    if _pode_editar():
-        _nomes_sel = seletor_nomes_arquivos(
-            key=f"docs_sel_{id_ed}",
-            claro=_eh_tema_claro(),
-            dica=("Pode marcar vários de uma vez, ou arrastar para cá. Só o "
-                  "nome é registrado — o arquivo não é enviado."),
-        )
-        # O seletor devolve os nomes só no run da seleção: grava aqui mesmo,
-        # antes de desenhar a lista, e a lista abaixo já sai atualizada.
-        if _nomes_sel:
-            # Entra na revisão aberta: é o que separa o que foi emitido na
-            # inicial do que veio em cada revisão.
-            _reg, _rep = db.adicionar_documentos_projeto(
-                id_ed, _nomes_sel, criado_por=usuario,
-                revisao_id=(_rev_ativa or {}).get("id"))
-            if _reg:
-                db.log_aud(usuario, "documentação", "projeto", id_ed,
-                           "registrada(s): " + ", ".join(_reg))
-                _invalidar_dados()
-                st.toast(f"📄 {len(_reg)} documentação(ões) registrada(s).")
-            if _rep:
-                st.toast("Já estava(m) na lista: " + ", ".join(_rep),
-                         icon="ℹ️")
-
-    def _cb_doc_del(id_doc):
-        _nome_rm = db.excluir_documento_projeto(id_doc)
-        if _nome_rm:
-            db.log_aud(usuario, "documentação", "projeto", id_ed,
-                       f"removida: '{_nome_rm}'")
-            _invalidar_dados()
-
-    _docs_ed = db.listar_documentos_projeto(id_ed)
-    if not _docs_ed:
-        st.caption("Nenhuma documentação registrada ainda.")
-    else:
-        _ct_docs = _cores_tema()
-        for _doc in _docs_ed:
-            _nm_doc = _html.escape(str(_doc["nome"]))
-            if _link_web:
-                _titulo_doc = (
-                    f"<a href='{_html.escape(_link_pasta, quote=True)}' "
-                    "target='_blank' rel='noopener noreferrer' "
-                    f"title='Abrir a pasta do projeto'>🔗 {_nm_doc}</a>"
-                )
-            else:
-                _titulo_doc = f"📄 {_nm_doc}"
-            _quando_doc = (
-                _doc["criado_em"].strftime("%d/%m/%Y") if _doc["criado_em"]
-                else "data não registrada"
-            )
-            _autor_doc = _html.escape(str(_doc["criado_por"] or "—"))
-            _rev_doc = (f" · {_html.escape(str(_doc['revisao']))}"
-                        if _doc.get("revisao") else "")
-            dc1, dc2 = st.columns([0.92, 0.08], vertical_alignment="center")
-            dc1.markdown(
-                f"<div style='line-height:1.4'>{_titulo_doc}"
-                f"<span style='color:{_ct_docs['texto_fraco']};"
-                f"font-size:.8rem'> &nbsp;·&nbsp; {_quando_doc} · "
-                f"{_autor_doc}{_rev_doc}</span></div>",
-                unsafe_allow_html=True,
-            )
-            if _pode_gestor() or (
-                _pode_editar() and _doc["criado_por"] == usuario
-            ):
-                dc2.button("🗑", key=f"doc_del_{id_ed}_{_doc['id']}",
-                           width="stretch", help="Tirar da lista",
-                           on_click=_cb_doc_del, args=(_doc["id"],))
-        if _link_web:
-            st.caption("🔗 Clique no nome para abrir a pasta do projeto "
-                       "(Link da Pasta).")
-        elif _link_pasta:
-            st.caption("O Link da Pasta deste projeto não é um endereço web "
-                       "(http/https), então os nomes ficam sem link.")
-        else:
-            st.caption("Este projeto ainda não tem **Link da Pasta "
-                       "(Drive/Nuvem)**. Com ele cadastrado no formulário "
-                       "acima, os nomes viram link para a pasta.")
-
-    # ════════════════════════════════════════════════════════
     #  TRILHA DE STATUS (tags em sequência)
     # ════════════════════════════════════════════════════════
     # Substituiu o antigo campo "Tags (separadas por vírgula)". Cada passo é
@@ -1893,13 +1616,466 @@ if "projeto_em_edicao" in st.session_state:
                     )
 
     # ════════════════════════════════════════════════════════
+    #  HISTÓRICO DE ALTERAÇÕES DO PROJETO
+    #  (só projetos iniciados geram registro — ver salvar acima)
+    # ════════════════════════════════════════════════════════
+    with st.expander("🕓 Histórico de Alterações"):
+        _df_hist = pd.read_sql(
+            "SELECT data, campo, valor_anterior, valor_novo, autor "
+            "FROM projeto_alteracoes WHERE projeto_id = %s "
+            "ORDER BY data DESC LIMIT 200",
+            db.get_engine(), params=(int(id_ed),),
+        )
+        if _df_hist.empty:
+            st.caption(
+                "Nenhuma alteração registrada. O histórico passa a ser "
+                "gravado quando o projeto sai de **Em Espera** (iniciado)."
+            )
+        else:
+            for _, _h in _df_hist.iterrows():
+                _quando = _data_br(_h["data"])
+                _hora = ""
+                _dt_h = pd.to_datetime(_h["data"], errors="coerce")
+                if pd.notna(_dt_h):
+                    _quando = _dt_h.strftime("%d/%m/%Y")
+                    _hora = _dt_h.strftime(" %H:%M")
+                _ant = _h.get("valor_anterior") or "—"
+                _nov = _h.get("valor_novo") or "—"
+                st.markdown(
+                    f"<div style='border-left:3px solid #0056b3;"
+                    f"padding:2px 0 2px 10px;margin:4px 0;font-size:.86rem;'>"
+                    f"<b>{_h['campo']}</b>: "
+                    f"<span style='color:#ef4444;'>{_ant}</span> → "
+                    f"<span style='color:#10b981;'>{_nov}</span><br>"
+                    f"<span style='opacity:.6;font-size:.76rem;'>"
+                    f"{_quando}{_hora} · {_h.get('autor') or '—'}</span></div>",
+                    unsafe_allow_html=True,
+                )
+
+    # ════════════════════════════════════════════════════════
+    #  REVISÕES / EMISSÕES DA DEMANDA
+    # ════════════════════════════════════════════════════════
+    # Pedido de 23/09/2026: a demanda volta meses depois pedindo modificação
+    # ou acréscimo, com outro projetista e prazo próprios. Cada volta é uma
+    # revisão do MESMO projeto (antes, o jeito era clonar, e o quadro ficava
+    # com dois cards da mesma demanda). Desde 28/10/2026 cada revisão tem
+    # documentações, etapas e evolução técnica PRÓPRIAS — o seletor logo
+    # abaixo da lista escolhe qual delas aparece. Abrir e editar revisão é só
+    # do Gestor; a lista todo mundo vê.
+    st.markdown("### 🔁 Revisões e Emissões")
+
+    _revs = db.listar_revisoes(id_ed)
+    _cont_rev = db.contar_por_revisao(id_ed)
+    _rev_ativa = _revs[-1] if _revs else None
+    _ct_rev = _cores_tema()
+
+    # Opções dos formulários de revisão (abrir e editar): as disciplinas e a
+    # equipe do projeto + o cadastro de disciplinas e a tabela de usuários.
+    _discs_rv = [
+        d.strip() for d
+        in str(dados.get("demandas", "")).split("|")[0].split(",")
+        if d.strip()
+    ]
+    _opts_disc_rv = list(dict.fromkeys(
+        _discs_rv + (st.session_state.get("lista_checklist") or [])
+    ))
+    _eq_rv = [p.strip() for p
+              in str(dados.get("projetista", "")).split(",") if p.strip()]
+    _opts_eq_rv = list(dict.fromkeys(df_u["nome"].tolist() + _eq_rv))
+
+    def _csv_lista(valor):
+        return [x.strip() for x in str(valor or "").split(",") if x.strip()]
+
+    def _registrar_disciplinas_novas(lista):
+        # Disciplina digitada na hora ("acréscimo do que não tem") entra no
+        # cadastro mestre, senão ficaria só neste projeto e sumiria da lista.
+        _mestre = st.session_state.get("lista_checklist") or []
+        for _d_nova in lista:
+            if _d_nova not in _mestre:
+                db.adicionar_disciplina(_d_nova)
+        st.session_state.lista_checklist = db.listar_disciplinas()
+
+    def _limpar_cache_revisoes():
+        # Etapas relidas do banco e seletor de volta pra revisão atual.
+        for _k in [k for k in st.session_state.keys()
+                   if str(k).startswith(f"etapas_edit_{id_ed}_")]:
+            st.session_state.pop(_k, None)
+        st.session_state.pop(f"rev_sel_{id_ed}", None)
+
+    def _cb_rev_entregue(id_rev, rotulo):
+        db.marcar_revisao_entregue(id_rev)
+        db.log_aud(usuario, "revisão", "projeto", id_ed,
+                   f"{rotulo} marcada como entregue")
+        _invalidar_dados()
+
+    def _cb_rev_del(id_rev):
+        _rot_rm = db.excluir_revisao(id_rev)
+        if _rot_rm:
+            db.log_aud(usuario, "revisão", "projeto", id_ed,
+                       f"{_rot_rm} desfeita")
+            _limpar_cache_revisoes()
+            _invalidar_dados()
+
+    if not _revs:
+        st.caption("Nenhuma revisão registrada.")
+
+    for _rv in reversed(_revs):
+        _n_arq_rv, _n_doc_rv = _cont_rev.get(_rv["id"], (0, 0))
+        _sit_rv = (
+            f"✅ entregue em {_rv['entregue_em'].strftime('%d/%m/%Y')}"
+            if _rv["entregue_em"] else "⏳ em execução"
+        )
+        _meta_rv = [f"👤 {_html.escape(str(_rv['projetista'] or '—'))}"]
+        if _rv["solicitado_em"]:
+            _meta_rv.append(
+                f"📥 pedido {_rv['solicitado_em'].strftime('%d/%m/%Y')}")
+        if _rv["previsao"]:
+            _meta_rv.append(
+                f"🎯 previsão {_rv['previsao'].strftime('%d/%m/%Y')}")
+        _meta_rv.append(f"📎 {_n_arq_rv} arquivo(s) · 📄 {_n_doc_rv} doc(s)")
+        with st.container(border=True):
+            rc1, rc2 = st.columns([0.78, 0.22], vertical_alignment="center")
+            rc1.markdown(
+                f"<div style='font-weight:700'>{_rv['rotulo']} "
+                f"<span style='font-weight:500;font-size:.82rem;"
+                f"color:{_ct_rev['texto_fraco']}'>· {_sit_rv}</span></div>"
+                f"<div style='font-size:.82rem;"
+                f"color:{_ct_rev['texto_fraco']}'>"
+                + " · ".join(_meta_rv) + "</div>"
+                + (f"<div style='margin-top:4px'>"
+                   f"{_html.escape(str(_rv['descricao']))}</div>"
+                   if _rv["descricao"] else "")
+                + (f"<div style='font-size:.8rem;"
+                   f"color:{_ct_rev['texto_fraco']};margin-top:2px'>"
+                   f"📐 {_html.escape(str(_rv['disciplinas']))}</div>"
+                   if _rv["disciplinas"] else "")
+                + ("<div style='font-size:.8rem;color:#f59e0b;"
+                   "margin-top:2px'>🔄 recomeçou do zero</div>"
+                   if _rv["do_zero"] else ""),
+                unsafe_allow_html=True,
+            )
+            if _pode_gestor():
+                if not _rv["entregue_em"]:
+                    rc2.button(
+                        "✅ Entregue", key=f"rev_ok_{id_ed}_{_rv['id']}",
+                        width="stretch",
+                        help="Marca esta revisão como entregue hoje.",
+                        on_click=_cb_rev_entregue,
+                        args=(_rv["id"], _rv["rotulo"]),
+                    )
+                if (_rv["numero"] > 0 and _rev_ativa
+                        and _rv["id"] == _rev_ativa["id"]):
+                    rc2.button(
+                        "🗑 Desfazer", key=f"rev_del_{id_ed}_{_rv['id']}",
+                        width="stretch",
+                        help=("Desfaz esta revisão: os arquivos e as "
+                              "documentações dela voltam pra revisão "
+                              "anterior, que é reaberta. A evolução e as "
+                              "etapas desta revisão são descartadas."),
+                        on_click=_cb_rev_del, args=(_rv["id"],),
+                    )
+
+                # Editar os dados da revisão (pedido de 28/10/2026).
+                _disc_atual_rv = _csv_lista(_rv["disciplinas"])
+                _eq_atual_rv = _csv_lista(_rv["projetista"])
+                with st.expander(f"✏️ Editar dados da {_rv['rotulo']}"):
+                    with st.form(f"form_edit_rev_{id_ed}_{_rv['id']}"):
+                        _ed_desc = st.text_area(
+                            "O que foi pedido",
+                            value=str(_rv["descricao"] or ""), height=80,
+                        )
+                        ec1, ec2 = st.columns(2)
+                        _ed_disc = ec1.multiselect(
+                            "Disciplinas",
+                            options=list(dict.fromkeys(
+                                _opts_disc_rv + _disc_atual_rv)),
+                            default=_disc_atual_rv,
+                            accept_new_options=True,
+                            help=("Vazio = demanda inteira. Incluir uma "
+                                  "disciplina cria a evolução dela em 0% "
+                                  "nesta revisão; tirar apaga o progresso "
+                                  "dela NESTA revisão."),
+                        )
+                        _ed_eq = ec2.multiselect(
+                            "Projetista(s) designado(s)",
+                            options=list(dict.fromkeys(
+                                _opts_eq_rv + _eq_atual_rv)),
+                            default=_eq_atual_rv,
+                            help=("Quem entrar aqui passa a fazer parte da "
+                                  "equipe do projeto."),
+                        )
+                        ec3, ec4, ec5 = st.columns(3)
+                        _ed_ped = ec3.date_input(
+                            "Data do pedido",
+                            value=_rv["solicitado_em"] or datetime.now(),
+                            format="DD/MM/YYYY",
+                        )
+                        _ed_prev = ec4.date_input(
+                            "Previsão de entrega",
+                            value=_rv["previsao"] or datetime.now(),
+                            format="DD/MM/YYYY",
+                        )
+                        _ed_ent = ec5.date_input(
+                            "Data da entrega",
+                            value=_rv["entregue_em"] or datetime.now(),
+                            format="DD/MM/YYYY",
+                        )
+                        _ed_foi = ec5.checkbox(
+                            "Já entregue", value=bool(_rv["entregue_em"]),
+                            help="Desmarque para reabrir a revisão.",
+                        )
+                        if st.form_submit_button("💾 Salvar dados da revisão",
+                                                 width="stretch"):
+                            with carregando("Salvando revisão..."):
+                                _registrar_disciplinas_novas(_ed_disc)
+                                _ok_rv = db.atualizar_revisao(
+                                    _rv["id"], _ed_desc,
+                                    ", ".join(_ed_disc), ", ".join(_ed_eq),
+                                    _ed_ped, _ed_prev,
+                                    _ed_ent if _ed_foi else None,
+                                )
+                                if _ok_rv:
+                                    db.log_aud(
+                                        usuario, "revisão", "projeto", id_ed,
+                                        f"{_rv['rotulo']} editada",
+                                    )
+                                    _invalidar_dados()
+                            if _ok_rv:
+                                confirmar_sucesso(
+                                    f"{_rv['rotulo']} atualizada",
+                                    "Dados da revisão salvos.",
+                                )
+                                st.rerun()
+                            else:
+                                st.error("Não foi possível salvar a "
+                                         "revisão. Veja o log do servidor.")
+
+    if _pode_gestor():
+        with st.expander("➕ Abrir nova revisão", expanded=not _revs):
+            with st.form(f"form_nova_revisao_{id_ed}"):
+                _rv_desc = st.text_area(
+                    "O que foi pedido nesta revisão *", height=80,
+                    placeholder="ex.: acréscimo de tomadas no 2º pavimento",
+                )
+                nv1, nv2 = st.columns(2)
+                _rv_disc = nv1.multiselect(
+                    "Disciplinas afetadas", options=_opts_disc_rv,
+                    accept_new_options=True,
+                    help=("Deixe vazio se a revisão é da demanda inteira. "
+                          "Disciplina que o projeto ainda não tem pode ser "
+                          "escolhida aqui: ela é acrescentada ao projeto. "
+                          "Se nem no cadastro ela existe, dá pra digitar o "
+                          "nome — entra no cadastro de disciplinas junto."),
+                )
+                _rv_eq = nv2.multiselect(
+                    "Projetista(s) designado(s)", options=_opts_eq_rv,
+                    default=_eq_rv,
+                    help="Quem entrar aqui passa a fazer parte da equipe.",
+                )
+                nv3, nv4, nv5 = st.columns(3)
+                _rv_ped = nv3.date_input("Data do pedido",
+                                         value=datetime.now(),
+                                         format="DD/MM/YYYY")
+                _rv_prev = nv4.date_input("Previsão de entrega",
+                                          value=datetime.now(),
+                                          format="DD/MM/YYYY")
+                _rv_ent_ant = nv5.date_input(
+                    "Entrega da revisão anterior", value=datetime.now(),
+                    format="DD/MM/YYYY",
+                    help=("Fecha a revisão que ainda está aberta. Se ela já "
+                          "estiver entregue, este campo é ignorado."),
+                )
+                _rv_modo = st.radio(
+                    "Como esta revisão começa",
+                    ["Continua a anterior", "Começa do zero"],
+                    horizontal=True,
+                    help=("A revisão nova ganha evolução técnica e etapas "
+                          "próprias. Continua a anterior: elas começam com "
+                          "os percentuais da anterior. Começa do zero: "
+                          "começam em 0%. Nos dois casos a revisão anterior "
+                          "fica guardada como foi entregue."),
+                )
+                if st.form_submit_button("🔁 Abrir revisão", width="stretch"):
+                    if not (_rv_desc or "").strip():
+                        st.warning(
+                            "Descreva o que foi pedido nesta revisão.")
+                    else:
+                        with carregando("Abrindo revisão..."):
+                            _registrar_disciplinas_novas(_rv_disc)
+                            _id_nv, _num_nv = db.abrir_revisao(
+                                id_ed, _rv_desc,
+                                disciplinas=", ".join(_rv_disc),
+                                projetista=", ".join(_rv_eq),
+                                solicitado_em=_rv_ped, previsao=_rv_prev,
+                                do_zero=(_rv_modo == "Começa do zero"),
+                                criado_por=usuario,
+                                entrega_anterior=_rv_ent_ant,
+                            )
+                            if _id_nv:
+                                db.log_aud(
+                                    usuario, "revisão", "projeto", id_ed,
+                                    f"{db.rotulo_revisao(_num_nv)} aberta: "
+                                    f"{_rv_desc.strip()[:120]}",
+                                )
+                                _limpar_cache_revisoes()
+                                _invalidar_dados()
+                        if _id_nv:
+                            confirmar_sucesso(
+                                f"{db.rotulo_revisao(_num_nv)} aberta",
+                                "Ela já tem evolução e etapas próprias, e o "
+                                "projeto passou a seguir as datas dela.",
+                            )
+                            st.rerun()
+                        else:
+                            st.error("Não foi possível abrir a revisão. "
+                                     "Veja o log do servidor.")
+
+    # ════════════════════════════════════════════════════════
+    #  REVISÃO EM EXIBIÇÃO (documentações, etapas e evolução)
+    # ════════════════════════════════════════════════════════
+    # Pedido de 28/10/2026: cada revisão tem documentações, etapas e evolução
+    # técnica PRÓPRIAS — a emissão inicial fica guardada como foi entregue e
+    # a revisão nova começa a sua. O seletor escolhe qual delas as três
+    # seções abaixo mostram; abre sempre na revisão atual. A atual segue as
+    # permissões de sempre; as anteriores ficam para consulta, e só o Gestor
+    # pode corrigi-las.
+    _opcoes_rev = {}
+    for _rv in reversed(_revs):
+        _lbl_rv = (f"{_rv['rotulo']} · atual"
+                   if _rev_ativa and _rv["id"] == _rev_ativa["id"]
+                   else _rv["rotulo"])
+        _opcoes_rev[_lbl_rv] = _rv
+    _rev_sel = None
+    if _opcoes_rev:
+        _k_rev_sel = f"rev_sel_{id_ed}"
+        if st.session_state.get(_k_rev_sel) not in _opcoes_rev:
+            st.session_state.pop(_k_rev_sel, None)
+        _primeira_rev = next(iter(_opcoes_rev))
+        _lbl_sel = _pill_select(
+            st, "📂 Revisão em exibição", options=list(_opcoes_rev),
+            default=_primeira_rev, key=_k_rev_sel,
+            help=("Documentações, etapas e evolução técnica são de cada "
+                  "revisão. Escolha qual mostrar abaixo."),
+        ) or _primeira_rev
+        _rev_sel = _opcoes_rev.get(_lbl_sel, _opcoes_rev[_primeira_rev])
+    _rev_sel_id = _rev_sel["id"] if _rev_sel else None
+    _rev_sel_rot = _rev_sel["rotulo"] if _rev_sel else ""
+    _rev_sel_atual = (_rev_sel is None or (
+        _rev_ativa is not None and _rev_sel["id"] == _rev_ativa["id"]))
+    # Revisão anterior: só o Gestor corrige; os demais só consultam.
+    _pode_mexer_rev = _rev_sel_atual or _pode_gestor()
+    _sufixo_rev = f" · {_rev_sel_rot}" if _rev_sel_rot else ""
+    if not _rev_sel_atual:
+        st.info(
+            f"📂 Você está vendo a **{_rev_sel_rot}**, uma revisão anterior. "
+            + ("Como Gestor, você pode corrigir o que foi registrado nela."
+               if _pode_gestor() else
+               "Ela fica guardada como foi entregue, só para consulta.")
+        )
+
+    # ════════════════════════════════════════════════════════
+    #  DOCUMENTAÇÕES GERADAS (nomes de arquivos)
+    # ════════════════════════════════════════════════════════
+    # Pedido de 10/09/2026. Quem edita seleciona os arquivos (vários de uma
+    # vez) e o sistema registra SÓ O NOME, com data e autor — o arquivo não é
+    # enviado. Clicar no nome abre o "Link da Pasta (Drive/Nuvem)" do projeto,
+    # onde os arquivos de fato ficam. Desde 28/10/2026 a lista é da revisão
+    # em exibição: cada revisão com as suas. Registrar: projetista e Gestor
+    # na revisão atual; numa anterior, só o Gestor. Tirar da lista: o Gestor
+    # tira qualquer um; o projetista, só os que ele registrou, na atual.
+    st.markdown(f"### 📄 Documentações Geradas{_sufixo_rev}")
+
+    _link_pasta = str(dados.get("link_projeto") or "").strip()
+    _link_web = _link_pasta.lower().startswith(("http://", "https://"))
+
+    if _pode_editar() and _pode_mexer_rev:
+        _nomes_sel = seletor_nomes_arquivos(
+            key=f"docs_sel_{id_ed}_{_rev_sel_id}",
+            claro=_eh_tema_claro(),
+            dica=("Pode marcar vários de uma vez, ou arrastar para cá. Só o "
+                  "nome é registrado — o arquivo não é enviado."),
+        )
+        # O seletor devolve os nomes só no run da seleção: grava aqui mesmo,
+        # antes de desenhar a lista, e a lista abaixo já sai atualizada.
+        if _nomes_sel:
+            _reg, _rep = db.adicionar_documentos_projeto(
+                id_ed, _nomes_sel, criado_por=usuario,
+                revisao_id=_rev_sel_id)
+            if _reg:
+                db.log_aud(usuario, "documentação", "projeto", id_ed,
+                           f"registrada(s) na {_rev_sel_rot or 'revisão'}: "
+                           + ", ".join(_reg))
+                _invalidar_dados()
+                st.toast(f"📄 {len(_reg)} documentação(ões) registrada(s).")
+            if _rep:
+                st.toast("Já estava(m) nesta revisão: " + ", ".join(_rep),
+                         icon="ℹ️")
+
+    def _cb_doc_del(id_doc):
+        _nome_rm = db.excluir_documento_projeto(id_doc)
+        if _nome_rm:
+            db.log_aud(usuario, "documentação", "projeto", id_ed,
+                       f"removida: '{_nome_rm}'")
+            _invalidar_dados()
+
+    _docs_ed = [d for d in db.listar_documentos_projeto(id_ed)
+                if d.get("revisao_id") == _rev_sel_id]
+    if not _docs_ed:
+        st.caption("Nenhuma documentação registrada nesta revisão.")
+    else:
+        _ct_docs = _cores_tema()
+        for _doc in _docs_ed:
+            _nm_doc = _html.escape(str(_doc["nome"]))
+            if _link_web:
+                _titulo_doc = (
+                    f"<a href='{_html.escape(_link_pasta, quote=True)}' "
+                    "target='_blank' rel='noopener noreferrer' "
+                    f"title='Abrir a pasta do projeto'>🔗 {_nm_doc}</a>"
+                )
+            else:
+                _titulo_doc = f"📄 {_nm_doc}"
+            _quando_doc = (
+                _doc["criado_em"].strftime("%d/%m/%Y") if _doc["criado_em"]
+                else "data não registrada"
+            )
+            _autor_doc = _html.escape(str(_doc["criado_por"] or "—"))
+            dc1, dc2 = st.columns([0.92, 0.08], vertical_alignment="center")
+            dc1.markdown(
+                f"<div style='line-height:1.4'>{_titulo_doc}"
+                f"<span style='color:{_ct_docs['texto_fraco']};"
+                f"font-size:.8rem'> &nbsp;·&nbsp; {_quando_doc} · "
+                f"{_autor_doc}</span></div>",
+                unsafe_allow_html=True,
+            )
+            if _pode_gestor() or (
+                _pode_editar() and _rev_sel_atual
+                and _doc["criado_por"] == usuario
+            ):
+                dc2.button("🗑", key=f"doc_del_{id_ed}_{_doc['id']}",
+                           width="stretch", help="Tirar da lista",
+                           on_click=_cb_doc_del, args=(_doc["id"],))
+        if _link_web:
+            st.caption("🔗 Clique no nome para abrir a pasta do projeto "
+                       "(Link da Pasta).")
+        elif _link_pasta:
+            st.caption("O Link da Pasta deste projeto não é um endereço web "
+                       "(http/https), então os nomes ficam sem link.")
+        else:
+            st.caption("Este projeto ainda não tem **Link da Pasta "
+                       "(Drive/Nuvem)**. Com ele cadastrado no formulário "
+                       "acima, os nomes viram link para a pasta.")
+
+    # ════════════════════════════════════════════════════════
     #  ETAPAS DO PROJETO (edição inline)
     # ════════════════════════════════════════════════════════
-    st.markdown("### 🏁 Etapas do Projeto")
+    # Desde 28/10/2026 as etapas são da revisão em exibição: abrir revisão
+    # cria etapas novas e as da anterior continuam marcadas como estavam.
+    st.markdown(f"### 🏁 Etapas do Projeto{_sufixo_rev}")
 
-    _key_et = f"etapas_edit_{id_ed}"
+    _key_et = f"etapas_edit_{id_ed}_{_rev_sel_id}"
     if _key_et not in st.session_state:
-        st.session_state[_key_et] = db.listar_etapas(id_ed)
+        st.session_state[_key_et] = db.listar_etapas(
+            id_ed, revisao_id=_rev_sel_id)
 
     _et_list = st.session_state[_key_et]
     _ro_etapas = not _pode_gestor()   # item 4 / 1-lista: edição só Gestor
@@ -1908,11 +2084,12 @@ if "projeto_em_edicao" in st.session_state:
     # Cruza o % REAL (campo "% concl." preenchido pelo Gestor) com o %
     # ESPERADO pela data: janela da etapa = data de início do projeto +
     # offset, por `duracao_dias`. Classifica em A iniciar / No prazo /
-    # Adiantada / Atrasada / Concluída.
+    # Adiantada / Atrasada / Concluída. Só na revisão atual — o projeto segue
+    # as datas dela; numa revisão anterior não há data de referência.
     _di_proj_et = dados.get("data_inicio") or dados.get("data_fim")
     _base_et = (
         pd.to_datetime(str(_di_proj_et), errors="coerce")
-        if _di_proj_et else pd.NaT
+        if (_di_proj_et and _rev_sel_atual) else pd.NaT
     )
     _hoje_et = pd.Timestamp(datetime.now().date())
 
@@ -1951,10 +2128,11 @@ if "projeto_em_edicao" in st.session_state:
             "Confira os valores abaixo e salve de novo."
         )
 
-    if _ro_etapas and _pode_editar() and _et_list:
+    if _ro_etapas and _pode_editar() and _et_list and _rev_sel_atual:
         # Projetista (pedido de 10/09/2026): atualiza SÓ o % concluído de cada
-        # etapa. Nome, duração e início continuam exclusivos do Gestor.
-        with st.form(f"form_etapas_pct_{id_ed}"):
+        # etapa, na revisão atual. Nome, duração e início continuam
+        # exclusivos do Gestor.
+        with st.form(f"form_etapas_pct_{id_ed}_{_rev_sel_id}"):
             _pct_novos = []
             for i, et in enumerate(_et_list):
                 pc1, pc2, pc3 = st.columns([2.4, 1.0, 1.6],
@@ -2007,7 +2185,8 @@ if "projeto_em_edicao" in st.session_state:
                             for et, p in _mudou
                         ),
                     )
-                    st.session_state[_key_et] = db.listar_etapas(id_ed)
+                    st.session_state[_key_et] = db.listar_etapas(
+                        id_ed, revisao_id=_rev_sel_id)
                 if _gravadas < len(_mudou):
                     st.session_state["_etapas_pct_aviso"] = True
                 else:
@@ -2015,8 +2194,8 @@ if "projeto_em_edicao" in st.session_state:
                                       "Situação das etapas atualizada.")
                 st.rerun()
     elif _ro_etapas:
-        # Visualizador, ou projeto ainda sem etapas: read-only — vê etapas +
-        # % + situação, sem editar.
+        # Visualizador, revisão anterior (pra quem não é Gestor) ou projeto
+        # ainda sem etapas: read-only — vê etapas + % + situação.
         if not _et_list:
             st.caption("Nenhuma etapa cadastrada.")
         else:
@@ -2038,11 +2217,13 @@ if "projeto_em_edicao" in st.session_state:
                     f"{_badge_sit(_lbl, _cor)}</div>",
                     unsafe_allow_html=True,
                 )
-        st.caption("🔒 Edição das etapas é exclusiva do Gestor.")
+        st.caption("🔒 Edição das etapas é exclusiva do Gestor."
+                   if _rev_sel_atual else
+                   "🔒 Revisão anterior: etapas só para consulta.")
     else:
         _COLS_ET = [0.4, 2.1, 1.0, 1.3, 1.0, 1.5, 0.6]
 
-        with st.form(f"form_etapas_{id_ed}"):
+        with st.form(f"form_etapas_{id_ed}_{_rev_sel_id}"):
             novas_etapas = []
             _del_et = None
 
@@ -2076,22 +2257,22 @@ if "projeto_em_edicao" in st.session_state:
                     )
                     n = c1.text_input("Nome", value=str(et.get("nome", "")),
                                       label_visibility="collapsed",
-                                      key=f"etn_{id_ed}_{i}")
+                                      key=f"etn_{id_ed}_{_rev_sel_id}_{i}")
                     d = c2.number_input("Dur",
                                         value=int(et.get("duracao_dias", 1)),
                                         min_value=1,
                                         label_visibility="collapsed",
-                                        key=f"etd_{id_ed}_{i}")
+                                        key=f"etd_{id_ed}_{_rev_sel_id}_{i}")
                     o = c3.number_input("Off",
                                         value=int(et.get("dias_offset", 0)),
                                         min_value=0,
                                         label_visibility="collapsed",
-                                        key=f"eto_{id_ed}_{i}")
+                                        key=f"eto_{id_ed}_{_rev_sel_id}_{i}")
                     pc = c4.number_input(
                         "%", value=int(et.get("percentual", 0) or 0),
                         min_value=0, max_value=100, step=5,
                         label_visibility="collapsed",
-                        key=f"etp_{id_ed}_{i}",
+                        key=f"etp_{id_ed}_{_rev_sel_id}_{i}",
                     )
                     _lbl, _cor, _esp = _situacao_etapa(o, d, pc)
                     _esp_txt = (
@@ -2151,14 +2332,18 @@ if "projeto_em_edicao" in st.session_state:
                 db.salvar_etapas(
                     id_ed,
                     [e for e in novas_etapas if str(e["nome"]).strip()],
+                    revisao_id=_rev_sel_id,
                 )
-                st.session_state[_key_et] = db.listar_etapas(id_ed)
+                st.session_state[_key_et] = db.listar_etapas(
+                    id_ed, revisao_id=_rev_sel_id)
             confirmar_sucesso("Etapas salvas",
-                              "Cronograma do projeto atualizado.")
+                              "Cronograma da revisão atualizado.")
             st.rerun()
 
-    # Mini-Gantt das etapas
-    _et_salvas = db.listar_etapas(id_ed)
+    # Mini-Gantt das etapas — só da revisão atual, que é a que segue as
+    # datas do projeto.
+    _et_salvas = (db.listar_etapas(id_ed, revisao_id=_rev_sel_id)
+                  if _rev_sel_atual else [])
     _di_proj = dados.get("data_inicio") or dados.get("data_fim")
     if _et_salvas and _di_proj:
         try:
@@ -2186,47 +2371,12 @@ if "projeto_em_edicao" in st.session_state:
             pass
 
     # ════════════════════════════════════════════════════════
-    #  HISTÓRICO DE ALTERAÇÕES DO PROJETO
-    #  (só projetos iniciados geram registro — ver salvar acima)
-    # ════════════════════════════════════════════════════════
-    with st.expander("🕓 Histórico de Alterações"):
-        _df_hist = pd.read_sql(
-            "SELECT data, campo, valor_anterior, valor_novo, autor "
-            "FROM projeto_alteracoes WHERE projeto_id = %s "
-            "ORDER BY data DESC LIMIT 200",
-            db.get_engine(), params=(int(id_ed),),
-        )
-        if _df_hist.empty:
-            st.caption(
-                "Nenhuma alteração registrada. O histórico passa a ser "
-                "gravado quando o projeto sai de **Em Espera** (iniciado)."
-            )
-        else:
-            for _, _h in _df_hist.iterrows():
-                _quando = _data_br(_h["data"])
-                _hora = ""
-                _dt_h = pd.to_datetime(_h["data"], errors="coerce")
-                if pd.notna(_dt_h):
-                    _quando = _dt_h.strftime("%d/%m/%Y")
-                    _hora = _dt_h.strftime(" %H:%M")
-                _ant = _h.get("valor_anterior") or "—"
-                _nov = _h.get("valor_novo") or "—"
-                st.markdown(
-                    f"<div style='border-left:3px solid #0056b3;"
-                    f"padding:2px 0 2px 10px;margin:4px 0;font-size:.86rem;'>"
-                    f"<b>{_h['campo']}</b>: "
-                    f"<span style='color:#ef4444;'>{_ant}</span> → "
-                    f"<span style='color:#10b981;'>{_nov}</span><br>"
-                    f"<span style='opacity:.6;font-size:.76rem;'>"
-                    f"{_quando}{_hora} · {_h.get('autor') or '—'}</span></div>",
-                    unsafe_allow_html=True,
-                )
-
-    # ════════════════════════════════════════════════════════
     #  EVOLUÇÃO TÉCNICA POR DISCIPLINA
     #  Checklist: slider 100% → checkbox marcado automaticamente
     # ════════════════════════════════════════════════════════
-    st.markdown("### 📊 Evolução Técnica por Disciplina")
+    # Desde 28/10/2026 a evolução é da revisão em exibição: a emissão inicial
+    # fica com o que foi feito nela e cada revisão tem a sua.
+    st.markdown(f"### 📊 Evolução Técnica por Disciplina{_sufixo_rev}")
 
     # ── ISOLAMENTO POR EQUIPE ──────────────────────────────────
     # Regra de visibilidade da EVOLUÇÃO (só ela — board e Gantt são abertos
@@ -2257,145 +2407,133 @@ if "projeto_em_edicao" in st.session_state:
         )
         st.stop()
 
-    # Disciplinas vêm do campo demandas (parte antes do "|")
+    # Disciplinas vêm do campo demandas (parte antes do "|"). A revisão cobre
+    # as que ela lista; sem lista, vale a demanda inteira.
     _dem_raw = str(dados.get("demandas", "")).split("|")[0]
     disciplinas_projeto = [
         d.strip() for d in _dem_raw.split(",") if d.strip()
     ]
+    _disc_da_rev = [
+        d.strip() for d in str((_rev_sel or {}).get("disciplinas") or "")
+        .split(",") if d.strip()
+    ]
+    disciplinas_rev = _disc_da_rev or disciplinas_projeto
 
-    if not disciplinas_projeto:
+    if _rev_sel_atual and not disciplinas_rev:
         st.info(
             "Nenhuma disciplina vinculada. Adicione-as no campo "
             "**Disciplinas do Projeto** acima e salve."
         )
     else:
+        # Só a revisão ATUAL acompanha o cadastro (entra disciplina nova,
+        # sai a que foi tirada). As anteriores ficam como foram entregues.
+        if _rev_sel_atual:
+            db.sincronizar_evolucao(id_ed, _rev_sel_id, disciplinas_rev)
+
         df_prog = pd.read_sql(
-            "SELECT * FROM progresso_disciplinas WHERE projeto_id = %s",
-            db.get_engine(), params=(int(id_ed),),
+            "SELECT * FROM progresso_disciplinas WHERE projeto_id = %s "
+            "AND revisao_id IS NOT DISTINCT FROM %s ORDER BY id",
+            db.get_engine(), params=(int(id_ed), _rev_sel_id),
         )
+        _evol_editavel = _pode_mexer_rev
 
-        disciplinas_no_banco = df_prog["disciplina"].tolist()
+        if df_prog.empty:
+            st.caption("Esta revisão não tem evolução técnica registrada.")
+        else:
+            with st.form(key=f"check_evolucao_{id_ed}_{_rev_sel_id}"):
+                c_check, c_prog = st.columns([1.3, 1])
+                novos_vals = []
 
-        # Sincroniza disciplinas (adiciona novas, remove obsoletas)
-        _sync_needed = False
-        for _d in disciplinas_projeto:
-            if _d not in disciplinas_no_banco:
-                _c = db.conectar()
-                _cu = _c.cursor()
-                _cu.execute(
-                    "INSERT INTO progresso_disciplinas "
-                    "(projeto_id, disciplina, concluido, percentual) "
-                    "VALUES (%s,%s,%s,%s)",
-                    (int(id_ed), _d, 0, 0),
-                )
-                _c.commit()
-                _c.close()
-                _sync_needed = True
-
-        for _d in disciplinas_no_banco:
-            if _d not in disciplinas_projeto:
-                _c = db.conectar()
-                _cu = _c.cursor()
-                _cu.execute(
-                    "DELETE FROM progresso_disciplinas "
-                    "WHERE projeto_id=%s AND disciplina=%s",
-                    (int(id_ed), _d),
-                )
-                _c.commit()
-                _c.close()
-                _sync_needed = True
-
-        if _sync_needed:
-            st.rerun()
-
-        with st.form(key=f"check_evolucao_{id_ed}"):
-            c_check, c_prog = st.columns([1.3, 1])
-            novos_vals = []
-
-            with c_check:
-                st.markdown(
-                    "<div style='margin-bottom:6px;font-size:.78rem;"
-                    "color:#94a3b8;display:flex;gap:32px;padding-left:4px;'>"
-                    "<span>✔ Concluído</span>"
-                    "<span style='margin-left:8px'>Progresso (%)</span>"
-                    "</div>",
-                    unsafe_allow_html=True,
-                )
-                for _, row in df_prog.iterrows():
-                    if row["disciplina"] not in disciplinas_projeto:
-                        continue
-
-                    _st_banco = bool(row["concluido"])
-                    _per_banco = int(row["percentual"])
-
-                    col_cb, col_sl = st.columns([0.38, 0.62])
-
-                    _n_st = col_cb.checkbox(
-                        f"**{row['disciplina']}**",
-                        value=_st_banco,
-                        key=f"ch_{row['id']}",
-                    )
-                    _n_per = col_sl.slider(
-                        "Prog", 0, 100, _per_banco,
-                        key=f"sl_{row['id']}",
-                        label_visibility="collapsed",
-                    )
-
-                    # Sincronização: 100% ↔ marcado
-                    _cb_mudou = (_n_st != _st_banco)
-                    _sl_mudou = (_n_per != _per_banco)
-
-                    if _cb_mudou:
-                        _n_per = 100 if _n_st else 0
-                    elif _sl_mudou:
-                        _n_st = (_n_per == 100)
-
-                    novos_vals.append((
-                        1 if _n_st else 0,
-                        _n_per,
-                        int(row["id"]),
-                    ))
-
-            with c_prog:
-                _media = (
-                    df_prog["percentual"].mean()
-                    if not df_prog.empty else 0
-                )
-                _cor_prog = (
-                    "#10b981" if _media >= 70
-                    else "#f59e0b" if _media >= 40
-                    else "#ef4444"
-                )
-
-                with st.container(border=True):
+                with c_check:
                     st.markdown(
-                        f"<div style='text-align:center; padding:10px 0;'>"
-                        f"<div style='font-size:2rem;font-weight:700;"
-                        f"color:{_cor_prog};line-height:1'>"
-                        f"{_media:.0f}%</div>"
-                        f"<div style='font-size:.72rem;color:#94a3b8;"
-                        f"margin-top:5px;'>progresso geral</div>"
-                        f"</div>",
+                        "<div style='margin-bottom:6px;font-size:.78rem;"
+                        "color:#94a3b8;display:flex;gap:32px;"
+                        "padding-left:4px;'>"
+                        "<span>✔ Concluído</span>"
+                        "<span style='margin-left:8px'>Progresso (%)</span>"
+                        "</div>",
                         unsafe_allow_html=True,
                     )
-                    st.progress(min(_media / 100, 1.0))
+                    for _, row in df_prog.iterrows():
+                        _st_banco = bool(row["concluido"])
+                        _per_banco = int(row["percentual"])
 
-                if _media >= 100:
-                    st.success("🎉 CONCLUÍDO!")
+                        col_cb, col_sl = st.columns([0.38, 0.62])
 
-            if st.form_submit_button("🔄 Atualizar Progresso",
-                                     width="stretch"):
-                with carregando("Salvando evolução..."):
-                    _c = db.conectar()
-                    _cu = _c.cursor()
-                    for _s, _p, _i in novos_vals:
-                        _cu.execute(
-                            "UPDATE progresso_disciplinas "
-                            "SET concluido=%s, percentual=%s WHERE id=%s",
-                            (_s, _p, _i),
+                        _n_st = col_cb.checkbox(
+                            f"**{row['disciplina']}**",
+                            value=_st_banco,
+                            key=f"ch_{row['id']}",
+                            disabled=not _evol_editavel,
                         )
-                    _c.commit()
-                    _c.close()
-                confirmar_sucesso("Evolução salva",
-                                  "Progresso das disciplinas atualizado.")
-                st.rerun()
+                        _n_per = col_sl.slider(
+                            "Prog", 0, 100, _per_banco,
+                            key=f"sl_{row['id']}",
+                            label_visibility="collapsed",
+                            disabled=not _evol_editavel,
+                        )
+
+                        # Sincronização: 100% ↔ marcado
+                        _cb_mudou = (_n_st != _st_banco)
+                        _sl_mudou = (_n_per != _per_banco)
+
+                        if _cb_mudou:
+                            _n_per = 100 if _n_st else 0
+                        elif _sl_mudou:
+                            _n_st = (_n_per == 100)
+
+                        novos_vals.append((
+                            1 if _n_st else 0,
+                            _n_per,
+                            int(row["id"]),
+                        ))
+
+                with c_prog:
+                    _media = (
+                        df_prog["percentual"].mean()
+                        if not df_prog.empty else 0
+                    )
+                    _cor_prog = (
+                        "#10b981" if _media >= 70
+                        else "#f59e0b" if _media >= 40
+                        else "#ef4444"
+                    )
+
+                    with st.container(border=True):
+                        st.markdown(
+                            f"<div style='text-align:center; padding:10px 0;'>"
+                            f"<div style='font-size:2rem;font-weight:700;"
+                            f"color:{_cor_prog};line-height:1'>"
+                            f"{_media:.0f}%</div>"
+                            f"<div style='font-size:.72rem;color:#94a3b8;"
+                            f"margin-top:5px;'>progresso geral</div>"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+                        st.progress(min(_media / 100, 1.0))
+
+                    if _media >= 100:
+                        st.success("🎉 CONCLUÍDO!")
+
+                if st.form_submit_button("🔄 Atualizar Progresso",
+                                         width="stretch",
+                                         disabled=not _evol_editavel):
+                    with carregando("Salvando evolução..."):
+                        _c = db.conectar()
+                        _cu = _c.cursor()
+                        for _s, _p, _i in novos_vals:
+                            _cu.execute(
+                                "UPDATE progresso_disciplinas "
+                                "SET concluido=%s, percentual=%s WHERE id=%s",
+                                (_s, _p, _i),
+                            )
+                        _c.commit()
+                        _c.close()
+                    confirmar_sucesso(
+                        "Evolução salva",
+                        f"Progresso das disciplinas atualizado"
+                        f"{' na ' + _rev_sel_rot if _rev_sel_rot else ''}.",
+                    )
+                    st.rerun()
+            if not _evol_editavel:
+                st.caption("🔒 Revisão anterior: evolução só para consulta.")

@@ -529,6 +529,9 @@ try:
                pd.disciplina, pd.percentual
         FROM progresso_disciplinas pd
         JOIN projetos p ON pd.projeto_id = p.id
+        WHERE pd.revisao_id IS NOT DISTINCT FROM (
+            SELECT r.id FROM projeto_revisoes r
+             WHERE r.projeto_id = p.id ORDER BY r.numero DESC LIMIT 1)
         ORDER BY p.projeto, pd.disciplina
     """, db.get_engine())
 
@@ -958,19 +961,26 @@ _section_header(
     cor="#d97706",
 )
 
-# Carrega dados auxiliares para os relatórios
+# Carrega dados auxiliares para os relatórios. Etapas e evolução são de cada
+# revisão (28/10/2026): os relatórios mostram as da revisão ATUAL.
 try:
     _eng_rel = db.get_engine()
     _df_etapas_rel = pd.read_sql("""
         SELECT e.*, p.projeto, p.data_inicio
         FROM etapas_projeto e
         JOIN projetos p ON e.projeto_id = p.id
+        WHERE e.revisao_id IS NOT DISTINCT FROM (
+            SELECT r.id FROM projeto_revisoes r
+             WHERE r.projeto_id = p.id ORDER BY r.numero DESC LIMIT 1)
         ORDER BY e.projeto_id, e.ordem
     """, _eng_rel)
     _df_prog_rel = pd.read_sql("""
         SELECT pd.*, p.projeto, p.id as projeto_id
         FROM progresso_disciplinas pd
         JOIN projetos p ON pd.projeto_id = p.id
+        WHERE pd.revisao_id IS NOT DISTINCT FROM (
+            SELECT r.id FROM projeto_revisoes r
+             WHERE r.projeto_id = p.id ORDER BY r.numero DESC LIMIT 1)
     """, _eng_rel)
     # Histórico de revisões da demanda — vai pro PDF completo.
     _df_rev_rel = pd.read_sql("""

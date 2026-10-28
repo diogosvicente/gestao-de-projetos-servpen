@@ -279,17 +279,25 @@ def db_revisoes():
         _check("rótulo da revisão espelhado no projeto", _ratual == "R01",
                _ratual)
 
-        cc = db.conectar(); cx = cc.cursor()
-        cx.execute("SELECT disciplina, percentual FROM progresso_disciplinas "
-                   "WHERE projeto_id=%s", (pid,))
-        _prog = dict(cx.fetchall())
-        cx.execute("SELECT percentual FROM etapas_projeto WHERE projeto_id=%s",
-                   (pid,))
-        _pct_et = [r[0] for r in cx.fetchall()]
-        cc.close()
-        _check("começa do zero: zera só as disciplinas da revisão e as etapas",
-               _prog.get("Elétrica") == 0 and _prog.get("CFTV") == 100
-               and _pct_et == [0], (_prog, _pct_et))
+        def _evol(rid):
+            cc = db.conectar(); cx = cc.cursor()
+            cx.execute("SELECT disciplina, percentual FROM "
+                       "progresso_disciplinas WHERE revisao_id=%s", (rid,))
+            r = dict(cx.fetchall())
+            cc.close()
+            return r
+
+        _id_ini = db.listar_revisoes(pid)[0]["id"]
+        _check("emissão inicial fica guardada como foi entregue",
+               _evol(_id_ini) == {"Elétrica": 100, "CFTV": 100}
+               and [e["percentual"] for e
+                    in db.listar_etapas(pid, revisao_id=_id_ini)] == [100],
+               (_evol(_id_ini), db.listar_etapas(pid, revisao_id=_id_ini)))
+        _check("R01 'do zero' ganha evolução e etapas próprias em 0%",
+               _evol(_id_rv) == {"Elétrica": 0, "SPDA": 0}
+               and [(e["nome"], e["percentual"])
+                    for e in db.listar_etapas(pid)] == [("Projeto", 0)],
+               (_evol(_id_rv), db.listar_etapas(pid)))
 
         _id_r0 = db.listar_revisoes(pid)[0]["id"]
         db.adicionar_documentos_projeto(pid, ["Planta.dwg"], criado_por=nm,
@@ -318,14 +326,51 @@ def db_revisoes():
                and _proj()[5] == "Emissão inicial")
         _check("emissão inicial não pode ser desfeita",
                db.excluir_revisao(db.listar_revisoes(pid)[0]["id"]) is None)
+        _p = _proj()
+        _check("desfazer: projeto volta às datas da revisão anterior",
+               _p[3] == date(2026, 1, 10) and _p[4] == date(2026, 2, 10), _p)
+        _check("desfazer leva a evolução e as etapas da revisão junto",
+               _evol(_id_rv) == {}
+               and not db.listar_etapas(pid, revisao_id=_id_rv))
+
+        # "Continua a anterior", da demanda inteira: cada disciplina parte do
+        # último % que teve; as etapas copiam os da anterior.
+        _id_r1, _ = db.abrir_revisao(
+            pid, "ajuste", previsao=date(2026, 7, 1), do_zero=False,
+            criado_por=nm)
+        _check("'continua a anterior' parte dos percentuais anteriores",
+               _evol(_id_r1) == {"Elétrica": 100, "CFTV": 100, "SPDA": 0}
+               and [(e["nome"], e["percentual"])
+                    for e in db.listar_etapas(pid)] == [("Projeto", 100)],
+               (_evol(_id_r1), db.listar_etapas(pid)))
+
+        _ok_ed = db.atualizar_revisao(
+            _id_r1, "ajuste revisto", "Elétrica, Hidráulica",
+            nm + ", ZZsmoke_outro", date(2026, 7, 5), date(2026, 8, 1), None)
+        _p = _proj()
+        _check("editar revisão ajusta a evolução às disciplinas dela",
+               _ok_ed and _evol(_id_r1) == {"Elétrica": 100, "Hidráulica": 0},
+               _evol(_id_r1))
+        _check("editar a revisão atual: projeto segue as novas datas",
+               _p[3] == date(2026, 7, 5) and _p[4] == date(2026, 8, 1)
+               and "Hidráulica" in _p[0] and "ZZsmoke_outro" in _p[1], _p)
+        _check("editar não mexe na emissão inicial",
+               _evol(_id_ini) == {"Elétrica": 100, "CFTV": 100})
+        _check("etapas sem revisão indicada = as da revisão atual",
+               [e["percentual"] for e in db.listar_etapas(pid)] == [100]
+               and len(db.listar_etapas(pid, revisao_id=_id_ini)) == 1)
     finally:
         db.excluir_projeto(pid)
         cc = db.conectar(); cx = cc.cursor()
         cx.execute("SELECT COUNT(*) FROM projeto_revisoes WHERE projeto_id=%s",
                    (pid,))
         _sobra = cx.fetchone()[0]
+        cx.execute("SELECT COUNT(*) FROM progresso_disciplinas "
+                   "WHERE projeto_id=%s", (pid,))
+        _sobra_ev = cx.fetchone()[0]
         cc.close()
         _check("excluir o projeto leva as revisões junto", _sobra == 0)
+        _check("excluir o projeto leva a evolução junto", _sobra_ev == 0)
 
 
 def main():
