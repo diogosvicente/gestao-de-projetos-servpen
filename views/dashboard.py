@@ -961,11 +961,20 @@ _section_header(
     cor="#d97706",
 )
 
-# Carrega dados auxiliares para os relatórios. Etapas e evolução são de cada
-# revisão (28/10/2026): os relatórios mostram as da revisão ATUAL.
+# Carrega dados auxiliares para os relatórios. Etapas, evolução e
+# documentações são de cada revisão (28/10/2026): o Excel e o PDF completos
+# mostram as de TODAS, cada uma na linha/bloco da sua emissão ou revisão
+# (pedido de 05/11/2026); o Gantt segue só a revisão ATUAL. Os relatórios
+# filtram tudo pelos projetos de df_p_limpo (o que o usuário pode ver).
 try:
     _eng_rel = db.get_engine()
     _df_etapas_rel = pd.read_sql("""
+        SELECT e.*, p.projeto
+        FROM etapas_projeto e
+        JOIN projetos p ON e.projeto_id = p.id
+        ORDER BY e.projeto_id, e.revisao_id NULLS FIRST, e.ordem, e.id
+    """, _eng_rel)
+    _df_etapas_gantt = pd.read_sql("""
         SELECT e.*, p.projeto, p.data_inicio
         FROM etapas_projeto e
         JOIN projetos p ON e.projeto_id = p.id
@@ -975,22 +984,27 @@ try:
         ORDER BY e.projeto_id, e.ordem
     """, _eng_rel)
     _df_prog_rel = pd.read_sql("""
-        SELECT pd.*, p.projeto, p.id as projeto_id
+        SELECT pd.*, p.projeto
         FROM progresso_disciplinas pd
         JOIN projetos p ON pd.projeto_id = p.id
-        WHERE pd.revisao_id IS NOT DISTINCT FROM (
-            SELECT r.id FROM projeto_revisoes r
-             WHERE r.projeto_id = p.id ORDER BY r.numero DESC LIMIT 1)
+        ORDER BY pd.projeto_id, pd.revisao_id NULLS FIRST, pd.id
     """, _eng_rel)
-    # Histórico de revisões da demanda — vai pro PDF completo.
     _df_rev_rel = pd.read_sql("""
         SELECT r.* FROM projeto_revisoes r
         ORDER BY r.projeto_id, r.numero
     """, _eng_rel)
+    _df_docs_rel = pd.read_sql("""
+        SELECT d.id, d.projeto_id, d.revisao_id, d.nome, d.criado_por,
+               d.criado_em
+        FROM projeto_documentos d
+        ORDER BY d.projeto_id, d.criado_em NULLS FIRST, d.id
+    """, _eng_rel)
 except Exception:
     _df_etapas_rel = pd.DataFrame()
+    _df_etapas_gantt = pd.DataFrame()
     _df_prog_rel = pd.DataFrame()
     _df_rev_rel = pd.DataFrame()
+    _df_docs_rel = pd.DataFrame()
 
 c_r1, c_r2, c_r3 = st.columns(3)
 
@@ -1000,8 +1014,10 @@ with c_r1:
         with carregando("Preparando planilha Excel..."):
             dados_ex = relatorios.gerar_excel(
                 df_p_limpo,
-                df_etapas=_df_etapas_rel if not _df_etapas_rel.empty else None,
-                df_progresso=_df_prog_rel if not _df_prog_rel.empty else None,
+                df_etapas=_df_etapas_rel,
+                df_progresso=_df_prog_rel,
+                df_revisoes=_df_rev_rel,
+                df_documentos=_df_docs_rel,
             )
         st.download_button(
             label="📊 Baixar Excel Completo",
@@ -1009,7 +1025,10 @@ with c_r1:
             file_name=f"projetos_servpen_{datetime.now().strftime('%d_%m_%Y')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             width="stretch",
-            help="Abas: Projetos · Etapas · Progresso Técnico",
+            help=(
+                "Abas: Projetos (uma linha por emissão/revisão) · "
+                "Documentações · Etapas · Progresso Técnico"
+            ),
         )
     except Exception as exc:
         erro_humano(
@@ -1026,9 +1045,10 @@ with c_r2:
         with carregando("Preparando PDF completo..."):
             dados_pdf = relatorios.gerar_pdf(
                 df_p_limpo,
-                df_etapas=_df_etapas_rel if not _df_etapas_rel.empty else None,
-                df_progresso=_df_prog_rel if not _df_prog_rel.empty else None,
-                df_revisoes=_df_rev_rel if not _df_rev_rel.empty else None,
+                df_etapas=_df_etapas_rel,
+                df_progresso=_df_prog_rel,
+                df_revisoes=_df_rev_rel,
+                df_documentos=_df_docs_rel,
             )
         if dados_pdf:
             st.download_button(
@@ -1038,7 +1058,8 @@ with c_r2:
                 mime="application/pdf",
                 width="stretch",
                 help=(
-                    "Ficha detalhada de cada projeto + etapas + progresso"
+                    "Ficha de cada projeto: dados gerais e um bloco por "
+                    "emissão/revisão, com documentações, etapas e evolução"
                 ),
             )
         else:
@@ -1052,10 +1073,18 @@ with c_r2:
 # PDF Gantt
 with c_r3:
     try:
-        if not _df_etapas_rel.empty:
+        # Só as etapas dos projetos que o usuário vê (o Gantt não filtra
+        # sozinho e mostrava as de todos pro Projetista).
+        _df_gantt_vis = (
+            _df_etapas_gantt[
+                _df_etapas_gantt["projeto_id"].isin(df_p_limpo["id"])]
+            if not _df_etapas_gantt.empty and not df_p_limpo.empty
+            else pd.DataFrame()
+        )
+        if not _df_gantt_vis.empty:
             with carregando("Preparando Gantt PDF..."):
                 dados_gantt = relatorios.gerar_pdf_gantt(
-                    df_p_limpo, _df_etapas_rel,
+                    df_p_limpo, _df_gantt_vis,
                 )
             st.download_button(
                 label="📅 Baixar Gantt PDF",

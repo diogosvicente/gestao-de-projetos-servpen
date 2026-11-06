@@ -373,12 +373,83 @@ def db_revisoes():
         _check("excluir o projeto leva a evolução junto", _sobra_ev == 0)
 
 
+def relatorios_revisoes():
+    """Excel e PDF completos separados por emissão/revisão (05/11/2026)."""
+    print("Relatórios por revisão:")
+    import io
+    import openpyxl
+    import pandas as pd
+    import relatorios
+    nm = "ZZsmoke_relat"
+    conn = db.conectar(); c = conn.cursor()
+    c.execute("INSERT INTO projetos (projetista,projeto,status,demandas,"
+              "data_recebimento,data_termino,data_fim) "
+              "VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+              (nm, "ZZ Smoke Relat", "Concluído", "Elétrica",
+               date(2026, 1, 10), date(2026, 2, 10), date(2026, 2, 10)))
+    pid = c.fetchone()[0]
+    c.execute("INSERT INTO progresso_disciplinas (projeto_id, disciplina,"
+              " concluido, percentual) VALUES (%s,'Elétrica',1,100)", (pid,))
+    conn.commit(); conn.close()
+    try:
+        db.criar_revisao_inicial(pid)
+        _id_ini = db.listar_revisoes(pid)[0]["id"]
+        db.adicionar_documentos_projeto(pid, ["Memorial & ART.pdf"],
+                                        criado_por=nm, revisao_id=_id_ini)
+        _id_r1, _ = db.abrir_revisao(
+            pid, "acréscimo <SPDA>", disciplinas="SPDA",
+            projetista="ZZsmoke_outro", solicitado_em=date(2026, 5, 2),
+            previsao=date(2026, 6, 1), do_zero=True, criado_por=nm)
+        db.adicionar_documentos_projeto(pid, ["Planta R01.dwg"],
+                                        criado_por=nm, revisao_id=_id_r1)
+        eng = db.get_engine()
+        df = pd.read_sql("SELECT * FROM projetos WHERE id=%s", eng,
+                         params=(pid,))
+
+        def _q(tabela):
+            return pd.read_sql(f"SELECT * FROM {tabela} WHERE projeto_id=%s",
+                               eng, params=(pid,))
+
+        kw = dict(df_etapas=_q("etapas_projeto"),
+                  df_progresso=_q("progresso_disciplinas"),
+                  df_revisoes=_q("projeto_revisoes"),
+                  df_documentos=_q("projeto_documentos"))
+        ws = openpyxl.load_workbook(
+            io.BytesIO(relatorios.gerar_excel(df, **kw)))["Projetos"]
+        cab = [ws.cell(3, j).value for j in range(1, ws.max_column + 1)]
+
+        def _v(r, nome):
+            return ws.cell(r, cab.index(nome) + 1).value
+
+        lin = [r for r in range(4, ws.max_row + 1) if ws.cell(r, 1).value == pid]
+        _check("Excel: uma linha por revisão, em ordem",
+               [_v(r, "Revisão") for r in lin] == ["Emissão inicial", "R01"],
+               [_v(r, "Revisão") for r in lin])
+        _docs = [_v(r, "Documentações geradas") or "" for r in lin]
+        _check("Excel: documentação na linha da sua revisão",
+               len(_docs) == 2 and "Memorial & ART.pdf" in _docs[0]
+               and "Planta R01.dwg" in _docs[1]
+               and "Planta R01.dwg" not in _docs[0], _docs)
+        _evol = [_v(r, "Evolução técnica") for r in lin]
+        _check("Excel: evolução técnica de cada revisão",
+               _evol == ["Elétrica: 100%", "SPDA: 0%"], _evol)
+        _check("Excel: campos comuns iguais em todas as linhas do projeto",
+               len(lin) == 2 and all(_v(lin[0], k) == _v(lin[1], k)
+                                     for k in ("Nome do Projeto", "Status",
+                                               "Equipe do projeto")))
+        _pdf = relatorios.gerar_pdf(df, **kw)
+        _check("PDF completo gerado (texto com & e <)", _pdf[:4] == b"%PDF")
+    finally:
+        db.excluir_projeto(pid)
+
+
 def main():
     db.criar_tabelas()
     db_tarefas()
     db_tarefas_proj_rec()
     db_documentos_etapas()
     db_revisoes()
+    relatorios_revisoes()
     # 1 tarefa pro usuário das views, pra exercitar o data_editor de Tarefas.
     db.criar_tarefa("ZZsmoke_gestor", "render check", privada=True,
                     criado_por="ZZsmoke_gestor", data=date.today())

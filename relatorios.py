@@ -5,9 +5,11 @@ Versão: 1.1 (Correções de renderização de tabelas e quebras de página)
 """
 
 import io
+import numbers
 import os
 from datetime import datetime, date, timedelta
 import unicodedata
+from xml.sax.saxutils import escape as _xml_escape
 
 import pandas as pd
 from reportlab.lib import colors
@@ -199,134 +201,491 @@ def _tabela_estilo(n_colunas, cor_cab=AZUL_MEDIO):
 
 
 # ═════════════════════════════════════════════════════════════
+#  EMISSÕES E REVISÕES NOS RELATÓRIOS GERAIS
+# ═════════════════════════════════════════════════════════════
+# Pedido de 05/11/2026: no Excel e no PDF completos, o que é da emissão
+# inicial, da R01, da R02… aparece separado. Os campos comuns do projeto se
+# mantêm; o que cada revisão gerou (pedido, prazos, responsável,
+# documentações, etapas e evolução técnica) fica na linha ou no bloco dela.
+def _vazio(val):
+    """True pra None, NaN, NaT e texto vazio (o que o pandas traz do banco)."""
+    if val is None:
+        return True
+    try:
+        if pd.isna(val):
+            return True
+    except (TypeError, ValueError):
+        pass
+    return str(val).strip() in ('', 'None', 'nan', 'NaT')
+
+
+def _inteiro(val, padrao=None):
+    """int de um valor do pandas — id e número podem chegar float ou NaN."""
+    if _vazio(val):
+        return padrao
+    try:
+        return int(float(val))
+    except (TypeError, ValueError):
+        return padrao
+
+
+def _rotulo_rev(numero):
+    """0 → 'Emissão inicial'; 1 → 'R01'… (o mesmo de database.rotulo_revisao)."""
+    n = _inteiro(numero, 0)
+    return 'Emissão inicial' if n <= 0 else f'R{n:02d}'
+
+
+def _como_data(val):
+    """date (ou None) a partir de date, datetime, Timestamp ou texto."""
+    if _vazio(val):
+        return None
+    if isinstance(val, datetime):          # inclui pd.Timestamp
+        return val.date()
+    if isinstance(val, date):
+        return val
+    txt = str(val).strip()[:19]
+    for fmt in ('%Y-%m-%d', '%d/%m/%Y', '%Y-%m-%d %H:%M:%S',
+                '%Y-%m-%dT%H:%M:%S'):
+        try:
+            return datetime.strptime(txt, fmt).date()
+        except ValueError:
+            pass
+    return None
+
+
+def _data_br(val):
+    """'dd/mm/aaaa', ou '' quando não há data."""
+    d = _como_data(val)
+    return d.strftime('%d/%m/%Y') if d else ''
+
+
+def _esc(val, fallback='—'):
+    """Texto do usuário pronto pro Paragraph do reportlab: escapa & < > (um
+    '&' solto derrubava o PDF inteiro) e mantém as quebras de linha."""
+    t = _txt(val, fallback).replace('\r\n', '\n').replace('\r', '\n')
+    return _xml_escape(t).replace('\n', '<br/>')
+
+
+def _registros(df_x, ids):
+    """Linhas de df_x dos projetos `ids`, como dicts, com projeto_id e
+    revisao_id já normalizados pra int/None."""
+    if (df_x is None or getattr(df_x, 'empty', True)
+            or 'projeto_id' not in df_x.columns):
+        return []
+    df_x = df_x.loc[:, ~df_x.columns.duplicated()]
+    saida = []
+    for r in df_x.to_dict('records'):
+        pid = _inteiro(r.get('projeto_id'))
+        if pid in ids:
+            r['projeto_id'] = pid
+            r['revisao_id'] = _inteiro(r.get('revisao_id'))
+            saida.append(r)
+    return saida
+
+
+def _revisoes_por_projeto(df, df_revisoes=None, df_etapas=None,
+                          df_progresso=None, df_documentos=None):
+    """{projeto_id: [revisão, …]}, da emissão inicial pra mais nova.
+
+    Cada revisão é um dict com os dados dela (numero, rotulo, atual,
+    descricao, disciplinas, projetista, solicitado_em, previsao,
+    entregue_em, do_zero) e o que ela gerou — `documentos`, `etapas` e
+    `evolucao`, separados pelo revisao_id, do mesmo jeito que o seletor de
+    revisão do Kanban mostra. Projeto ainda sem revisão (dado antigo) ganha
+    uma "Emissão inicial" sem id, com as datas do próprio projeto (as mesmas
+    que database.criar_revisao_inicial usaria), que junta as linhas sem
+    revisão."""
+    if df is None or df.empty or 'id' not in df.columns:
+        return {}
+    projetos = {}
+    for p in df.loc[:, ~df.columns.duplicated()].to_dict('records'):
+        pid = _inteiro(p.get('id'))
+        if pid is not None:
+            projetos[pid] = p
+    ids = set(projetos)
+
+    def _agrupar(registros):
+        grupos = {}
+        for r in registros:
+            grupos.setdefault((r['projeto_id'], r['revisao_id']), []).append(r)
+        return grupos
+
+    revs_proj = {}
+    for r in _registros(df_revisoes, ids):
+        revs_proj.setdefault(r['projeto_id'], []).append(r)
+    etapas = _agrupar(_registros(df_etapas, ids))
+    evolucao = _agrupar(_registros(df_progresso, ids))
+    documentos = _agrupar(_registros(df_documentos, ids))
+
+    saida = {}
+    for pid, p in projetos.items():
+        lista = sorted(revs_proj.get(pid, []),
+                       key=lambda r: (_inteiro(r.get('numero'), 0),
+                                      _inteiro(r.get('id'), 0)))
+        if not lista:
+            _fim = (p.get('data_fim') if _vazio(p.get('data_termino'))
+                    else p.get('data_termino'))
+            _prev = p.get('previsao_execucao')
+            lista = [{
+                'id': None, 'numero': 0,
+                'projetista': p.get('projetista'),
+                'solicitado_em': p.get('data_recebimento'),
+                'previsao': _fim if _vazio(_prev) else _prev,
+                'entregue_em': (_fim if str(p.get('status') or '').strip()
+                                == 'Concluído' else None),
+            }]
+        blocos = []
+        for i, r in enumerate(lista):
+            rid = _inteiro(r.get('id'))
+            numero = _inteiro(r.get('numero'), 0)
+            blocos.append({
+                'id': rid,
+                'numero': numero,
+                'rotulo': _rotulo_rev(numero),
+                'atual': i == len(lista) - 1,
+                'descricao': _txt(r.get('descricao'), ''),
+                'disciplinas': _txt(r.get('disciplinas'), ''),
+                'projetista': _txt(r.get('projetista'), ''),
+                'solicitado_em': _como_data(r.get('solicitado_em')),
+                'previsao': _como_data(r.get('previsao')),
+                'entregue_em': _como_data(r.get('entregue_em')),
+                'do_zero': bool(_inteiro(r.get('do_zero'), 0)),
+                'documentos': documentos.get((pid, rid), []),
+                'etapas': sorted(etapas.get((pid, rid), []),
+                                 key=lambda e: (_inteiro(e.get('ordem'), 0),
+                                                _inteiro(e.get('id'), 0))),
+                'evolucao': sorted(evolucao.get((pid, rid), []),
+                                   key=lambda g: _inteiro(g.get('id'), 0)),
+            })
+        saida[pid] = blocos
+    return saida
+
+
+def _situacao_rev(rev):
+    """'Entregue' ou 'Em execução' (como no card da revisão), com '(atual)'
+    na revisão mais nova."""
+    txt = 'Entregue' if rev['entregue_em'] else 'Em execução'
+    return f'{txt} (atual)' if rev['atual'] else txt
+
+
+def _progresso_rev(rev):
+    """Média dos percentuais da evolução técnica da revisão (a mesma conta
+    do Dashboard), ou None quando ela não tem evolução."""
+    vals = [_inteiro(g.get('percentual'), 0) for g in rev['evolucao']]
+    return round(sum(vals) / len(vals)) if vals else None
+
+
+def _txt_documentos(rev):
+    """Uma documentação por linha: 'Memorial.pdf (12/03/2026)'."""
+    linhas = []
+    for d in rev['documentos']:
+        quando = _data_br(d.get('criado_em'))
+        linhas.append(_txt(d.get('nome')) + (f' ({quando})' if quando else ''))
+    return '\n'.join(linhas)
+
+
+def _txt_etapas(rev):
+    """Uma etapa por linha: '1. Levantamento — 100%'."""
+    return '\n'.join(
+        f"{_inteiro(e.get('ordem'), 0) + 1}. {_txt(e.get('nome'))} — "
+        f"{_inteiro(e.get('percentual'), 0)}%"
+        for e in rev['etapas'])
+
+
+def _txt_evolucao(rev):
+    """Uma disciplina por linha: 'Arquitetura: 100%'."""
+    return '\n'.join(
+        f"{_txt(g.get('disciplina'))}: {_inteiro(g.get('percentual'), 0)}%"
+        for g in rev['evolucao'])
+
+
+def _valor_projeto(p, campo, tipo='txt'):
+    """Valor de um campo comum do projeto, já no tipo da coluna."""
+    val = p.get(campo)
+    if campo == 'data_termino' and _vazio(val):
+        val = p.get('data_fim')
+    if tipo == 'data':
+        return _como_data(val)
+    if tipo == 'int':
+        return _inteiro(val)
+    return '' if _vazio(val) else val
+
+
+# ═════════════════════════════════════════════════════════════
 #  1. EXCEL COMPLETO
 # ═════════════════════════════════════════════════════════════
-def gerar_excel(df, df_etapas=None, df_progresso=None):
+def gerar_excel(df, df_etapas=None, df_progresso=None, df_revisoes=None,
+                df_documentos=None):
+    """Excel completo: abas Projetos · Documentações · Etapas · Progresso
+    Técnico.
+
+    Na aba Projetos cada projeto ocupa uma linha por emissão/revisão
+    (pedido de 05/11/2026): as colunas da revisão trazem o que ela gerou, e
+    os dados gerais do projeto se repetem iguais em todas as linhas dele —
+    assim o filtro e a ordenação do Excel continuam funcionando. As outras
+    abas ganham a coluna Revisão. Só entram os projetos de `df`, que é o que
+    o usuário logado pode ver."""
+    if df is not None:
+        df = df.copy().reset_index(drop=True)
+        df = df.loc[:, ~df.columns.duplicated()]
+    projetos = [] if df is None or df.empty else df.to_dict('records')
+    revs_proj = _revisoes_por_projeto(df, df_revisoes, df_etapas,
+                                      df_progresso, df_documentos)
+
+    # Colunas: (zona, cabeçalho, campo, largura, tipo). Zona 'rev' é o que
+    # muda de uma revisão pra outra; 'proj' e 'comum' se repetem.
+    COL_PROJ = [
+        ('ID',                       'id',               6,  'int'),
+        ('Código',                   'codigo',           14, 'txt'),
+        ('Nome do Projeto',          'projeto',          34, 'bold'),
+    ]
+    COL_REV = [
+        ('Revisão',                  'rotulo',           15, 'bold'),
+        ('Situação',                 'situacao',         19, 'txt'),
+        ('Pedido em',                'solicitado_em',    12, 'data'),
+        ('Previsão de entrega',      'previsao',         13, 'data'),
+        ('Entregue em',              'entregue_em',      12, 'data'),
+        ('Responsável(is)',          'projetista',       26, 'txt'),
+        ('O que foi pedido',         'descricao',        40, 'txt'),
+        ('Disciplinas da revisão',   'disciplinas',      28, 'txt'),
+        ('Documentações geradas',    'documentos',       36, 'txt'),
+        ('Etapas (% concluído)',     'etapas',           34, 'txt'),
+        ('Evolução técnica',         'evolucao',         30, 'txt'),
+        ('Progresso (%)',            'progresso',        11, 'pct'),
+    ]
+    COL_COMUM = [
+        ('Status',                   'status',           14, 'txt'),
+        ('Prioridade',               'prioridade',       12, 'txt'),
+        ('Equipe do projeto',        'projetista',       30, 'txt'),
+        ('Solicitante',              'solicitante',      25, 'txt'),
+        ('Contato',                  'contato',          22, 'txt'),
+        ('Endereço',                 'endereco',         30, 'txt'),
+        ('Local',                    'local',            22, 'txt'),
+        ('Nº SEI / Doc.',            'numero_sei',       18, 'txt'),
+        ('Recebimento',              'data_recebimento', 13, 'data'),
+        ('Prev. Execução',           'previsao_execucao', 14, 'data'),
+        ('Início',                   'data_inicio',      12, 'data'),
+        ('Término',                  'data_termino',     12, 'data'),
+        ('Link Drive',               'link_projeto',     30, 'txt'),
+        ('Escopo',                   'solicitacao',      45, 'txt'),
+        ('Disciplinas do projeto',   'demandas',         36, 'txt'),
+        ('Fonte de Recurso',         'fonte_recurso',    22, 'txt'),
+        ('Observações',              'observacoes',      40, 'txt'),
+        ('Cadastrado em',            'criado_em',        14, 'data'),
+    ]
+    colunas = ([('proj',) + c for c in COL_PROJ]
+               + [('rev',) + c for c in COL_REV]
+               + [('comum',) + c for c in COL_COMUM])
+    n_cols = len(colunas)
+    i_rev = len(COL_PROJ)
+    i_comum = i_rev + len(COL_REV)
+
+    # Cor de fundo por zona, alternando de projeto em projeto (todas as
+    # linhas de um projeto ficam com a mesma faixa). As colunas da revisão
+    # têm um tom próprio, pra se destacarem dos dados comuns.
+    CORES = {
+        'proj':  ('#ffffff', '#eef2f7'),
+        'rev':   ('#ecfeff', '#d3f3f8'),
+        'comum': ('#ffffff', '#eef2f7'),
+    }
+    COR_CAB = {'proj': '#003366', 'rev': '#0e7490', 'comum': '#0056b3'}
+
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        wb  = writer.book
-        fmt_cab = wb.add_format({
+        wb = writer.book
+        fmt_titulo = wb.add_format({
             'bold': True, 'font_color': 'white', 'bg_color': '#003366',
-            'border': 1, 'align': 'center', 'valign': 'vcenter',
-            'font_size': 10,
+            'font_size': 12, 'align': 'left', 'valign': 'vcenter',
+            'indent': 1,
         })
         fmt_sub = wb.add_format({
             'bold': True, 'font_color': 'white', 'bg_color': '#0056b3',
             'border': 1, 'align': 'center', 'valign': 'vcenter',
             'font_size': 9,
         })
-        fmt_cel = wb.add_format({
-            'border': 1, 'valign': 'vcenter', 'font_size': 9,
-            'text_wrap': True,
-        })
-        fmt_alt = wb.add_format({
-            'border': 1, 'valign': 'vcenter', 'font_size': 9,
-            'bg_color': '#f3f4f6', 'text_wrap': True,
-        })
-        fmt_pct = wb.add_format({
-            'border': 1, 'valign': 'vcenter', 'font_size': 9,
-            'num_format': '0"%"',
-        })
-        fmt_data = wb.add_format({
-            'border': 1, 'valign': 'vcenter', 'font_size': 9,
-            'num_format': 'dd/mm/yyyy',
-        })
+        fmt_vazio = wb.add_format({'italic': True, 'font_color': '#6b7280',
+                                   'font_size': 9})
 
-        if df is not None and not df.empty:
-            ws = wb.add_worksheet('Projetos')
-            writer.sheets['Projetos'] = ws
+        def _fmt_cab(zona, grupo=False):
+            props = {'bold': True, 'font_color': 'white',
+                     'bg_color': COR_CAB[zona], 'border': 1,
+                     'border_color': '#ffffff', 'valign': 'vcenter'}
+            if grupo:
+                props.update({'font_size': 9, 'align': 'left', 'indent': 1})
+            else:
+                props.update({'font_size': 10, 'align': 'center',
+                              'text_wrap': True})
+            return wb.add_format(props)
 
-            COLUNAS = [
-                ('ID',                 'id',                 6),
-                ('Código',             'codigo',             14),
-                ('Nome do Projeto',    'projeto',            35),
-                ('Status',             'status',             14),
-                ('Prioridade',         'prioridade',         12),
-                ('Projetista(s)',       'projetista',         30),
-                ('Solicitante',        'solicitante',        25),
-                ('Contato',            'contato',            22),
-                ('Endereço',           'endereco',           30),
-                ('Local',              'local',              22),
-                ('Nº SEI / Doc.',      'numero_sei',         18),
-                ('Recebimento',        'data_recebimento',   14),
-                ('Prev. Execução',     'previsao_execucao',  15),
-                ('Início',             'data_inicio',        13),
-                ('Término',            'data_termino',       13),
-                ('Link Drive',         'link_projeto',       30),
-                ('Escopo',             'solicitacao',        45),
-                ('Disciplinas',        'demandas',           40),
-                ('Revisão atual',      'revisao_atual',      14),
-                ('Fonte de Recurso',   'fonte_recurso',      25),
-                ('Documentações Geradas', 'documentacoes_geradas', 35),
-                ('Observações',        'observacoes',        40),
-                ('Cadastrado em',      'criado_em',          18),
-            ]
+        # Formatos das células, criados sob demanda por (fundo, tipo, 1ª
+        # linha do projeto). A 1ª linha de cada projeto ganha uma borda
+        # superior forte, pra separar um projeto do outro.
+        _cache_fmt = {}
 
-            ws.merge_range(0, 0, 0, len(COLUNAS)-1,
-                           'SERVPEN — Relatório de Projetos  |  '
-                           + datetime.now().strftime('%d/%m/%Y %H:%M'),
-                           wb.add_format({
-                               'bold': True, 'font_color': 'white',
-                               'bg_color': '#003366', 'font_size': 12,
-                               'align': 'center', 'valign': 'vcenter',
-                           }))
-            ws.set_row(0, 22)
+        def _fmt(fundo, tipo='txt', topo=False):
+            chave = (fundo, tipo, topo)
+            if chave not in _cache_fmt:
+                props = {'border': 1, 'border_color': '#d1d5db',
+                         'valign': 'top', 'font_size': 9, 'bg_color': fundo}
+                if topo:
+                    props.update({'top': 2, 'top_color': '#003366'})
+                if tipo == 'data':
+                    props.update({'num_format': 'dd/mm/yyyy',
+                                  'align': 'center'})
+                elif tipo == 'pct':
+                    props.update({'num_format': '0"%"', 'align': 'center'})
+                elif tipo == 'int':
+                    props['align'] = 'center'
+                else:
+                    props['text_wrap'] = True
+                    if tipo == 'bold':
+                        props['bold'] = True
+                _cache_fmt[chave] = wb.add_format(props)
+            return _cache_fmt[chave]
 
-            for col_i, (label, _, larg) in enumerate(COLUNAS):
-                ws.write(1, col_i, label, fmt_cab)
-                ws.set_column(col_i, col_i, larg)
-            ws.set_row(1, 18)
+        def _escrever(ws_x, lin, col, val, formato):
+            """Escreve tratando vazio (None/NaN/NaT), data e número."""
+            if _vazio(val):
+                ws_x.write_blank(lin, col, None, formato)
+            elif isinstance(val, (datetime, date)):
+                ws_x.write_datetime(lin, col, val, formato)
+            elif isinstance(val, numbers.Number) and not isinstance(val, bool):
+                ws_x.write_number(lin, col, val, formato)
+            else:
+                ws_x.write_string(lin, col, str(val), formato)
 
-            CAMPOS_DATA = {'data_recebimento', 'previsao_execucao',
-                           'data_inicio', 'data_termino', 'criado_em'}
-            for row_i, (_, row) in enumerate(df.iterrows()):
-                fmt_row = fmt_alt if row_i % 2 == 0 else fmt_cel
-                for col_i, (_, campo, _) in enumerate(COLUNAS):
-                    val = row.get(campo, '')
-                    val = '' if str(val) in ('None', 'nan', 'NaT') else val
-                    f   = fmt_data if campo in CAMPOS_DATA else fmt_row
-                    ws.write(row_i + 2, col_i, val, f)
+        # ── Aba Projetos: uma linha por emissão/revisão ──
+        ws = wb.add_worksheet('Projetos')
+        writer.sheets['Projetos'] = ws
+        ws.merge_range(0, 0, 0, n_cols - 1,
+                       'SERVPEN — Projetos por Emissão e Revisão  |  '
+                       + datetime.now().strftime('%d/%m/%Y %H:%M'),
+                       fmt_titulo)
+        ws.set_row(0, 22)
+        ws.merge_range(1, 0, 1, i_rev - 1, 'PROJETO', _fmt_cab('proj', True))
+        ws.merge_range(1, i_rev, 1, i_comum - 1,
+                       'EMISSÃO / REVISÃO — o que cada uma gerou fica na '
+                       'linha dela', _fmt_cab('rev', True))
+        ws.merge_range(1, i_comum, 1, n_cols - 1,
+                       'DADOS GERAIS DO PROJETO — os mesmos em todas as '
+                       'linhas do projeto (as datas são as da revisão atual)',
+                       _fmt_cab('comum', True))
+        ws.set_row(1, 18)
+        _cabs = {z: _fmt_cab(z) for z in COR_CAB}
+        for col, (zona, rotulo, _campo, larg, _tipo) in enumerate(colunas):
+            ws.write(2, col, rotulo, _cabs[zona])
+            ws.set_column(col, col, larg)
+        ws.set_row(2, 30)
 
-            ws.autofilter(1, 0, 1 + len(df), len(COLUNAS) - 1)
-            ws.freeze_panes(2, 0)
+        lin = 3
+        for i_p, p in enumerate(projetos):
+            faixa = i_p % 2
+            for j, rev in enumerate(revs_proj.get(_inteiro(p.get('id')), [])):
+                valores_rev = {
+                    'rotulo': rev['rotulo'],
+                    'situacao': _situacao_rev(rev),
+                    'solicitado_em': rev['solicitado_em'],
+                    'previsao': rev['previsao'],
+                    'entregue_em': rev['entregue_em'],
+                    'projetista': rev['projetista'],
+                    'descricao': rev['descricao'],
+                    'disciplinas': rev['disciplinas'] or 'Demanda inteira',
+                    'documentos': _txt_documentos(rev),
+                    'etapas': _txt_etapas(rev),
+                    'evolucao': _txt_evolucao(rev),
+                    'progresso': _progresso_rev(rev),
+                }
+                for col, (zona, _rot, campo, _larg, tipo) in enumerate(colunas):
+                    val = (valores_rev.get(campo) if zona == 'rev'
+                           else _valor_projeto(p, campo, tipo))
+                    _escrever(ws, lin, col, val,
+                              _fmt(CORES[zona][faixa], tipo, j == 0))
+                lin += 1
+        if lin == 3:
+            ws.write(3, 0, 'Nenhum projeto para exportar.', fmt_vazio)
+        else:
+            ws.autofilter(2, 0, lin - 1, n_cols - 1)
+        # Fixa título e cabeçalhos, e as colunas ID…Revisão, que dizem de
+        # que projeto e de que revisão é a linha enquanto se rola pro lado.
+        ws.freeze_panes(3, i_rev + 1)
 
-        if df_etapas is not None and not df_etapas.empty:
-            ws2 = wb.add_worksheet('Etapas')
-            writer.sheets['Etapas'] = ws2
-            ws2.merge_range(0, 0, 0, 5, 'SERVPEN — Etapas dos Projetos', fmt_sub)
-            ws2.set_row(0, 20)
-            cab_et = ['Projeto', 'Ordem', 'Nome da Etapa',
-                      'Início (dias offset)', 'Duração (dias)', 'Fim estimado (dias)']
-            for i, c in enumerate(cab_et):
-                ws2.write(1, i, c, fmt_cab)
-            ws2.set_column(0, 0, 32); ws2.set_column(2, 2, 28)
-            ws2.set_column(1, 1, 8);  ws2.set_column(3, 5, 18)
-            for ri, (_, r) in enumerate(df_etapas.iterrows()):
-                fmt_r = fmt_alt if ri % 2 == 0 else fmt_cel
-                fim_d = int(r.get('dias_offset', 0)) + int(r.get('duracao_dias', 0)) - 1
-                ws2.write(ri+2, 0, _txt(r.get('projeto','')), fmt_r)
-                ws2.write(ri+2, 1, int(r.get('ordem', 0))+1, fmt_r)
-                ws2.write(ri+2, 2, _txt(r.get('nome','')), fmt_r)
-                ws2.write(ri+2, 3, int(r.get('dias_offset', 0)), fmt_r)
-                ws2.write(ri+2, 4, int(r.get('duracao_dias', 0)), fmt_r)
-                ws2.write(ri+2, 5, fim_d, fmt_r)
+        # ── Abas de detalhe, todas com a coluna Revisão ──
+        def _aba_detalhe(nome_aba, titulo, colunas_aba, linhas):
+            """colunas_aba: [(cabeçalho, largura, tipo)]; linhas:
+            [(projeto_id, [valores])], já na ordem projeto → revisão."""
+            ws_x = wb.add_worksheet(nome_aba)
+            writer.sheets[nome_aba] = ws_x
+            n = len(colunas_aba)
+            ws_x.merge_range(0, 0, 0, n - 1, titulo, fmt_sub)
+            ws_x.set_row(0, 20)
+            for col, (cab, larg, _tipo) in enumerate(colunas_aba):
+                ws_x.write(1, col, cab, _cabs['rev' if col == 1 else 'proj'])
+                ws_x.set_column(col, col, larg)
+            ws_x.set_row(1, 30)
+            faixa, anterior = 1, object()
+            for k, (pid, valores) in enumerate(linhas):
+                topo = pid != anterior
+                if topo:
+                    faixa, anterior = 1 - faixa, pid
+                for col, ((_c, _l, tipo), val) in enumerate(
+                        zip(colunas_aba, valores)):
+                    zona = 'rev' if col == 1 else 'comum'
+                    _escrever(ws_x, k + 2, col, val,
+                              _fmt(CORES[zona][faixa], tipo, topo and k > 0))
+            ws_x.autofilter(1, 0, len(linhas) + 1, n - 1)
+            ws_x.freeze_panes(2, 2)
 
-        if df_progresso is not None and not df_progresso.empty:
-            ws3 = wb.add_worksheet('Progresso Técnico')
-            writer.sheets['Progresso Técnico'] = ws3
-            ws3.merge_range(0, 0, 0, 3, 'SERVPEN — Progresso por Disciplina', fmt_sub)
-            ws3.set_row(0, 20)
-            cab_pr = ['Projeto', 'Disciplina', 'Concluído', 'Percentual (%)']
-            for i, c in enumerate(cab_pr):
-                ws3.write(1, i, c, fmt_cab)
-            ws3.set_column(0, 0, 32); ws3.set_column(1, 1, 24)
-            ws3.set_column(2, 2, 12); ws3.set_column(3, 3, 16)
-            for ri, (_, r) in enumerate(df_progresso.iterrows()):
-                fmt_r = fmt_alt if ri % 2 == 0 else fmt_cel
-                ws3.write(ri+2, 0, _txt(r.get('projeto','')), fmt_r)
-                ws3.write(ri+2, 1, _txt(r.get('disciplina','')), fmt_r)
-                ws3.write(ri+2, 2, 'Sim' if r.get('concluido') else 'Não', fmt_r)
-                ws3.write(ri+2, 3, int(r.get('percentual', 0)), fmt_pct)
+        linhas_doc, linhas_et, linhas_pg = [], [], []
+        for p in projetos:
+            pid = _inteiro(p.get('id'))
+            nome = _txt(p.get('projeto'))
+            for rev in revs_proj.get(pid, []):
+                for d in rev['documentos']:
+                    linhas_doc.append((pid, [
+                        nome, rev['rotulo'], _txt(d.get('nome')),
+                        _como_data(d.get('criado_em')),
+                        _txt(d.get('criado_por'), ''),
+                    ]))
+                for e in rev['etapas']:
+                    ini = _inteiro(e.get('dias_offset'), 0)
+                    dur = _inteiro(e.get('duracao_dias'), 0)
+                    linhas_et.append((pid, [
+                        nome, rev['rotulo'], _inteiro(e.get('ordem'), 0) + 1,
+                        _txt(e.get('nome')), ini, dur, ini + dur - 1,
+                        _inteiro(e.get('percentual'), 0),
+                    ]))
+                for g in rev['evolucao']:
+                    linhas_pg.append((pid, [
+                        nome, rev['rotulo'], _txt(g.get('disciplina')),
+                        'Sim' if _inteiro(g.get('concluido'), 0) else 'Não',
+                        _inteiro(g.get('percentual'), 0),
+                    ]))
+
+        if linhas_doc:
+            _aba_detalhe(
+                'Documentações', 'SERVPEN — Documentações Geradas por Revisão',
+                [('Projeto', 34, 'txt'), ('Revisão', 15, 'bold'),
+                 ('Documento', 42, 'txt'), ('Registrado em', 14, 'data'),
+                 ('Por', 22, 'txt')],
+                linhas_doc)
+        if linhas_et:
+            _aba_detalhe(
+                'Etapas', 'SERVPEN — Etapas dos Projetos por Revisão',
+                [('Projeto', 34, 'txt'), ('Revisão', 15, 'bold'),
+                 ('Ordem', 8, 'int'), ('Nome da Etapa', 30, 'txt'),
+                 ('Início (dias offset)', 14, 'int'),
+                 ('Duração (dias)', 12, 'int'),
+                 ('Fim estimado (dias)', 14, 'int'),
+                 ('Concluído (%)', 12, 'pct')],
+                linhas_et)
+        if linhas_pg:
+            _aba_detalhe(
+                'Progresso Técnico',
+                'SERVPEN — Progresso por Disciplina e Revisão',
+                [('Projeto', 34, 'txt'), ('Revisão', 15, 'bold'),
+                 ('Disciplina', 26, 'txt'), ('Concluído', 11, 'txt'),
+                 ('Percentual (%)', 14, 'pct')],
+                linhas_pg)
 
     return output.getvalue()
 
@@ -404,23 +763,20 @@ def gerar_excel_historico(df):
 
 
 # ═════════════════════════════════════════════════════════════
-def gerar_pdf(df, df_etapas=None, df_progresso=None, df_revisoes=None):
+def gerar_pdf(df, df_etapas=None, df_progresso=None, df_revisoes=None,
+              df_documentos=None):
+    """PDF completo: capa, resumo, relação geral e a ficha de cada projeto.
+
+    Na ficha vêm primeiro os dados gerais do projeto e, depois, um bloco
+    por emissão/revisão com o que ela gerou — pedido, prazos, responsável,
+    documentações, etapas e evolução técnica (pedido de 05/11/2026). Só
+    entram os projetos de `df`."""
     # ── SOLUÇÃO CONTRA DUPLICIDADE: HIGIENIZAÇÃO DE ÍNDICES E COLUNAS ──
     if df is not None:
         df = df.copy().reset_index(drop=True)
         df = df.loc[:, ~df.columns.duplicated()]
-    if df_etapas is not None:
-        df_etapas = df_etapas.copy().reset_index(drop=True)
-        df_etapas = df_etapas.loc[:, ~df_etapas.columns.duplicated()]
-        for col_conflito in ['projeto', 'status', 'prioridade', 'projetista']:
-            if col_conflito in df_etapas.columns:
-                df_etapas = df_etapas.drop(columns=[col_conflito])
-    if df_progresso is not None:
-        df_progresso = df_progresso.copy().reset_index(drop=True)
-        df_progresso = df_progresso.loc[:, ~df_progresso.columns.duplicated()]
-        for col_conflito in ['projeto', 'status', 'prioridade', 'projetista']:
-            if col_conflito in df_progresso.columns:
-                df_progresso = df_progresso.drop(columns=[col_conflito])
+    revs_proj = _revisoes_por_projeto(df, df_revisoes, df_etapas,
+                                      df_progresso, df_documentos)
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -435,12 +791,137 @@ def gerar_pdf(df, df_etapas=None, df_progresso=None, df_revisoes=None):
     story = []
     w_util = A4[0] - 3*cm
 
+    # Cor própria das emissões/revisões (a mesma das colunas da revisão no
+    # Excel) e estilos dos blocos.
+    COR_REV = colors.HexColor('#0e7490')
+    st_rev_tit = ParagraphStyle('RevTit', fontName='Helvetica-Bold',
+                                fontSize=10, leading=13, textColor=BRANCO)
+    st_rev_sit = ParagraphStyle('RevSit', fontName='Helvetica', fontSize=8,
+                                leading=11, textColor=BRANCO,
+                                alignment=TA_RIGHT)
+    st_rev_sub = ParagraphStyle('RevSub', fontName='Helvetica-Bold',
+                                fontSize=9, leading=12, textColor=COR_REV,
+                                spaceBefore=6, spaceAfter=3)
+    st_nota = ParagraphStyle('Nota', fontName='Helvetica-Oblique', fontSize=8,
+                             leading=11, textColor=colors.HexColor('#6b7280'),
+                             spaceAfter=4)
+
     def _hr():
         return HRFlowable(width='100%', thickness=0.5,
                           color=CINZA_BORDA, spaceAfter=6, spaceBefore=6)
 
     def _secao(txt):
         return Paragraph(f'<b>{txt}</b>', st['secao'])
+
+    def _par_campos(pares):
+        rows = []
+        for i in range(0, len(pares), 2):
+            left  = pares[i]
+            right = pares[i+1] if i+1 < len(pares) else ('', '')
+            rows.append([
+                Paragraph(left[0],  st['campo_label']),
+                Paragraph(_esc(left[1]),  st['campo_valor']),
+                Paragraph(right[0], st['campo_label']),
+                Paragraph(_esc(right[1]) if right[0] else '', st['campo_valor']),
+            ])
+        t = Table(rows, colWidths=[3.5*cm, w_util/2-3.5*cm, 3.5*cm, w_util/2-3.5*cm])
+        t.setStyle(TableStyle([
+            ('VALIGN',       (0,0),(-1,-1), 'TOP'),
+            ('TOPPADDING',   (0,0),(-1,-1), 3),
+            ('BOTTOMPADDING',(0,0),(-1,-1), 3),
+            ('LEFTPADDING',  (0,0),(-1,-1), 2),
+            ('RIGHTPADDING', (0,0),(-1,-1), 4),
+            ('LINEBELOW',    (0,0),(-1,-2), 0.3, CINZA_BORDA),
+        ]))
+        return t
+
+    def _tabela_rev(cabecalhos, linhas, larguras):
+        t = Table([[Paragraph(c, st['cabecalho_tab']) for c in cabecalhos]]
+                  + [[Paragraph(v, st['celula']) for v in lin] for lin in linhas],
+                  colWidths=larguras, repeatRows=1)
+        t.setStyle(_tabela_estilo(len(cabecalhos), COR_REV))
+        return t
+
+    def _bloco_revisao(rev):
+        """Faixa com o rótulo e a situação, os dados da revisão e o que ela
+        gerou. Cada parte anda junta com o seu título na quebra de página."""
+        sit = (f"Entregue em {rev['entregue_em'].strftime('%d/%m/%Y')}"
+               if rev['entregue_em'] else 'Em execução')
+        if rev['atual']:
+            sit += '  ·  revisão atual'
+        barra = Table([[Paragraph(_esc(rev['rotulo'].upper()), st_rev_tit),
+                        Paragraph(sit, st_rev_sit)]],
+                      colWidths=[w_util * 0.45, w_util * 0.55])
+        barra.setStyle(TableStyle([
+            ('BACKGROUND',    (0,0), (-1,-1), COR_REV),
+            ('VALIGN',        (0,0), (-1,-1), 'MIDDLE'),
+            ('TOPPADDING',    (0,0), (-1,-1), 5),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+            ('LEFTPADDING',   (0,0), (-1,-1), 8),
+            ('RIGHTPADDING',  (0,0), (-1,-1), 8),
+        ]))
+        pares = [
+            ('Pedido em',           _data_fmt(rev['solicitado_em'])),
+            ('Previsão de entrega', _data_fmt(rev['previsao'])),
+            ('Entregue em',         _data_fmt(rev['entregue_em'])),
+            ('Responsável(is)',     rev['projetista']),
+            ('Disciplinas',         rev['disciplinas'] or 'Demanda inteira'),
+        ]
+        if rev['numero'] > 0:
+            pares.append(('Partiu de', 'Do zero (0%)' if rev['do_zero']
+                          else 'Da revisão anterior'))
+        cabeca = [barra, Spacer(1, 0.15*cm), _par_campos(pares)]
+        if rev['descricao']:
+            cabeca.append(Paragraph('<b>O que foi pedido:</b> '
+                                    + _esc(rev['descricao']), st['corpo']))
+        partes = [KeepTogether(cabeca)]
+
+        tit = Paragraph('Documentações geradas', st_rev_sub)
+        if rev['documentos']:
+            partes.append(KeepTogether([tit, _tabela_rev(
+                ['Documento', 'Registrado em', 'Por'],
+                [[_esc(d.get('nome')), _data_br(d.get('criado_em')) or '—',
+                  _esc(d.get('criado_por'))] for d in rev['documentos']],
+                [w_util - 6*cm, 2.8*cm, 3.2*cm])]))
+        else:
+            partes.append(KeepTogether([tit, Paragraph(
+                'Nenhuma documentação registrada nesta revisão.', st_nota)]))
+
+        tit = Paragraph('Etapas', st_rev_sub)
+        if rev['etapas']:
+            _linhas_et = []
+            for e in rev['etapas']:
+                ini = _inteiro(e.get('dias_offset'), 0)
+                dur = _inteiro(e.get('duracao_dias'), 0)
+                _linhas_et.append([
+                    str(_inteiro(e.get('ordem'), 0) + 1), _esc(e.get('nome')),
+                    str(ini), str(dur), str(ini + dur - 1),
+                    f"{_inteiro(e.get('percentual'), 0)}%",
+                ])
+            partes.append(KeepTogether([tit, _tabela_rev(
+                ['Ord.', 'Etapa', 'Início (dias)', 'Duração (dias)',
+                 'Fim (dias)', 'Concluído'],
+                _linhas_et,
+                [1.3*cm, w_util - 11.3*cm, 2.5*cm, 2.5*cm, 2.5*cm, 2.5*cm])]))
+        else:
+            partes.append(KeepTogether([tit, Paragraph(
+                'Nenhuma etapa cadastrada nesta revisão.', st_nota)]))
+
+        tit = Paragraph('Evolução técnica por disciplina', st_rev_sub)
+        if rev['evolucao']:
+            partes.append(KeepTogether([tit, _tabela_rev(
+                ['Disciplina', 'Progresso', 'Concluída'],
+                [[_esc(g.get('disciplina')),
+                  f"{_inteiro(g.get('percentual'), 0)}%",
+                  'Sim' if _inteiro(g.get('concluido'), 0) else 'Não']
+                 for g in rev['evolucao']],
+                [w_util*0.5, w_util*0.25, w_util*0.25])]))
+        else:
+            partes.append(KeepTogether([tit, Paragraph(
+                'Sem evolução técnica registrada nesta revisão.', st_nota)]))
+
+        partes.append(Spacer(1, 0.4*cm))
+        return partes
 
     # 🧱 CAPA DO RELATÓRIO
     capa_tbl = Table(
@@ -468,7 +949,7 @@ def gerar_pdf(df, df_etapas=None, df_progresso=None, df_revisoes=None):
         ]]
         for s, n in stat_counts.items():
             tot_rows.append([
-                Paragraph(_txt(s), st['celula']),
+                Paragraph(_esc(s), st['celula']),
                 Paragraph(str(n), st['celula']),
             ])
         tot_rows.append([
@@ -477,13 +958,18 @@ def gerar_pdf(df, df_etapas=None, df_progresso=None, df_revisoes=None):
         ])
         t_tot = Table(tot_rows, colWidths=[w_util*0.6, w_util*0.4])
         t_tot.setStyle(_tabela_estilo(2))
+        # A linha TOTAL usa o estilo do cabeçalho (texto branco): sem fundo
+        # escuro ela saía invisível.
+        t_tot.setStyle(TableStyle([
+            ('BACKGROUND', (0, -1), (-1, -1), AZUL_ESCURO),
+        ]))
         story.append(_secao('📊 Resumo Executivo'))
         story.append(t_tot)
         story.append(Spacer(1, 0.4*cm))
 
         # 📋 TABELA INICIAL AJUSTADA: APENAS OS 6 CAMPOS SOLICITADOS
         story.append(_secao('📋 Relação Geral de Empreendimentos'))
-        
+
         dem_rows = [[
             Paragraph('<b>ID</b>', st['cabecalho_tab']),
             Paragraph('<b>CÓDIGO</b>', st['cabecalho_tab']),
@@ -498,12 +984,12 @@ def gerar_pdf(df, df_etapas=None, df_progresso=None, df_revisoes=None):
         for _, proj in df.iterrows():
             dem_rows.append([
                 Paragraph(str(proj.get('id', '—')), st['celula']),
-                Paragraph(_txt(proj.get('codigo', '—')), st['celula']),
-                Paragraph(f"<b>{_txt(proj['projeto'])}</b>", st['celula']),
-                Paragraph(_txt(proj.get('projetista', '—')), st['celula']),
-                Paragraph(_txt(proj.get('endereco', '—')), st['celula']),
-                Paragraph(_txt(proj.get('local', '—')), st['celula']),
-                Paragraph(_txt(proj.get('status', '—')), st['celula']),
+                Paragraph(_esc(proj.get('codigo', '—')), st['celula']),
+                Paragraph(f"<b>{_esc(proj['projeto'])}</b>", st['celula']),
+                Paragraph(_esc(proj.get('projetista', '—')), st['celula']),
+                Paragraph(_esc(proj.get('endereco', '—')), st['celula']),
+                Paragraph(_esc(proj.get('local', '—')), st['celula']),
+                Paragraph(_esc(proj.get('status', '—')), st['celula']),
                 Paragraph(_data_fmt(proj.get('data_recebimento', ''))),
             ])
 
@@ -520,23 +1006,23 @@ def gerar_pdf(df, df_etapas=None, df_progresso=None, df_revisoes=None):
 
     # 🔎 DETALHAMENTO DOS TÓPICOS DOS PROJETOS (ENUMERADOS)
     if df is not None and not df.empty:
+        st_hdr_proj = ParagraphStyle('HdrProj', fontName='Helvetica-Bold', fontSize=13, textColor=BRANCO, leading=16)
+        st_hdr_status = ParagraphStyle('HdrStat', fontName='Helvetica-Bold', fontSize=8, textColor=BRANCO, alignment=TA_CENTER, leading=10)
+        st_hdr_prio = ParagraphStyle('HdrPrio', fontName='Helvetica-Bold', fontSize=8, textColor=BRANCO, alignment=TA_CENTER, leading=10)
+
         for row_idx, (_, proj) in enumerate(df.iterrows()):
             story.append(PageBreak())
 
             cor_st = COR_STATUS.get(str(proj.get('status','')), AZUL_MEDIO)
             cor_pr = COR_PRIORIDADE.get(str(proj.get('prioridade','')), AZUL_CLARO)
 
-            st_hdr_proj = ParagraphStyle('HdrProj', fontName='Helvetica-Bold', fontSize=13, textColor=BRANCO, leading=16)
-            st_hdr_status = ParagraphStyle('HdrStat', fontName='Helvetica-Bold', fontSize=8, textColor=BRANCO, alignment=TA_CENTER, leading=10)
-            st_hdr_prio = ParagraphStyle('HdrPrio', fontName='Helvetica-Bold', fontSize=8, textColor=BRANCO, alignment=TA_CENTER, leading=10)
-
             num_projeto_txt = f"{row_idx + 1}. {proj['projeto']}"
 
             hdr = Table([[
-                Paragraph(f'<b>{_txt(num_projeto_txt)}</b>', st_hdr_proj),
+                Paragraph(f'<b>{_esc(num_projeto_txt)}</b>', st_hdr_proj),
                 Table([[
-                    Paragraph(_txt(proj.get('status','—')), st_hdr_status),
-                    Paragraph(_txt(proj.get('prioridade','—')), st_hdr_prio),
+                    Paragraph(_esc(proj.get('status','—')), st_hdr_status),
+                    Paragraph(_esc(proj.get('prioridade','—')), st_hdr_prio),
                 ]], colWidths=[2.8*cm, 2.4*cm],
                     style=TableStyle([
                         ('BACKGROUND', (0,0), (0,0), cor_st),
@@ -558,28 +1044,9 @@ def gerar_pdf(df, df_etapas=None, df_progresso=None, df_revisoes=None):
             story.append(hdr)
             story.append(Spacer(1, 0.3*cm))
 
-            def _par_campos(pares):
-                rows = []
-                for i in range(0, len(pares), 2):
-                    left  = pares[i]
-                    right = pares[i+1] if i+1 < len(pares) else ('', '')
-                    rows.append([
-                        Paragraph(left[0],  st['campo_label']),
-                        Paragraph(_txt(left[1]),  st['campo_valor']),
-                        Paragraph(right[0], st['campo_label']),
-                        Paragraph(_txt(right[1]), st['campo_valor']),
-                    ])
-                t = Table(rows, colWidths=[3.5*cm, w_util/2-3.5*cm, 3.5*cm, w_util/2-3.5*cm])
-                t.setStyle(TableStyle([
-                    ('VALIGN',       (0,0),(-1,-1), 'TOP'),
-                    ('TOPPADDING',   (0,0),(-1,-1), 3),
-                    ('BOTTOMPADDING',(0,0),(-1,-1), 3),
-                    ('LEFTPADDING',  (0,0),(-1,-1), 2),
-                    ('RIGHTPADDING', (0,0),(-1,-1), 4),
-                    ('LINEBELOW',    (0,0),(-1,-2), 0.3, CINZA_BORDA),
-                ]))
-                return t
+            revs = revs_proj.get(_inteiro(proj.get('id')), [])
 
+            # ── Dados gerais: os mesmos pra todas as revisões ──
             story.append(_secao('Identificação'))
             story.append(_par_campos([
                 ('Código do Projeto',     proj.get('codigo','')),
@@ -601,121 +1068,43 @@ def gerar_pdf(df, df_etapas=None, df_progresso=None, df_revisoes=None):
                 ('Data de Início',         _data_fmt(proj.get('data_inicio',''))),
                 ('Data de Término',        _data_fmt(proj.get('data_termino', proj.get('data_fim','')))),
             ]))
+            if len(revs) > 1:
+                story.append(Paragraph(
+                    f"Datas da revisão atual ({revs[-1]['rotulo']}). As de "
+                    "cada emissão estão em Emissões e Revisões, abaixo.",
+                    st_nota))
             story.append(Spacer(1, 0.2*cm))
-
-            # Revisões/emissões da demanda (pedido de 23/09/2026): o histórico
-            # de cada volta do pedido, com responsável, datas e o que mudou.
-            if df_revisoes is not None and not df_revisoes.empty:
-                rev_proj = (df_revisoes[df_revisoes['projeto_id'] == proj.get('id')]
-                            if 'projeto_id' in df_revisoes.columns else pd.DataFrame())
-                if not rev_proj.empty:
-                    story.append(_secao('Revisões e Emissões'))
-                    rv_rows = [[
-                        Paragraph('Revisão', st['cabecalho_tab']),
-                        Paragraph('Pedido', st['cabecalho_tab']),
-                        Paragraph('Previsão', st['cabecalho_tab']),
-                        Paragraph('Entrega', st['cabecalho_tab']),
-                        Paragraph('Responsável', st['cabecalho_tab']),
-                        Paragraph('O que foi pedido', st['cabecalho_tab']),
-                    ]]
-                    for _, rv in rev_proj.sort_values('numero').iterrows():
-                        num_rv = int(rv.get('numero', 0) or 0)
-                        rot_rv = ('Emissão inicial' if num_rv <= 0
-                                  else f'R{num_rv:02d}')
-                        desc_rv = _txt(rv.get('descricao', ''))
-                        disc_rv = _txt(rv.get('disciplinas', ''), '')
-                        if disc_rv:
-                            desc_rv += f' (disciplinas: {disc_rv})'
-                        rv_rows.append([
-                            Paragraph(rot_rv, st['celula']),
-                            Paragraph(_data_fmt(rv.get('solicitado_em', '')), st['celula']),
-                            Paragraph(_data_fmt(rv.get('previsao', '')), st['celula']),
-                            Paragraph(_data_fmt(rv.get('entregue_em', '')), st['celula']),
-                            Paragraph(_txt(rv.get('projetista', '')), st['celula']),
-                            Paragraph(desc_rv, st['celula']),
-                        ])
-                    t_rv = Table(rv_rows, colWidths=[2.2*cm, 2*cm, 2*cm, 2*cm,
-                                                     3.4*cm, w_util - 11.6*cm])
-                    t_rv.setStyle(_tabela_estilo(6))
-                    story.append(t_rv)
-                    story.append(Spacer(1, 0.2*cm))
 
             esc = _txt(proj.get('solicitacao',''))
             if esc != '—':
                 story.append(_secao('Escopo / Descrição'))
-                story.append(Paragraph(esc, st['corpo']))
+                story.append(Paragraph(_esc(esc), st['corpo']))
                 story.append(Spacer(1, 0.15*cm))
 
             dem_ind = _txt(proj.get('demandas',''))
             if dem_ind != '—':
                 story.append(_secao('Disciplinas'))
-                story.append(Paragraph(dem_ind, st['corpo']))
-                story.append(Spacer(1, 0.15*cm))
-
-            _docs = _txt(proj.get('documentacoes_geradas', ''))
-            if _docs != '—':
-                story.append(_secao('Documentações Geradas'))
-                story.append(Paragraph(_docs, st['corpo']))
+                story.append(Paragraph(_esc(dem_ind), st['corpo']))
                 story.append(Spacer(1, 0.15*cm))
 
             _obs = _txt(proj.get('observacoes', ''))
             if _obs != '—':
                 story.append(_secao('Observações'))
-                story.append(Paragraph(_obs, st['corpo']))
+                story.append(Paragraph(_esc(_obs), st['corpo']))
                 story.append(Spacer(1, 0.15*cm))
 
-            proj_id = proj.get('id')
-            if df_etapas is not None and not df_etapas.empty and proj_id is not None:
-                et_proj = df_etapas[df_etapas['projeto_id'] == proj_id] if 'projeto_id' in df_etapas.columns else pd.DataFrame()
-                if not et_proj.empty:
-                    story.append(_secao('Etapas do Projeto'))
-                    et_rows = [[
-                        Paragraph('Ord.', st['cabecalho_tab']),
-                        Paragraph('Etapa', st['cabecalho_tab']),
-                        Paragraph('Início (dias)', st['cabecalho_tab']),
-                        Paragraph('Duração (dias)', st['cabecalho_tab']),
-                        Paragraph('Fim (dias)', st['cabecalho_tab']),
-                    ]]
-                    for _, e in et_proj.iterrows():
-                        fim = int(e.get('dias_offset',0)) + int(e.get('duracao_dias',0)) - 1
-                        et_rows.append([
-                            Paragraph(str(int(e.get('ordem',0))+1), st['celula']),
-                            Paragraph(_txt(e.get('nome','')), st['celula']),
-                            Paragraph(str(int(e.get('dias_offset',0))), st['celula']),
-                            Paragraph(str(int(e.get('duracao_dias',0))), st['celula']),
-                            Paragraph(str(fim), st['celula']),
-                        ])
-                    t_et = Table(et_rows, colWidths=[1*cm, w_util-10*cm, 2.8*cm, 2.8*cm, 2.8*cm])
-                    t_et.setStyle(_tabela_estilo(5))
-                    story.append(t_et)
-                    story.append(Spacer(1, 0.2*cm))
-
-            if df_progresso is not None and not df_progresso.empty and proj_id is not None:
-                pg_proj = df_progresso[df_progresso['projeto_id'] == proj_id] if 'projeto_id' in df_progresso.columns else pd.DataFrame()
-                if not pg_proj.empty:
-                    story.append(_secao('Evolução Técnica por Disciplina'))
-                    pg_rows = [[
-                        Paragraph('Disciplina', st['cabecalho_tab']),
-                        Paragraph('Progresso', st['cabecalho_tab']),
-                        Paragraph('Concluída', st['cabecalho_tab']),
-                    ]]
-                    for _, pg in pg_proj.iterrows():
-                        pct_val = int(pg.get('percentual', 0))
-                        conc    = '✔ Sim' if pg.get('concluido') else '✗ Não'
-                        pg_rows.append([
-                            Paragraph(_txt(pg.get('disciplina','')), st['celula']),
-                            Paragraph(f'{pct_val}%', st['celula']),
-                            Paragraph(conc, st['celula']),
-                        ])
-                    t_pg = Table(pg_rows, colWidths=[w_util*0.5, w_util*0.25, w_util*0.25])
-                    t_pg.setStyle(_tabela_estilo(3))
-                    story.append(t_pg)
+            # ── O que cada emissão/revisão gerou, da inicial pra mais nova ──
+            if revs:
+                story.append(_secao('Emissões e Revisões'))
+                for rev in revs:
+                    story.extend(_bloco_revisao(rev))
 
             story.append(_hr())
 
     doc.build(story, onFirstPage=_cabecalho_pagina, onLaterPages=_cabecalho_pagina)
     return buf.getvalue()
-    
+
+
 # ═════════════════════════════════════════════════════════════
 #  3. PDF GANTT — CRONOGRAMA EM PAISAGEM (CORRIGIDO)
 # ═════════════════════════════════════════════════════════════
